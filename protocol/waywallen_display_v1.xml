@@ -82,6 +82,18 @@
     `refresh_mhz` is millihertz (e.g. 60000 = 60.000 Hz). Zero means
     unknown; manager may pick a conservative frame budget.
 
+    `drm_render_major` / `drm_render_minor` identify the DRM render
+    node of the GPU this display will sample dmabufs on (i.e. the GPU
+    backing the EGL/Vulkan context the consumer uses to import frames).
+    The manager compares this against each renderer's GPU id to decide
+    whether dmabuf placement must be promoted to HOST_VISIBLE/GTT for
+    cross-GPU PRIME import.
+
+    A client that cannot resolve its render node (driver lacks
+    `EGL_EXT_device_query` / `VK_EXT_physical_device_drm`) MUST send
+    `(0, 0)`; the manager then conservatively assumes a cross-GPU path
+    and asks the renderer for host-visible buffers.
+
     `properties` is an open-ended kv list for forward compat. v1 defines
     no keys — any unknown key is silently ignored by the server.
   -->
@@ -90,6 +102,8 @@
     <arg name="width" type="u32"/>
     <arg name="height" type="u32"/>
     <arg name="refresh_mhz" type="u32"/>
+    <arg name="drm_render_major" type="u32"/>
+    <arg name="drm_render_minor" type="u32"/>
     <arg name="properties" type="kv_list"/>
   </request>
 
