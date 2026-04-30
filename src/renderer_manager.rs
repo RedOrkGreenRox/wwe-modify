@@ -52,6 +52,14 @@ pub struct SpawnRequest {
 /// Snapshot of the most recent `BindBuffers` event, plus the DMA-BUF FDs
 /// the host attached to it. Owned by the manager; display endpoints will
 /// `dup(2)` individual fds out of it when a new subscriber connects.
+///
+/// Multi-plane modifiers (e.g. AMD DCC where plane 0 = colour data and
+/// plane 1 = compression metadata) flatten the per-plane info into the
+/// `stride` / `plane_offset` / `size` / `fds` arrays. Each has length
+/// `count * planes_per_buffer`, indexed
+/// `[buffer_idx * planes_per_buffer + plane_idx]`. Single-plane modifiers
+/// (LINEAR, plain tile-only) keep `planes_per_buffer = 1` and the arrays
+/// have length `count`.
 pub struct BindSnapshot {
     /// Monotonically increasing per-renderer pool generation. Sourced
     /// from the `bind_buffers.generation` field the renderer sets;
@@ -64,10 +72,20 @@ pub struct BindSnapshot {
     pub fourcc: u32,
     pub width: u32,
     pub height: u32,
-    pub stride: u32,
     pub modifier: u64,
-    pub plane_offset: u64,
-    pub sizes: Vec<u64>,
+    pub planes_per_buffer: u32,
+    /// `count * planes_per_buffer` entries, flattened (buffer, plane).
+    pub stride: Vec<u32>,
+    /// `count * planes_per_buffer` entries, flattened (buffer, plane).
+    pub plane_offset: Vec<u32>,
+    /// `count * planes_per_buffer` entries, flattened (buffer, plane).
+    /// Per-plane memory span (`stride * height` for plane 0; for
+    /// later planes the contribution between this and next plane's
+    /// offset, or 0 if the renderer didn't compute it).
+    pub size: Vec<u64>,
+    /// `count * planes_per_buffer` entries, flattened (buffer, plane).
+    /// For modifiers backed by a single dma-buf allocation, the
+    /// renderer typically dups the same fd into every plane slot.
     pub fds: Vec<OwnedFd>,
 }
 
@@ -714,10 +732,11 @@ impl RendererManager {
         log::info!(
             "renderer {id}: NegotiateBuffers fourcc=0x{:08x} modifier=0x{:x} \
              plane_count={} sync=0x{:x} color=0x{:x} mem_hint=0x{:x} \
-             extent={}x{} count={}",
+             extent={}x{} count={} path={:?} mem_source={:?}",
             scheme.fourcc, scheme.modifier, scheme.plane_count,
             scheme.sync_mode, scheme.color, scheme.mem_hint,
             scheme.extent.0, scheme.extent.1, scheme.count,
+            scheme.path, scheme.mem_source,
         );
         let msg = ControlMsg::NegotiateBuffers {
             fourcc: scheme.fourcc,
@@ -729,6 +748,8 @@ impl RendererManager {
             extent_w: scheme.extent.0,
             extent_h: scheme.extent.1,
             count: scheme.count,
+            path: scheme.path.as_u32(),
+            mem_source: scheme.mem_source.as_u32(),
         };
         self.send_control(id, msg).await?;
         if let Ok(mut guard) = handle.last_dispatched_scheme.lock() {
@@ -861,13 +882,29 @@ fn run_reader(
             fourcc,
             width,
             height,
-            stride,
             modifier,
-            plane_offset,
-            ref sizes,
+            planes_per_buffer,
+            ref stride,
+            ref plane_offset,
+            ref size,
         } = msg
         {
-            if fds.is_empty() {
+            // Validate the parallel-array invariant up-front. The wire
+            // event is symmetric in every per-plane field, so any
+            // length mismatch means the renderer mis-encoded.
+            let expected = (count as usize) * (planes_per_buffer as usize);
+            if stride.len() != expected
+                || plane_offset.len() != expected
+                || size.len() != expected
+                || fds.len() != expected
+            {
+                log::warn!(
+                    "renderer {id}: BindBuffers length mismatch \
+                     count={count} planes={planes_per_buffer} expected={expected} \
+                     stride={} offset={} size={} fds={}; dropping",
+                    stride.len(), plane_offset.len(), size.len(), fds.len()
+                );
+            } else if fds.is_empty() {
                 log::warn!("renderer {id}: BindBuffers arrived without fds");
             } else {
                 let prev_gen = bind_snapshot
@@ -889,10 +926,11 @@ fn run_reader(
                     fourcc,
                     width,
                     height,
-                    stride,
                     modifier,
-                    plane_offset,
-                    sizes: sizes.clone(),
+                    planes_per_buffer,
+                    stride: stride.clone(),
+                    plane_offset: plane_offset.clone(),
+                    size: size.clone(),
                     fds,
                 };
                 if let Ok(mut guard) = bind_snapshot.lock() {

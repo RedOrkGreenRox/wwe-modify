@@ -26,6 +26,9 @@
 #include <waywallen-bridge/drm_fourcc.h>
 #include <waywallen-bridge/protocol_bits.h>
 
+#include <stddef.h>
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -180,6 +183,128 @@ int ww_bridge_send_bind_failed(int sock,
 
 /* Emit an `Error` event with a text message. */
 int ww_bridge_send_error(int sock, const char *msg);
+
+
+/* -----------------------------------------------------------------------
+ * Modifier negotiation
+ *
+ * Producer-side bookkeeping for the `format_caps` / `negotiate_buffers`
+ * dance: a pinned (fourcc, modifier, plane_count) the slot pool is
+ * currently allocated against, plus the full set of (modifier,
+ * plane_count) tuples the producer can switch to via re-allocation.
+ * ----------------------------------------------------------------------- */
+
+/* One advertised (fourcc, modifier, plane_count) tuple. The daemon's
+ * negotiator strict-equals plane_count when intersecting producer and
+ * consumer caps, so producers must report truth — see
+ * waywallen/src/negotiate.rs:432. */
+typedef struct ww_format_entry {
+    uint32_t fourcc;
+    uint64_t modifier;
+    uint32_t plane_count;
+} ww_format_entry_t;
+
+/* Producer-side negotiation snapshot. Owned by the caller; the
+ * `advertised` array points at producer storage that outlives the
+ * negotiation calls. The pinned (fourcc, modifier, plane_count) is
+ * the one the slot pool is currently allocated against; on
+ * `negotiate_buffers` the producer either re-allocates to a different
+ * entry from `advertised` (and updates the pinned tuple) or replies
+ * `bind_failed` to push the daemon to re-pick.
+ *
+ * Invariants:
+ *   - The pinned (fourcc, modifier, plane_count) MUST appear in
+ *     `advertised`.
+ *   - Entries with the same `fourcc` MUST be contiguous in
+ *     `advertised` (the format_caps flatten helper walks runs).
+ *   - The pinned entry SHOULD be first within its fourcc's run, and
+ *     the pinned fourcc SHOULD come before non-pinned fourccs — this
+ *     lets the daemon's picker land on the pinned tuple in one round
+ *     instead of bouncing through `bind_failed` retries. */
+typedef struct ww_negotiation_state {
+    uint32_t                  fourcc;
+    uint64_t                  modifier;
+    uint32_t                  plane_count;
+    const ww_format_entry_t  *advertised;
+    size_t                    advertised_count;
+} ww_negotiation_state_t;
+
+/* True (1) if a (fourcc, modifier) pair is anywhere in `advertised`.
+ * False (0) otherwise. NULL `neg` returns 0. Replaces the linear-scan
+ * "is this in our advertised set?" check producers do in their
+ * NegotiateBuffers handlers. */
+int ww_bridge_negotiation_contains(const ww_negotiation_state_t *neg,
+                                   uint32_t                      fourcc,
+                                   uint64_t                      modifier);
+
+/* Populate a `ww_format_caps_caller_t` from the negotiation state plus
+ * caller-provided scratch arrays. Walks `advertised` collapsing
+ * contiguous same-fourcc runs into the wire format's
+ * `(fourccs[], mod_counts[])` shape; relies on the
+ * "same-fourcc-contiguous" invariant above.
+ *
+ * Scratch sizing (caller owns and outlives `out`); all sized to
+ * `neg->advertised_count` for worst-case (one fourcc per entry):
+ *   - `scratch_fourccs`      [advertised_count]
+ *   - `scratch_mod_counts`   [advertised_count]
+ *   - `scratch_modifiers`    [advertised_count]
+ *   - `scratch_plane_counts` [advertised_count]
+ *   - `scratch_usages`       [advertised_count]
+ *
+ * `usage` is replicated to every entry of `scratch_usages` (typical
+ * value: `WW_USAGE_SAMPLED`). Caller still fills the scalar
+ * negotiation knobs (sync_caps, color_caps, mem_hints, extent_max,
+ * UUIDs, drm_render_*) on `out` after this call. */
+void ww_bridge_negotiation_fill_format_caps(
+    const ww_negotiation_state_t *neg,
+    uint32_t                      usage,
+    uint32_t                     *scratch_fourccs,
+    uint32_t                     *scratch_mod_counts,
+    uint64_t                     *scratch_modifiers,
+    uint32_t                     *scratch_plane_counts,
+    uint32_t                     *scratch_usages,
+    ww_format_caps_caller_t      *out);
+
+
+/* -----------------------------------------------------------------------
+ * Renderer utilities
+ *
+ * Tiny helpers shared verbatim by every renderer subprocess. Kept in
+ * the header so they're trivially inlineable across both C and C++
+ * call sites.
+ * ----------------------------------------------------------------------- */
+
+/* Monotonic nanosecond timestamp for `frame_ready.ts_ns` and any other
+ * place a renderer needs a steady-clock reading. Falls back to 0 on
+ * the (vanishingly rare) clock_gettime failure rather than crashing —
+ * the daemon treats ts_ns as advisory. */
+uint64_t ww_bridge_now_ns(void);
+
+/* Argv consumer for unrecognized `--key value` pairs forwarded by the
+ * daemon from source-plugin metadata (e.g. --fps, --workshop_id) that
+ * a particular renderer doesn't implement. Behaviour: if argv[*i]
+ * starts with "--" and the next token does NOT, advance *i by one to
+ * skip the value too. Otherwise leave *i untouched (the outer arg
+ * loop's own ++i will move past the bare flag).
+ *
+ * Safe to call on the trailing-arg case (i+1 >= argc).
+ *
+ * Usage:
+ *   for (int i = 1; i < argc; ++i) {
+ *       const char *a = argv[i];
+ *       if (strcmp(a, "--width") == 0) { ... }
+ *       else { ww_bridge_skip_unknown_kv_arg(&i, argc, argv); }
+ *   }
+ */
+static inline void ww_bridge_skip_unknown_kv_arg(int *i, int argc, char *const argv[]) {
+    if (!i || *i < 0 || *i >= argc) return;
+    const char *a = argv[*i];
+    if (!a || a[0] != '-' || a[1] != '-') return;
+    if (*i + 1 >= argc) return;
+    const char *next = argv[*i + 1];
+    if (!next || (next[0] == '-' && next[1] == '-')) return;
+    ++(*i);
+}
 
 
 /* -----------------------------------------------------------------------

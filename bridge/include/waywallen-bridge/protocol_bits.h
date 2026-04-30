@@ -29,9 +29,15 @@ extern "C" {
 
 /* `mem_hints`: where the dmabuf is backed. The picker forces
  * HOST_VISIBLE on cross-GPU links so PRIME-import works on the
- * consumer side; same-GPU prefers DEVICE_LOCAL when available. */
+ * consumer side; same-GPU prefers DEVICE_LOCAL when available.
+ * LINEAR_ONLY (v3) is the producer's signal that its modifier-aware
+ * probe returned no usable entries — daemon must pick COMPAT_LINEAR
+ * regardless of consumer caps. */
 #define WW_MEM_HINT_DEVICE_LOCAL  (1u << 0)
 #define WW_MEM_HINT_HOST_VISIBLE  (1u << 1)
+#define WW_MEM_HINT_SCANOUT       (1u << 2)
+#define WW_MEM_HINT_PROTECTED     (1u << 3)
+#define WW_MEM_HINT_LINEAR_ONLY   (1u << 4)
 
 /* `sync_caps`: which fence flavours the peer supports. The picker
  * lands on the highest tier both sides advertise. */

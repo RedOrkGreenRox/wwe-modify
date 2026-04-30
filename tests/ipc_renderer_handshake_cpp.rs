@@ -148,32 +148,36 @@ fn binding_and_frames_smoke() {
                 fourcc,
                 width,
                 height,
-                stride,
                 modifier,
+                planes_per_buffer,
+                stride,
                 plane_offset,
-                sizes,
+                size,
                 ..
             } => {
                 eprintln!(
-                    "BindBuffers: count={} fourcc=0x{:08x} {}x{} stride={} mod=0x{:x} \
-                     plane_offset={} sizes={:?} fds={}",
+                    "BindBuffers: count={} fourcc=0x{:08x} {}x{} planes={} mod=0x{:x} \
+                     stride={:?} plane_offset={:?} size={:?} fds={}",
                     count,
                     fourcc,
                     width,
                     height,
-                    stride,
+                    planes_per_buffer,
                     modifier,
+                    stride,
                     plane_offset,
-                    sizes,
+                    size,
                     fds.len()
                 );
                 assert_eq!(count, 3, "expected 3 slots");
-                assert_eq!(fds.len(), 3, "expected 3 FDs via SCM_RIGHTS");
+                let expected_fds = (count as usize) * (planes_per_buffer as usize);
+                assert_eq!(fds.len(), expected_fds,
+                    "expected {expected_fds} FDs via SCM_RIGHTS (count*planes)");
                 assert!(fourcc != 0, "fourcc must be non-zero");
-                assert!(u64::from(stride) >= u64::from(width) * 4, "stride sanity");
+                assert!(u64::from(stride[0]) >= u64::from(width) * 4, "stride sanity");
                 bind = Some((
                     fds.iter().map(|f| f.as_raw_fd()).collect(),
-                    (count, fourcc, width, height, u64::from(stride), modifier),
+                    (count, fourcc, width, height, u64::from(stride[0]), modifier),
                 ));
                 std::mem::forget(fds);
             }

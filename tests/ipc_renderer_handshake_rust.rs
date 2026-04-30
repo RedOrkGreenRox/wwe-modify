@@ -65,9 +65,9 @@ fn waywallen_renderer_bind_handshake() {
     assert!(fds.is_empty(), "Ready must not carry fds");
     assert!(matches!(msg, EventMsg::Ready { .. }), "expected Ready, got {msg:?}");
 
-    // 2. BindBuffers with 3 fds.
+    // 2. BindBuffers with 3 fds (LINEAR → planes_per_buffer = 1, so
+    //    count * planes_per_buffer = 3 fds).
     let (msg, fds) = recv_event(&stream).expect("recv BindBuffers");
-    assert_eq!(fds.len(), 3, "expected 3 DMA-BUF fds");
     match msg {
         EventMsg::BindBuffers {
             generation,
@@ -76,10 +76,11 @@ fn waywallen_renderer_bind_handshake() {
             fourcc,
             width,
             height,
-            stride,
             modifier,
+            planes_per_buffer,
+            stride,
             plane_offset,
-            sizes,
+            size,
         } => {
             assert_eq!(generation, 1, "first BindBuffers must report gen=1");
             assert_eq!(flags, 0, "initial pool must be DEVICE_LOCAL (flags=0)");
@@ -90,12 +91,21 @@ fn waywallen_renderer_bind_handshake() {
             );
             assert_eq!(width, 256);
             assert_eq!(height, 256);
-            assert!(stride >= 256 * 4, "stride {stride} below minimum");
             assert_eq!(modifier, 0, "expected DRM_FORMAT_MOD_LINEAR");
-            assert_eq!(plane_offset, 0);
-            assert_eq!(sizes.len(), 3);
-            for &s in &sizes {
-                assert_eq!(s, u64::from(stride) * u64::from(height));
+            assert_eq!(planes_per_buffer, 1, "LINEAR → single plane");
+            let n = (count as usize) * (planes_per_buffer as usize);
+            assert_eq!(fds.len(), n, "expected count*planes={n} DMA-BUF fds");
+            assert_eq!(stride.len(), n);
+            assert_eq!(plane_offset.len(), n);
+            assert_eq!(size.len(), n);
+            for &s in &stride {
+                assert!(s >= 256 * 4, "stride {s} below minimum");
+            }
+            for &o in &plane_offset {
+                assert_eq!(o, 0);
+            }
+            for (i, &sz) in size.iter().enumerate() {
+                assert_eq!(sz, u64::from(stride[i]) * u64::from(height));
             }
         }
         other => panic!("expected BindBuffers, got {other:?}"),

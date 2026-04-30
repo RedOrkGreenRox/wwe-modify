@@ -31,7 +31,9 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1},
 };
 
-use waywallen::display_proto::{codec, Event as ProtoEvent, Request as ProtoRequest, PROTOCOL_NAME};
+use waywallen::display_proto::{
+    codec, Event as ProtoEvent, Request as ProtoRequest, PROTOCOL_NAME, PROTOCOL_VERSION,
+};
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -728,6 +730,7 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
             protocol: PROTOCOL_NAME.to_string(),
             client_name: binding.display_name.clone(),
             client_version: env!("CARGO_PKG_VERSION").to_string(),
+            client_protocol_version: PROTOCOL_VERSION,
         },
         &[],
     )
@@ -793,15 +796,30 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
     // we could thread through here — left as a follow-up.
     {
         use waywallen::negotiate as N;
-        let snapshot: Vec<(u32, Vec<u64>)> = {
+        // Flatten dmabuf_caps directly into the wire-format parallel
+        // arrays under a single lock acquisition. usages/plane_counts
+        // are constant per-modifier here, so bulk-fill them with
+        // vec![v; n] instead of pushing in the inner loop.
+        let flat = {
             let guard = binding.dmabuf_caps.lock().unwrap();
-            guard
-                .iter()
-                .map(|(fourcc, mods)| (*fourcc, mods.iter().copied().collect::<Vec<u64>>()))
-                .collect()
+            if guard.is_empty() {
+                None
+            } else {
+                let n_fourccs = guard.len();
+                let total_mods: usize = guard.values().map(|s| s.len()).sum();
+                let mut fourccs: Vec<u32> = Vec::with_capacity(n_fourccs);
+                let mut mod_counts: Vec<u32> = Vec::with_capacity(n_fourccs);
+                let mut modifiers: Vec<u64> = Vec::with_capacity(total_mods);
+                for (fourcc, mods) in guard.iter() {
+                    fourccs.push(*fourcc);
+                    mod_counts.push(mods.len() as u32);
+                    modifiers.extend(mods.iter().copied());
+                }
+                Some((fourccs, mod_counts, modifiers, total_mods))
+            }
         };
-        let (fourccs, mod_counts, modifiers, usages, plane_counts) =
-            if snapshot.is_empty() {
+        let (fourccs, mod_counts, modifiers, usages, plane_counts) = match flat {
+            None => {
                 log::warn!(
                     "[{}] zwp_linux_dmabuf_v1 exposed no formats — \
                      falling back to ABGR/XRGB + LINEAR consumer_caps",
@@ -814,30 +832,19 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
                     vec![N::USAGE_SAMPLED, N::USAGE_SAMPLED],
                     vec![1u32, 1],
                 )
-            } else {
-                let mut fourccs: Vec<u32> = Vec::with_capacity(snapshot.len());
-                let mut mod_counts: Vec<u32> = Vec::with_capacity(snapshot.len());
-                let total_mods: usize = snapshot.iter().map(|(_, m)| m.len()).sum();
-                let mut modifiers: Vec<u64> = Vec::with_capacity(total_mods);
-                let mut usages: Vec<u32> = Vec::with_capacity(total_mods);
-                let mut plane_counts: Vec<u32> = Vec::with_capacity(total_mods);
-                for (fourcc, mods) in &snapshot {
-                    fourccs.push(*fourcc);
-                    mod_counts.push(mods.len() as u32);
-                    for m in mods {
-                        modifiers.push(*m);
-                        usages.push(N::USAGE_SAMPLED);
-                        plane_counts.push(1);
-                    }
-                }
+            }
+            Some((fourccs, mod_counts, modifiers, total_mods)) => {
                 log::info!(
                     "[{}] consumer_caps: {} fourccs, {} (fourcc,modifier) entries from compositor",
                     binding.display_name,
                     fourccs.len(),
                     modifiers.len()
                 );
+                let usages = vec![N::USAGE_SAMPLED; total_mods];
+                let plane_counts = vec![1u32; total_mods];
                 (fourccs, mod_counts, modifiers, usages, plane_counts)
-            };
+            }
+        };
         codec::send_request(
             &stream,
             &ProtoRequest::ConsumerCaps {

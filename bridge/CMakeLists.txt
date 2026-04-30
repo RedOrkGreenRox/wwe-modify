@@ -17,6 +17,10 @@ add_library(waywallen-bridge
     src/ipc_v1.c
     src/probe_egl.c
     src/probe_vk.c
+    src/sync_release.c
+    src/pool.c
+    src/pool_egl_gbm.c
+    src/pool_vulkan.c
 )
 add_library(waywallen::bridge ALIAS waywallen-bridge)
 
@@ -32,12 +36,22 @@ target_include_directories(waywallen-bridge
 # callbacks. We deliberately do NOT link libEGL or libvulkan so the
 # bridge stays backend-agnostic; renderer plugins choose vk/egl at
 # init time and pass their own loader.
+#
+# GBM is different: gbm_create_device / gbm_bo_* are plain C entry
+# points used inside pool_egl_gbm.c — link libgbm directly. Plugins
+# that use the EGL/GBM backend pull this in transitively via
+# waywallen::bridge.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WW_BRIDGE_EGL REQUIRED egl)
+pkg_check_modules(WW_BRIDGE_GBM REQUIRED gbm)
 find_package(Vulkan REQUIRED)
 target_include_directories(waywallen-bridge SYSTEM PRIVATE
     ${WW_BRIDGE_EGL_INCLUDE_DIRS}
+    ${WW_BRIDGE_GBM_INCLUDE_DIRS}
     ${Vulkan_INCLUDE_DIRS}
+)
+target_link_libraries(waywallen-bridge PRIVATE
+    ${WW_BRIDGE_GBM_LIBRARIES}
 )
 
 target_compile_features(waywallen-bridge PUBLIC c_std_99)

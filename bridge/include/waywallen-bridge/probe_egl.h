@@ -66,6 +66,40 @@ typedef struct ww_bridge_egl_dt {
 int ww_bridge_egl_dt_load(ww_bridge_egl_dt_t *dt,
                           ww_bridge_egl_get_proc_addr_fn get_proc_addr);
 
+/* Per-modifier callback for `ww_bridge_egl_query_modifiers_for_fourcc`.
+ * Invoked once per modifier the EGL driver advertises for the given
+ * fourcc. `external_only` is the third out-array of
+ * eglQueryDmaBufModifiersEXT — non-zero means the modifier is only
+ * importable as `GL_TEXTURE_EXTERNAL_OES`, which non-YUV
+ * GL_TEXTURE_2D consumers typically reject. The callback decides
+ * whether to keep, filter, or transform the entry. */
+typedef void (*ww_bridge_egl_modifier_emit_fn)(uint64_t modifier,
+                                               int      external_only,
+                                               void    *user);
+
+/* Run the two-call eglQueryDmaBufModifiersEXT idiom for one fourcc
+ * and emit one (modifier, external_only) tuple per result.
+ *
+ * Implicit-modifier-only fourccs (driver returns 0 modifiers) yield
+ * zero emissions and a return of 0; the caller decides whether to
+ * synthesize a LINEAR fallback or skip the fourcc. The helper does
+ * NOT filter external_only — callers that want only GL_TEXTURE_2D-
+ * importable modifiers should drop entries with external_only != 0
+ * inside the callback.
+ *
+ * Returns:
+ *   0        on success (including the zero-modifier case)
+ *   -EINVAL  if `dt`, `emit`, or `dt->eglQueryDmaBufModifiersEXT` is NULL
+ *   -EIO     if either eglQueryDmaBufModifiersEXT call returns EGL_FALSE
+ *   -ENOMEM  on allocation failure
+ */
+int ww_bridge_egl_query_modifiers_for_fourcc(
+    const ww_bridge_egl_dt_t        *dt,
+    EGLDisplay                       display,
+    uint32_t                         fourcc,
+    ww_bridge_egl_modifier_emit_fn   emit,
+    void                            *user);
+
 /* Print a "GPU info" diagnostic block to stderr:
  *
  *     {prefix}: GPU info

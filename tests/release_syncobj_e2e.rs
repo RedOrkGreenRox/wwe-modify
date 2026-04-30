@@ -182,6 +182,8 @@ fn release_syncobj_round_trip() {
                         extent_w: 640,
                         extent_h: 360,
                         count: 1,
+                        path: N::PathCategory::CompatLinear.as_u32(),
+                        mem_source: N::MemSource::GpuLinear.as_u32(),
                     },
                     &[],
                 )

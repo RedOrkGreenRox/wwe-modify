@@ -55,7 +55,7 @@
       `release_syncobj@release_point` before re-recording into the same
       `image_index`.
 
-  Version: 2
+  Version: 3
 
   v2 (modifier negotiation):
     - Renderer ships `format_caps` event after `ready` and before any
@@ -73,8 +73,28 @@
       the renderer and re-runs the picker.
     - `configure_buffers` is retained for the Iter 1+2 transition but
       is dispatch-paused in the daemon; Iter 3 deletes it outright.
+
+  v3 (explicit path negotiation):
+    - `negotiate_buffers` carries `path` and `mem_source` — the daemon
+      now classifies GPU topology (same-device / same-vendor / cross
+      vendor) and selects an explicit allocation path. The bridge in
+      the renderer subprocess just executes the directive; no plugin
+      ever has to fall back to LINEAR on its own. `path` codes mirror
+      `ww_path_category` in <waywallen-bridge/pool.h>:
+        0 = OPTIMIZED_SAME_DEVICE  use the daemon-picked tile modifier
+        1 = OPTIMIZED_SAME_VENDOR  conservative modifier subset (Iter 2)
+        2 = COMPAT_LINEAR          force LINEAR; mem_source picks the source
+        3 = COMPAT_CPU_READBACK    Iter 3+, reserved
+      `mem_source` codes mirror `ww_mem_source`:
+        0 = GPU_NATIVE             GBM render-usage / VK DEVICE_LOCAL
+        1 = GPU_LINEAR             GBM_BO_USE_LINEAR / VK LINEAR exportable
+        2 = DMABUF_HEAP            /dev/dma_heap/* fallback
+    - `format_caps.mem_hints` adds bit 4 = LINEAR_ONLY: producer's own
+      modifier-aware probe failed entirely (e.g. NVIDIA proprietary
+      where every modifier is external_only); the daemon must pick a
+      COMPAT_LINEAR path regardless of consumer caps.
 -->
-<protocol name="waywallen_ipc" version="2">
+<protocol name="waywallen_ipc" version="3">
 
   <!-- ==================================================================
        REQUESTS  (daemon -> subprocess, control plane)
@@ -147,6 +167,11 @@
       `mem_hint`      — bitfield: same bits as `format_caps.mem_hints`.
       `extent_w/h`    — pixel extent of each buffer.
       `count`         — pool size (number of buffers in the swapchain).
+      `path`          — v3, see `ww_path_category` codes in the v3 doc
+                        block above. Bridge dispatches its allocation
+                        path purely on this; modifier is the operand.
+      `mem_source`    — v3, see `ww_mem_source` codes. Picks the
+                        underlying memory backend for COMPAT_LINEAR.
   -->
   <request name="negotiate_buffers" opcode="9">
     <arg name="fourcc" type="u32"/>
@@ -158,6 +183,8 @@
     <arg name="extent_w" type="u32"/>
     <arg name="extent_h" type="u32"/>
     <arg name="count" type="u32"/>
+    <arg name="path" type="u32"/>
+    <arg name="mem_source" type="u32"/>
   </request>
 
 
@@ -198,7 +225,15 @@
     `configure_buffers` request that triggered the re-export. See
     `configure_buffers` for bit semantics.
 
-    `count` fds are attached.
+    Multi-plane modifiers (e.g. AMD DCC where plane 0 is colour data
+    and plane 1 is the DCC compression metadata) are flattened into
+    the parallel arrays: each of `stride`, `plane_offset`, `size`
+    has `count * planes_per_buffer` entries indexed
+    `[buffer_idx * planes_per_buffer + plane_idx]`. The fd array
+    follows the same flattening — `count * planes_per_buffer` fds
+    arrive via SCM_RIGHTS. For modifiers backed by a single memory
+    allocation (the common case on AMD/Intel), the renderer dups the
+    same dma-buf fd into every plane slot.
   -->
   <event name="bind_buffers" opcode="2">
     <arg name="generation" type="u64"/>
@@ -207,11 +242,12 @@
     <arg name="fourcc" type="u32"/>
     <arg name="width" type="u32"/>
     <arg name="height" type="u32"/>
-    <arg name="stride" type="u32"/>
     <arg name="modifier" type="u64"/>
-    <arg name="plane_offset" type="u64"/>
-    <arg name="sizes" type="array" element="u64"/>
-    <fds count_expr="count"/>
+    <arg name="planes_per_buffer" type="u32"/>
+    <arg name="stride" type="array" element="u32"/>
+    <arg name="plane_offset" type="array" element="u32"/>
+    <arg name="size" type="array" element="u64"/>
+    <fds count_expr="count * planes_per_buffer"/>
   </event>
 
   <!--
@@ -288,6 +324,10 @@
         bit 1 = HOST_VISIBLE          producer can also do GTT/system
         bit 2 = SCANOUT_CAPABLE       producer can place in scanout-able mem
         bit 3 = PROTECTED             reserved (DRM/HDCP)
+        bit 4 = LINEAR_ONLY           v3: producer's modifier-aware probe
+                                       returned no usable entries (e.g. every
+                                       modifier external_only); daemon must
+                                       pick COMPAT_LINEAR.
       `sync_caps`:
         bit 0 = IMPLICIT              dma_fence on dma-buf
         bit 1 = SYNCOBJ_BINARY        binary drm_syncobj fd (one-shot)

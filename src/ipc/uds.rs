@@ -341,10 +341,11 @@ mod tests {
             fourcc: 0x34324152, // 'AR24'
             width: 1280,
             height: 720,
-            stride: 1280 * 4,
             modifier: 0,
-            plane_offset: 0,
-            sizes: vec![payload.len() as u64],
+            planes_per_buffer: 1,
+            stride: vec![1280 * 4],
+            plane_offset: vec![0],
+            size: vec![payload.len() as u64],
         };
         send_event(&a, &sent, &[fd_to_send]).unwrap();
 

@@ -507,31 +507,29 @@ async fn send_bind_from_renderer(
     Ok(())
 }
 
-/// Translate the legacy `BindSnapshot` (single-plane) into the new
-/// wire event, including a fresh `dup(2)` of every dma-buf fd. The
-/// returned fds are raw integers owned by the caller, which must
-/// `close(2)` them after the `sendmsg` completes.
+/// Translate `BindSnapshot` into the display-protocol `BindBuffers`
+/// event. Both schemas are now parallel-array multi-plane (with
+/// `planes_per_buffer * count` entries per array), so this is a pure
+/// pass-through plus a fresh `dup(2)` of every dma-buf fd. The returned
+/// raw fds are owned by the caller, which must `close(2)` them after
+/// `sendmsg` completes.
 fn build_bind_event(snap: &BindSnapshot) -> Result<(Event, Vec<RawFd>)> {
     let buffer_generation = snap.generation;
     let count = snap.count;
-    let planes_per_buffer = 1u32;
-    let n = count as usize;
+    let planes_per_buffer = snap.planes_per_buffer;
+    let n = (count as usize) * (planes_per_buffer as usize);
 
-    let stride: Vec<u32> = vec![snap.stride; n];
-    let plane_offset: Vec<u32> = vec![snap.plane_offset as u32; n];
-    let size: Vec<u64> = snap.sizes.clone();
-    if size.len() != n {
+    if snap.stride.len() != n
+        || snap.plane_offset.len() != n
+        || snap.size.len() != n
+        || snap.fds.len() != n
+    {
         return Err(anyhow!(
-            "BindSnapshot sizes length {} != count {}",
-            size.len(),
-            n
-        ));
-    }
-    if snap.fds.len() != n {
-        return Err(anyhow!(
-            "BindSnapshot fds length {} != count {}",
-            snap.fds.len(),
-            n
+            "BindSnapshot parallel arrays inconsistent: count={} planes={} expected={} \
+             stride={} offset={} size={} fds={}",
+            count, planes_per_buffer, n,
+            snap.stride.len(), snap.plane_offset.len(),
+            snap.size.len(), snap.fds.len()
         ));
     }
 
@@ -550,10 +548,24 @@ fn build_bind_event(snap: &BindSnapshot) -> Result<(Event, Vec<RawFd>)> {
         fourcc: snap.fourcc,
         modifier: snap.modifier,
         planes_per_buffer,
-        stride,
-        plane_offset,
-        size,
+        stride: snap.stride.clone(),
+        plane_offset: snap.plane_offset.clone(),
+        size: snap.size.clone(),
     };
+    log::debug!(
+        "display_endpoint: build_bind_event gen={} count={} planes={} {}x{} \
+         fourcc=0x{:08x} mod=0x{:016x}",
+        buffer_generation, count, planes_per_buffer,
+        snap.width, snap.height, snap.fourcc, snap.modifier,
+    );
+    for i in 0..n {
+        let bi = i / (planes_per_buffer as usize).max(1);
+        let pi = i % (planes_per_buffer as usize).max(1);
+        log::debug!(
+            "  buf[{}].plane[{}] dup_fd={} stride={} plane_offset={} size={}",
+            bi, pi, dup_fds[i], snap.stride[i], snap.plane_offset[i], snap.size[i],
+        );
+    }
     Ok((event, dup_fds))
 }
 
@@ -651,10 +663,11 @@ mod tests {
             fourcc: 0x34325258,
             width: 800,
             height: 600,
-            stride: 3200,
             modifier: 0,
-            plane_offset: 0,
-            sizes: vec![1_920_000, 1_920_000],
+            planes_per_buffer: 1,
+            stride: vec![3200, 3200],
+            plane_offset: vec![0, 0],
+            size: vec![1_920_000, 1_920_000],
             fds: vec![fd1, fd2],
         };
 

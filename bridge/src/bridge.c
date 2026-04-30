@@ -4,6 +4,14 @@
  * SCM_RIGHTS fd passing on top of the generated per-message encoders
  * and a tagged union for incoming control requests.
  */
+/* CLOCK_MONOTONIC + struct timespec require POSIX.1-2008 visibility
+ * under -std=c11. Set the macro here so we don't drag a CMake-side
+ * compile flag in just for the timing helper. Must precede any
+ * system header. */
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <waywallen-bridge/bridge.h>
 
 #include <errno.h>
@@ -14,6 +22,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
 
 /* Keep in sync with waywallen's MAX_FDS_PER_MSG. 64 is generous for
@@ -493,4 +502,66 @@ void ww_bridge_control_free(ww_bridge_control_t *msg) {
     default: break;
     }
     memset(msg, 0, sizeof(*msg));
+}
+
+uint64_t ww_bridge_now_ns(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+int ww_bridge_negotiation_contains(const ww_negotiation_state_t *neg,
+                                   uint32_t                      fourcc,
+                                   uint64_t                      modifier) {
+    if (!neg || !neg->advertised) return 0;
+    for (size_t i = 0; i < neg->advertised_count; ++i) {
+        const ww_format_entry_t *e = &neg->advertised[i];
+        if (e->fourcc == fourcc && e->modifier == modifier) return 1;
+    }
+    return 0;
+}
+
+void ww_bridge_negotiation_fill_format_caps(
+    const ww_negotiation_state_t *neg,
+    uint32_t                      usage,
+    uint32_t                     *scratch_fourccs,
+    uint32_t                     *scratch_mod_counts,
+    uint64_t                     *scratch_modifiers,
+    uint32_t                     *scratch_plane_counts,
+    uint32_t                     *scratch_usages,
+    ww_format_caps_caller_t      *out) {
+    if (!neg || !out) return;
+
+    const uint32_t n = (uint32_t)neg->advertised_count;
+    uint32_t fourcc_count = 0;
+
+    /* Walk advertised, collapsing contiguous same-fourcc runs into
+     * (fourccs[], mod_counts[]) and copying flat parallel arrays
+     * for modifiers/plane_counts/usages. */
+    for (uint32_t i = 0; i < n; ++i) {
+        const ww_format_entry_t *e = &neg->advertised[i];
+        scratch_modifiers[i]    = e->modifier;
+        scratch_plane_counts[i] = e->plane_count;
+        scratch_usages[i]       = usage;
+
+        if (fourcc_count == 0
+            || scratch_fourccs[fourcc_count - 1] != e->fourcc) {
+            scratch_fourccs[fourcc_count]    = e->fourcc;
+            scratch_mod_counts[fourcc_count] = 1;
+            ++fourcc_count;
+        } else {
+            ++scratch_mod_counts[fourcc_count - 1];
+        }
+    }
+
+    out->fourccs            = scratch_fourccs;
+    out->fourccs_count      = fourcc_count;
+    out->mod_counts         = scratch_mod_counts;
+    out->mod_counts_count   = fourcc_count;
+    out->modifiers          = scratch_modifiers;
+    out->modifiers_count    = n;
+    out->usages             = scratch_usages;
+    out->usages_count       = n;
+    out->plane_counts       = scratch_plane_counts;
+    out->plane_counts_count = n;
 }

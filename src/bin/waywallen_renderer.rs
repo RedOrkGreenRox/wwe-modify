@@ -314,6 +314,9 @@ fn send_bind_buffers(
     height: u32,
 ) -> Result<()> {
     let fds: Vec<RawFd> = pool.exports.iter().map(|e| e.fd).collect();
+    // Standalone test renderer always uses LINEAR → single plane.
+    let stride0 = pool.exports[0].stride as u32;
+    let plane_size = pool.exports[0].stride * height as u64;
     let bind = EventMsg::BindBuffers {
         generation: pool.generation,
         flags: pool.flags,
@@ -321,10 +324,11 @@ fn send_bind_buffers(
         fourcc: FOURCC_AB24,
         width,
         height,
-        stride: pool.exports[0].stride as u32,
         modifier: pool.exports[0].modifier,
-        plane_offset: 0,
-        sizes: vec![pool.exports[0].stride * height as u64; SLOT_COUNT],
+        planes_per_buffer: 1,
+        stride: vec![stride0; SLOT_COUNT],
+        plane_offset: vec![0u32; SLOT_COUNT],
+        size: vec![plane_size; SLOT_COUNT],
     };
     send_event(stream, &bind, &fds).map_err(|e| anyhow!("send BindBuffers: {e}"))?;
     log::info!(

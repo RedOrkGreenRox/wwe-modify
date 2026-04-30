@@ -8,6 +8,7 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 int ww_bridge_egl_dt_load(ww_bridge_egl_dt_t *dt,
@@ -47,6 +48,45 @@ int ww_bridge_egl_dt_load(ww_bridge_egl_dt_t *dt,
     dt->glGetString = (const unsigned char *(*)(unsigned int))(void *)
         get_proc_addr("glGetString");
     return 0;
+}
+
+int ww_bridge_egl_query_modifiers_for_fourcc(
+    const ww_bridge_egl_dt_t        *dt,
+    EGLDisplay                       display,
+    uint32_t                         fourcc,
+    ww_bridge_egl_modifier_emit_fn   emit,
+    void                            *user) {
+    if (!dt || !emit || !dt->eglQueryDmaBufModifiersEXT) return -EINVAL;
+
+    /* First call: count only. NULL out-arrays are explicitly allowed
+     * by EGL_EXT_image_dma_buf_import_modifiers. */
+    EGLint count = 0;
+    if (!dt->eglQueryDmaBufModifiersEXT(display, (EGLint)fourcc,
+                                        0, NULL, NULL, &count)) {
+        return -EIO;
+    }
+    /* Implicit-modifier-only fourcc — emission is the caller's call. */
+    if (count <= 0) return 0;
+
+    EGLuint64KHR *mods     = calloc((size_t)count, sizeof(*mods));
+    EGLBoolean   *ext_only = calloc((size_t)count, sizeof(*ext_only));
+    if (!mods || !ext_only) {
+        free(mods);
+        free(ext_only);
+        return -ENOMEM;
+    }
+    int rc = 0;
+    if (!dt->eglQueryDmaBufModifiersEXT(display, (EGLint)fourcc,
+                                        count, mods, ext_only, &count)) {
+        rc = -EIO;
+    } else {
+        for (EGLint i = 0; i < count; ++i) {
+            emit((uint64_t)mods[i], ext_only[i] ? 1 : 0, user);
+        }
+    }
+    free(mods);
+    free(ext_only);
+    return rc;
 }
 
 void ww_bridge_egl_log_gpu_info(const char *prefix,
