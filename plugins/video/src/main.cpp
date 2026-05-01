@@ -15,6 +15,7 @@
 #include <waywallen-bridge/pool.h>
 #include <waywallen-bridge/probe_vk.h>
 
+#include <presenter.hpp>
 #include <vk_device.hpp>
 #include <video_decoder.hpp>
 #include <yuv_to_rgba.hpp>
@@ -39,7 +40,6 @@
 namespace {
 
 constexpr uint32_t SLOT_COUNT = 3;
-constexpr auto FRAME_INTERVAL = std::chrono::milliseconds(33);  // Iter 3 replaces with PTS.
 
 struct Options {
     std::string ipc_path;
@@ -324,7 +324,7 @@ int main(int argc, char** argv) {
 
     /* --- Main loop ----------------------------------------------------- */
     uint32_t  slot = 0;
-    auto      next_present = std::chrono::steady_clock::now();
+    waywallen::ffvk::Presenter presenter;  // Iter 3: PTS-driven pacing.
     waywallen::ffvk::Nv12Frame frame;
 
     while (!host.shutdown.load(std::memory_order_acquire)) {
@@ -346,6 +346,8 @@ int main(int argc, char** argv) {
 
         if (host.loop_pending.exchange(false, std::memory_order_acq_rel)) {
             decoder->set_loop(host.loop_value.load(std::memory_order_acquire));
+            // Loop toggled — let the presenter re-baseline on next frame.
+            presenter.reset();
         }
 
         if (host.paused.load(std::memory_order_acquire)) {
@@ -378,6 +380,9 @@ int main(int argc, char** argv) {
             });
             continue;
         }
+
+        // PTS pacing: sleep until this frame is due. Drop if too late.
+        if (!presenter.present_frame(frame.pts_seconds)) continue;
 
         if (int rc = ww_bridge_pool_wait_slot_release(host.pool, slot, 250);
             rc != 0 && rc != -ETIME) {
@@ -423,14 +428,6 @@ int main(int argc, char** argv) {
         }
 
         slot = (slot + 1) % SLOT_COUNT;
-
-        auto now = std::chrono::steady_clock::now();
-        if (now < next_present) {
-            std::this_thread::sleep_until(next_present);
-            next_present += FRAME_INTERVAL;
-        } else {
-            next_present = now + FRAME_INTERVAL;
-        }
     }
 
     if (reader.joinable()) {
