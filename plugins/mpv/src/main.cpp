@@ -35,6 +35,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <sys/prctl.h>
 #include <sys/socket.h>
@@ -49,6 +50,7 @@ constexpr uint32_t SLOT_COUNT = 3;
 struct Options {
     std::string ipc_path;
     std::string video_path;
+    std::string render_node;   // e.g. "/dev/dri/renderD128"; empty → platform default
     uint32_t    width { 1280 };
     uint32_t    height { 720 };
     bool        loop_file { true };
@@ -80,6 +82,8 @@ Options parse_args(int argc, char** argv) {
             o.hwdec = false;
         } else if (a == "--no-loop") {
             o.loop_file = false;
+        } else if (a == "--render-node") {
+            o.render_node = next();
         } else {
             ww_bridge_skip_unknown_kv_arg(&i, argc, argv);
         }
@@ -117,74 +121,170 @@ void* must_egl_proc(const char* name) {
     return p;
 }
 
-// Open the DRM render node bound to the EGL display, falling back to
-// a known-paths scan. Pattern adopted from libfunnel/src/egl.c so EGL
-// and GBM end up on the same physical GPU on multi-GPU systems.
-int open_render_node(EGLDisplay display) {
-    const char* node = nullptr;
-    auto eglQueryDisplayAttribEXT_ =
-        reinterpret_cast<PFNEGLQUERYDISPLAYATTRIBEXTPROC>(
-            eglGetProcAddress("eglQueryDisplayAttribEXT"));
+struct EglCandidate {
+    EGLDeviceEXT dev;
+    std::string  render_node;  // empty if device exposes neither RENDER_NODE nor DEVICE_FILE
+};
+
+// Build the candidate list for init_egl. Always goes through
+// `eglQueryDevicesEXT` so the same code path drives both the
+// `--render-node`-pinned case and the default. Behaviour:
+//   * `opt.render_node` set → 1-element list, the device whose render
+//     node (or card node) shares `st_rdev` with the requested path
+//     (handles symlinks, `renderDN` ↔ `cardN` aliasing). Dies if no
+//     enumerated device matches — explicit pinning is hard-fail.
+//   * empty → every enumerated device in `eglQueryDevicesEXT` order.
+//     init_egl will try them in turn and use the first that
+//     successfully `eglInitialize`s. This unblocks multi-GPU hosts
+//     where slot-0 happens to be a card our libEGL can't drive (e.g.
+//     NVIDIA enumerated by Mesa with no NVIDIA ICD installed).
+std::vector<EglCandidate> enumerate_egl_candidates(const Options& opt) {
+    auto eglQueryDevicesEXT_ =
+        reinterpret_cast<PFNEGLQUERYDEVICESEXTPROC>(
+            eglGetProcAddress("eglQueryDevicesEXT"));
     auto eglQueryDeviceStringEXT_ =
         reinterpret_cast<PFNEGLQUERYDEVICESTRINGEXTPROC>(
             eglGetProcAddress("eglQueryDeviceStringEXT"));
-    if (eglQueryDisplayAttribEXT_ && eglQueryDeviceStringEXT_) {
-        EGLAttrib dev_attr = 0;
-        if (eglQueryDisplayAttribEXT_(display, EGL_DEVICE_EXT, &dev_attr)
-            && dev_attr) {
-            EGLDeviceEXT dev = reinterpret_cast<EGLDeviceEXT>(dev_attr);
-            node = eglQueryDeviceStringEXT_(dev, EGL_DRM_RENDER_NODE_FILE_EXT);
-            if (!node)
-                node = eglQueryDeviceStringEXT_(dev, EGL_DRM_DEVICE_FILE_EXT);
+    if (!eglQueryDevicesEXT_ || !eglQueryDeviceStringEXT_)
+        die("EGL_EXT_device_enumeration / device_query missing");
+
+    EGLDeviceEXT devs[16] = {};
+    EGLint n_devs = 0;
+    if (!eglQueryDevicesEXT_(16, devs, &n_devs) || n_devs <= 0)
+        die("eglQueryDevicesEXT returned no devices");
+
+    auto query_render_path = [&](EGLDeviceEXT d) -> std::string {
+        // Prefer renderDN — render nodes are unprivileged-openable
+        // on every driver, card nodes aren't.
+        if (const char* p = eglQueryDeviceStringEXT_(
+                d, EGL_DRM_RENDER_NODE_FILE_EXT)) return p;
+        if (const char* p = eglQueryDeviceStringEXT_(
+                d, EGL_DRM_DEVICE_FILE_EXT)) return p;
+        return {};
+    };
+
+    if (!opt.render_node.empty()) {
+        struct stat req_st = {};
+        if (::stat(opt.render_node.c_str(), &req_st) != 0)
+            die("--render-node: stat(" + opt.render_node + ") failed: "
+                + std::strerror(errno));
+        for (EGLint i = 0; i < n_devs; ++i) {
+            const char* render = eglQueryDeviceStringEXT_(
+                devs[i], EGL_DRM_RENDER_NODE_FILE_EXT);
+            const char* card = eglQueryDeviceStringEXT_(
+                devs[i], EGL_DRM_DEVICE_FILE_EXT);
+            const char* paths[2] = { render, card };
+            for (const char* p : paths) {
+                if (!p) continue;
+                struct stat st = {};
+                if (::stat(p, &st) != 0) continue;
+                if (st.st_rdev == req_st.st_rdev) {
+                    std::string chosen_path = render ? render : card;
+                    std::fprintf(stderr,
+                        "waywallen-mpv-renderer: matched --render-node %s "
+                        "to EGL device %d (%s)\n",
+                        opt.render_node.c_str(), i, chosen_path.c_str());
+                    return { { devs[i], chosen_path } };
+                }
+            }
         }
+        die("--render-node: no EGL device exposes " + opt.render_node);
     }
-    if (node) {
-        int fd = ::open(node, O_RDWR | O_CLOEXEC);
-        if (fd >= 0) {
-            std::fprintf(stderr,
-                "waywallen-mpv-renderer: opened DRM render node %s via EGL_DEVICE_EXT (fd=%d)\n",
-                node, fd);
-            return fd;
-        }
+
+    std::vector<EglCandidate> out;
+    out.reserve(static_cast<size_t>(n_devs));
+    for (EGLint i = 0; i < n_devs; ++i) {
+        out.push_back({ devs[i], query_render_path(devs[i]) });
     }
-    static const char* scan[] = { "/dev/dri/renderD128", "/dev/dri/renderD129" };
-    for (const char* n : scan) {
-        int fd = ::open(n, O_RDWR | O_CLOEXEC);
-        if (fd >= 0) {
-            std::fprintf(stderr,
-                "waywallen-mpv-renderer: opened DRM render node %s by scan (fd=%d)\n",
-                n, fd);
-            return fd;
-        }
-    }
-    return -1;
+    std::fprintf(stderr,
+        "waywallen-mpv-renderer: enumerated %d EGL device(s); will try "
+        "each until eglInitialize succeeds (pin with --render-node to skip)\n",
+        n_devs);
+    return out;
 }
 
-void init_egl(GlCtx& gl, const Options& /*opt*/) {
+bool have_required_egl_exts(const char* exts) {
+    return egl_has_ext(exts, "EGL_KHR_surfaceless_context")
+        && egl_has_ext(exts, "EGL_EXT_image_dma_buf_import")
+        && egl_has_ext(exts, "EGL_EXT_image_dma_buf_import_modifiers")
+        && egl_has_ext(exts, "EGL_KHR_fence_sync")
+        && egl_has_ext(exts, "EGL_ANDROID_native_fence_sync");
+}
+
+void init_egl(GlCtx& gl, const Options& opt) {
     auto eglGetPlatformDisplayEXT_ =
         reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
             must_egl_proc("eglGetPlatformDisplayEXT"));
 
-    gl.display = eglGetPlatformDisplayEXT_(
-        EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, nullptr);
+    auto candidates = enumerate_egl_candidates(opt);
+    EGLint egl_major = 0;
+    EGLint egl_minor = 0;
+
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        const auto& c = candidates[i];
+        const char* path_log = c.render_node.empty()
+            ? "(no DRM path)" : c.render_node.c_str();
+        std::fprintf(stderr,
+            "waywallen-mpv-renderer: trying EGL device %zu/%zu (%s)\n",
+            i, candidates.size(), path_log);
+
+        EGLDisplay display = eglGetPlatformDisplayEXT_(
+            EGL_PLATFORM_DEVICE_EXT, c.dev, nullptr);
+        if (display == EGL_NO_DISPLAY) {
+            std::fprintf(stderr,
+                "waywallen-mpv-renderer: device %zu eglGetPlatformDisplayEXT "
+                "failed; trying next\n", i);
+            continue;
+        }
+
+        EGLint major = 0, minor = 0;
+        if (!eglInitialize(display, &major, &minor)) {
+            // Per spec the display isn't initialized on failure;
+            // skip eglTerminate (it would be a no-op at best, error
+            // at worst) and just abandon the handle.
+            std::fprintf(stderr,
+                "waywallen-mpv-renderer: device %zu eglInitialize failed; "
+                "trying next\n", i);
+            continue;
+        }
+
+        if (!have_required_egl_exts(eglQueryString(display, EGL_EXTENSIONS))) {
+            std::fprintf(stderr,
+                "waywallen-mpv-renderer: device %zu missing required EGL "
+                "extensions (surfaceless / dma_buf_import / fence_sync); "
+                "trying next\n", i);
+            eglTerminate(display);
+            continue;
+        }
+
+        if (c.render_node.empty()) {
+            std::fprintf(stderr,
+                "waywallen-mpv-renderer: device %zu exposes no DRM render "
+                "node; trying next\n", i);
+            eglTerminate(display);
+            continue;
+        }
+        int fd = ::open(c.render_node.c_str(), O_RDWR | O_CLOEXEC);
+        if (fd < 0) {
+            std::fprintf(stderr,
+                "waywallen-mpv-renderer: device %zu open(%s) failed: %s; "
+                "trying next\n", i, c.render_node.c_str(),
+                std::strerror(errno));
+            eglTerminate(display);
+            continue;
+        }
+
+        gl.display = display;
+        gl.drm_fd  = fd;
+        egl_major  = major;
+        egl_minor  = minor;
+        std::fprintf(stderr,
+            "waywallen-mpv-renderer: opened DRM render node %s (fd=%d)\n",
+            c.render_node.c_str(), gl.drm_fd);
+        break;
+    }
     if (gl.display == EGL_NO_DISPLAY)
-        die("eglGetPlatformDisplay(SURFACELESS_MESA) failed; Mesa required");
-
-    EGLint major = 0, minor = 0;
-    if (!eglInitialize(gl.display, &major, &minor)) die("eglInitialize failed");
-
-    const char* exts = eglQueryString(gl.display, EGL_EXTENSIONS);
-    if (!egl_has_ext(exts, "EGL_KHR_surfaceless_context"))
-        die("EGL_KHR_surfaceless_context missing");
-    if (!egl_has_ext(exts, "EGL_EXT_image_dma_buf_import")
-        || !egl_has_ext(exts, "EGL_EXT_image_dma_buf_import_modifiers"))
-        die("EGL DMA-BUF import (modifiers) extensions missing");
-    if (!egl_has_ext(exts, "EGL_KHR_fence_sync")
-        || !egl_has_ext(exts, "EGL_ANDROID_native_fence_sync"))
-        die("EGL fence-sync extensions missing");
-
-    gl.drm_fd = open_render_node(gl.display);
-    if (gl.drm_fd < 0) die("no DRM render node could be opened");
+        die("no EGL device could be initialized — see warnings above");
 
     if (!eglBindAPI(EGL_OPENGL_ES_API)) die("eglBindAPI(GLES) failed");
 
@@ -226,7 +326,7 @@ void init_egl(GlCtx& gl, const Options& /*opt*/) {
     ww_bridge_egl_dt_t dt {};
     ww_bridge_egl_dt_load(&dt, eglGetProcAddress);
     ww_bridge_egl_log_gpu_info("waywallen-mpv-renderer", &dt,
-                               gl.display, major, minor);
+                               gl.display, egl_major, egl_minor);
 }
 
 // Build the per-slot mpv intermediate FBO. Lives outside the bridge
