@@ -171,7 +171,7 @@ MD.Popup {
             wrapMode: Text.WordWrap
         }
 
-        ListView {
+        MD.VerticalListView {
             id: settingsList
             Layout.fillWidth: true
             Layout.fillHeight: true
