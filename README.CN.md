@@ -6,6 +6,8 @@
 
 <p align="center"><strong> Wallpaper Manager for Linux </strong></p>
 
+<a href="README.md">English README</a>
+
 ---
 
 Waywallen 是一个为 Linux 桌面打造的动态壁纸方案  
@@ -23,8 +25,7 @@ Waywallen 是一个为 Linux 桌面打造的动态壁纸方案
 
 ### 安装
 
-**Flatpak**
-[org.waywallen.waywallen](https://github.com/hypengw/org.waywallen.waywallen)
+**预编译包** —— 到 [Releases 页面](https://github.com/waywallen/waywallen/releases) 下载最新版本。
 
 **从源码构建** —— 见 [BUILD.md](BUILD.md)。
 

@@ -11,7 +11,7 @@ End-to-end build instructions for developers.
 | CMake | 3.28+ | |
 | Vulkan SDK | ≥ 1.1 |  |
 | Qt6 | ≥ 6.10 | Quick, DBus, Protobuf |
-| mpv | - |  |
+| ffmpeg | - |  |
 
 ## Build, install, run
 

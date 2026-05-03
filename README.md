@@ -25,8 +25,7 @@ It started life as a Wallpaper Engine plugin for KDE.
 
 ### Install
 
-**Flatpak**
-[org.waywallen.waywallen](https://github.com/hypengw/org.waywallen.waywallen)
+**Prebuilt binaries** — grab the latest archive from the [Releases page](https://github.com/waywallen/waywallen/releases).
 
 **From source** — see [BUILD.md](BUILD.md).
 
