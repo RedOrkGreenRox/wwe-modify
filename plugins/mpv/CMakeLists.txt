@@ -43,7 +43,9 @@ endif()
 # ---------------------------------------------------------------------------
 
 add_executable(waywallen-mpv-renderer src/main.cpp)
-
+set_target_properties(waywallen-mpv-renderer PROPERTIES 
+    INSTALL_RPATH "${WAYWALLEN_BIN_RPATH}"
+)
 target_compile_features(waywallen-mpv-renderer PRIVATE cxx_std_20)
 target_compile_options(waywallen-mpv-renderer PRIVATE
     -Wall -Wextra -Wpedantic

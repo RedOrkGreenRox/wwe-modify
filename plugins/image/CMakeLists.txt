@@ -47,7 +47,9 @@ add_executable(waywallen-image-renderer
     src/main.cpp
     src/av_image.cpp
 )
-
+set_target_properties(waywallen-image-renderer PROPERTIES 
+    INSTALL_RPATH "${WAYWALLEN_BIN_RPATH}"
+)
 target_compile_features(waywallen-image-renderer PRIVATE cxx_std_20)
 target_compile_options(waywallen-image-renderer PRIVATE
     -Wall -Wextra -Wpedantic

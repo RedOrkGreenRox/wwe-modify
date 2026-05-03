@@ -43,7 +43,9 @@ endif()
 add_executable(waywallen-video-renderer
     src/main.cpp
 )
-
+set_target_properties(waywallen-video-renderer PROPERTIES 
+    INSTALL_RPATH "${WAYWALLEN_BIN_RPATH}"
+)
 target_compile_features(waywallen-video-renderer PRIVATE cxx_std_20)
 target_compile_options(waywallen-video-renderer PRIVATE
     -Wall -Wextra -Wpedantic

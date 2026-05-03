@@ -221,7 +221,10 @@ target_link_libraries(waywallen-qml
 )
 
 qt_add_executable(${PROJECT_NAME} MANUAL_FINALIZATION src/main.cpp)
-set_target_properties(${PROJECT_NAME} PROPERTIES CXX_SCAN_FOR_MODULES ON)
+set_target_properties(${PROJECT_NAME} PROPERTIES 
+  CXX_SCAN_FOR_MODULES ON
+  INSTALL_RPATH "${WAYWALLEN_BIN_RPATH}"
+)
 target_compile_definitions(${PROJECT_NAME} PRIVATE "${APP_INFO_MACROS}")
 target_link_libraries(${PROJECT_NAME} PRIVATE waywallen-qml)
 
