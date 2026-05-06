@@ -1,31 +1,43 @@
-use std::os::fd::AsRawFd;
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::time::Duration;
+use std::io::{BufRead, BufReader};
+use std::process::Child;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use ash::vk;
+use serde::Deserialize;
 
-use super::super::proto::{recv_msg, send_msg, TestMsg, PROTOCOL_VERSION};
+use crate::display::endpoint;
+use crate::ipc::proto::EventMsg;
+use crate::renderer_manager::{BindSnapshot, RendererHandle, RendererManager};
+use crate::routing::Router;
+
 use super::super::report::Fanout;
-use super::super::spawn::{bind_listener, make_socket_path, spawn, ChildSpec, SocketCleanup};
+use super::super::spawn::{spawn, ChildSpec};
 use super::super::vk::cmd;
 use super::super::vk::device::VkDevice;
 use super::super::vk::image::{create_with_modifiers, export_dmabuf};
-use super::super::vk::sync::{create_timeline_exportable, export_opaque_fd, wait_timeline};
+use super::super::vk::sync::{create_binary_sync_fd_exportable, export_signaled_sync_fd};
 
 const FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
 const FOURCC_AB24: u32 = 0x34324241;
 const WIDTH: u32 = 256;
 const HEIGHT: u32 = 256;
 const FRAMES: u32 = 60;
-const PER_FRAME_TIMEOUT_NS: u64 = 1_000_000_000;
 const NUM_DISPLAYS: u32 = 2;
+const DISPLAY_REGISTER_TIMEOUT: Duration = Duration::from_secs(10);
+const FRAME_PACE: Duration = Duration::from_millis(16);
 
-struct DisplayConn {
-    pub stream: UnixStream,
-    pub _child: std::process::Child,
-    pub _cleanup: SocketCleanup,
-    pub display_id: u32,
+#[derive(Debug, Deserialize)]
+struct ChildStatus {
+    #[allow(dead_code)]
+    role: String,
+    slot: u32,
+    frames: u64,
+    ok: u64,
+    mismatch: u64,
+    clean_exit: bool,
+    fatal: Option<String>,
 }
 
 pub fn run_orchestrator(
@@ -33,27 +45,44 @@ pub fn run_orchestrator(
     phys: vk::PhysicalDevice,
     vkd: &VkDevice,
     dev_meta: &super::super::vk::instance::DeviceMeta,
+    cross_gpu: bool,
 ) -> Result<Fanout> {
-    log::info!("fanout: spawning {NUM_DISPLAYS} display children");
-    let mut conns: Vec<DisplayConn> = Vec::with_capacity(NUM_DISPLAYS as usize);
-    for id in 0..NUM_DISPLAYS {
-        let conn = spawn_and_handshake(dev_meta, id)?;
-        conns.push(conn);
-    }
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("build tokio runtime for fanout")?;
+    rt.block_on(run_async(instance, phys, vkd, dev_meta, cross_gpu))
+}
 
-    let modifier = pick_modifier(vkd, instance, phys)?;
+async fn run_async(
+    instance: &ash::Instance,
+    phys: vk::PhysicalDevice,
+    vkd: &VkDevice,
+    dev_meta: &super::super::vk::instance::DeviceMeta,
+    cross_gpu: bool,
+) -> Result<Fanout> {
+    log::info!("fanout: bringing up production endpoint + Router");
+
+    let mgr = Arc::new(RendererManager::new_default());
+    let router = Router::new(Arc::clone(&mgr));
+    let renderer = RendererHandle::test_stub("self_test_fanout", "image");
+    mgr.register_test_handle(Arc::clone(&renderer)).await;
+    router.register_renderer(Arc::clone(&renderer)).await;
+
+    let modifier = pick_modifier(vkd, instance, phys, cross_gpu)?;
     log::info!(
         "fanout: using modifier {:#x} ({})",
         modifier,
         super::super::vk::modifier::format_modifier(modifier)
     );
-
     let img0 = create_with_modifiers(
         vkd,
         WIDTH,
         HEIGHT,
         FORMAT,
-        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+        vk::ImageUsageFlags::COLOR_ATTACHMENT
+            | vk::ImageUsageFlags::TRANSFER_SRC
+            | vk::ImageUsageFlags::TRANSFER_DST,
         &[modifier],
         false,
     )
@@ -63,60 +92,77 @@ pub fn run_orchestrator(
         WIDTH,
         HEIGHT,
         FORMAT,
-        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+        vk::ImageUsageFlags::COLOR_ATTACHMENT
+            | vk::ImageUsageFlags::TRANSFER_SRC
+            | vk::ImageUsageFlags::TRANSFER_DST,
         &[modifier],
         false,
     )
     .context("alloc slot 1")?;
-
     let cmdbuf = cmd::create(vkd)?;
     cmd::transition_to_general(vkd, &cmdbuf, &[img0.image, img1.image])?;
 
-    // Single shared acquire timeline (all displays wait the same value),
-    // per-display release so the orchestrator can detect a single
-    // straggler (refcount-style bug) instead of waiting for all.
-    let acquire = create_timeline_exportable(vkd)?;
-    let mut releases: Vec<super::super::vk::sync::TimelineSemaphore> = Vec::with_capacity(conns.len());
-    for _ in 0..conns.len() {
-        releases.push(create_timeline_exportable(vkd)?);
+    let fd0 = export_dmabuf(vkd, &img0).context("export slot 0 dma-buf")?;
+    let fd1 = export_dmabuf(vkd, &img1).context("export slot 1 dma-buf")?;
+
+    let snap = BindSnapshot {
+        generation: 1,
+        flags: 0,
+        count: 2,
+        fourcc: FOURCC_AB24,
+        width: WIDTH,
+        height: HEIGHT,
+        modifier: img0.modifier,
+        planes_per_buffer: 1,
+        stride: vec![
+            u32::try_from(img0.plane0_stride).unwrap_or(u32::MAX),
+            u32::try_from(img1.plane0_stride).unwrap_or(u32::MAX),
+        ],
+        plane_offset: vec![
+            u32::try_from(img0.plane0_offset).unwrap_or(0),
+            u32::try_from(img1.plane0_offset).unwrap_or(0),
+        ],
+        size: vec![img0.plane0_size, img1.plane0_size],
+        fds: vec![fd0, fd1],
+    };
+    *renderer.bind_snapshot().lock().unwrap() = Some(snap);
+
+    let sock_dir = make_socket_dir().context("tempdir for endpoint socket")?;
+    let sock = sock_dir.join("display.sock");
+    let (sd_tx, sd_rx) = tokio::sync::watch::channel(false);
+    let serve_handle = {
+        let r = Arc::clone(&router);
+        let s = sock.clone();
+        tokio::spawn(async move {
+            let _ = endpoint::serve_with_shutdown(&s, r, sd_rx).await;
+        })
+    };
+    wait_for_sock_ready(&sock, Duration::from_secs(5)).await?;
+
+    let mut children: Vec<ChildHandle> = Vec::with_capacity(NUM_DISPLAYS as usize);
+    for slot in 0..NUM_DISPLAYS {
+        let mut spec = ChildSpec {
+            role: "display",
+            socket: sock.clone(),
+            vk_uuid: dev_meta.uuid,
+            slot,
+            display_name: Some(format!("self-test-display-{slot}")),
+            instance_id: Some(format!("self-test-{slot}-{}", std::process::id())),
+            max_frames: Some(FRAMES as u64),
+            capture_stdout: true,
+        };
+        let child = spawn(&spec).context("spawn display child")?;
+        spec.role = "display"; // keep clippy happy with the borrow
+        children.push(ChildHandle::new(child, slot));
     }
 
-    for (i, conn) in conns.iter().enumerate() {
-        let fd0 = export_dmabuf(vkd, &img0)?;
-        let fd1 = export_dmabuf(vkd, &img1)?;
-        send_msg(
-            &conn.stream,
-            &TestMsg::BindPair {
-                fourcc: FOURCC_AB24,
-                modifier: img0.modifier,
-                width: WIDTH,
-                height: HEIGHT,
-                slot_strides: [
-                    u32::try_from(img0.plane0_stride).unwrap_or(u32::MAX),
-                    u32::try_from(img1.plane0_stride).unwrap_or(u32::MAX),
-                ],
-                slot_offsets: [
-                    u32::try_from(img0.plane0_offset).unwrap_or(0),
-                    u32::try_from(img1.plane0_offset).unwrap_or(0),
-                ],
-                slot_sizes: [img0.plane0_size, img1.plane0_size],
-                color_seed: 0,
-                frame_count: FRAMES,
-            },
-            &[fd0.as_raw_fd(), fd1.as_raw_fd()],
-        )
-        .map_err(|e| anyhow!("send BindPair to display {}: {e}", conn.display_id))?;
-        drop((fd0, fd1));
-
-        let acq_fd = export_opaque_fd(vkd, &acquire)?;
-        let rel_fd = export_opaque_fd(vkd, &releases[i])?;
-        send_msg(
-            &conn.stream,
-            &TestMsg::BindTimelines,
-            &[acq_fd.as_raw_fd(), rel_fd.as_raw_fd()],
-        )
-        .map_err(|e| anyhow!("send BindTimelines to display {}: {e}", conn.display_id))?;
-        drop((acq_fd, rel_fd));
+    // Display children connect, register, and the router auto-links each
+    // to our stub renderer (it's the only one). We wait until every
+    // display is bound to the renderer's current generation — only then
+    // are FrameReady events fanned out (see Router::on_renderer_frame).
+    renderer.push_self_test_event(make_bind_event(&renderer));
+    if let Err(e) = wait_for_displays_bound(&router, NUM_DISPLAYS).await {
+        log::warn!("fanout: displays did not all register: {e}");
     }
 
     let mut report = Fanout {
@@ -130,10 +176,9 @@ pub fn run_orchestrator(
     let imgs = [img0.image, img1.image];
     for n in 0..FRAMES {
         let slot = (n & 1) as usize;
-        let acq_val = (n + 1) as u64;
-        let rel_val = (n + 1) as u64;
         let (color_f, _) = super::render_loop::color_for(n);
 
+        let signal_sem = create_binary_sync_fd_exportable(vkd)?;
         unsafe {
             vkd.device
                 .reset_command_buffer(cmdbuf.buf, vk::CommandBufferResetFlags::empty())?;
@@ -153,100 +198,86 @@ pub fn run_orchestrator(
                     .layer_count(1)],
             );
             vkd.device.end_command_buffer(cmdbuf.buf)?;
-            let signal_sems = [acquire.sem];
-            let signal_vals = [acq_val];
-            let mut tl = vk::TimelineSemaphoreSubmitInfo::default()
-                .signal_semaphore_values(&signal_vals);
+            let sigs = [signal_sem];
             let bufs = [cmdbuf.buf];
             vkd.device.queue_submit(
                 vkd.queue,
                 &[vk::SubmitInfo::default()
                     .command_buffers(&bufs)
-                    .signal_semaphores(&signal_sems)
-                    .push_next(&mut tl)],
+                    .signal_semaphores(&sigs)],
                 vk::Fence::null(),
             )?;
         }
+        let sync_fd = export_signaled_sync_fd(vkd, signal_sem)
+            .context("export signaled SYNC_FD")?;
+        renderer.push_self_test_sync_fd(n as u64, sync_fd);
 
-        for conn in &conns {
-            send_msg(
-                &conn.stream,
-                &TestMsg::Frame {
-                    n,
-                    slot: slot as u32,
-                    acquire_value: acq_val,
-                    release_value: rel_val,
-                },
-                &[],
-            )
-            .map_err(|e| anyhow!("send Frame to display {}: {e}", conn.display_id))?;
+        renderer.push_self_test_event(EventMsg::FrameReady {
+            image_index: slot as u32,
+            seq: n as u64,
+            ts_ns: 0,
+            release_point: (n as u64) + 1,
+        });
+
+        unsafe {
+            vkd.device.queue_wait_idle(vkd.queue)?;
+            vkd.device.destroy_semaphore(signal_sem, None);
         }
 
-        let mut frame_ok = true;
-        for (i, rel) in releases.iter().enumerate() {
-            if let Err(e) = wait_timeline(vkd, rel, rel_val, PER_FRAME_TIMEOUT_NS) {
-                log::warn!(
-                    "fanout: release timeout display {} frame {}: {e}",
-                    conns[i].display_id,
-                    n,
-                );
-                frame_ok = false;
-            }
-        }
-        if !frame_ok {
+        // Pace frames so the consumer has a chance to drain its socket
+        // and signal release_syncobj before we push the next frame.
+        // Production renderers run at 60 Hz; matching that is fine
+        // here.
+        tokio::time::sleep(FRAME_PACE).await;
+    }
+
+    log::info!("fanout: producer pushed {FRAMES} frames; waiting for displays");
+
+    // Give the children up to 3 seconds to drain the last frames and exit.
+    let drain_deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < drain_deadline {
+        if children.iter_mut().all(|c| c.poll_exited()) {
             break;
         }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
-        let mut got_reports = vec![false; conns.len()];
-        for _ in 0..conns.len() {
-            let mut got_one = false;
-            for (i, conn) in conns.iter().enumerate() {
-                if got_reports[i] {
-                    continue;
-                }
-                match recv_msg(&conn.stream) {
-                    Ok((TestMsg::ColorReport { ok, .. }, _)) => {
-                        got_reports[i] = true;
-                        got_one = true;
-                        if !ok {
-                            log::warn!(
-                                "fanout: display {} frame {}: color mismatch",
-                                conn.display_id, n
-                            );
-                            frame_ok = false;
-                        }
-                        break;
-                    }
-                    Ok(other) => anyhow::bail!(
-                        "expected ColorReport from {}, got {other:?}",
-                        conn.display_id
-                    ),
-                    Err(e) => anyhow::bail!(
-                        "recv ColorReport from {} failed: {e}",
-                        conn.display_id
-                    ),
-                }
-            }
-            if !got_one {
-                break;
-            }
-        }
-        if frame_ok {
-            report.ok += 1;
+    let _ = sd_tx.send(true);
+    let _ = serve_handle.await;
+
+    // Now collect statuses (this also reaps remaining children).
+    let mut total_ok = 0u64;
+    let mut total_mismatch = 0u64;
+    let mut total_frames = 0u64;
+    let mut had_fatal = false;
+    for c in &mut children {
+        let status = c.collect_status();
+        log::info!(
+            "fanout: display#{} frames={} ok={} mismatch={} clean={} fatal={:?}",
+            c.slot, status.frames, status.ok, status.mismatch, status.clean_exit, status.fatal
+        );
+        total_ok += status.ok;
+        total_mismatch += status.mismatch;
+        total_frames += status.frames;
+        if status.fatal.is_some() {
+            had_fatal = true;
         }
     }
 
-    for conn in &conns {
-        let _ = send_msg(&conn.stream, &TestMsg::LoopDone, &[]);
+    let expected_total = NUM_DISPLAYS as u64 * FRAMES as u64;
+    report.refcount_leaks = u32::try_from(expected_total.saturating_sub(total_frames))
+        .unwrap_or(u32::MAX);
+    let frames_per_display_ok = total_ok / NUM_DISPLAYS as u64;
+    report.ok = u32::try_from(frames_per_display_ok).unwrap_or(u32::MAX);
+    if had_fatal {
+        log::warn!("fanout: at least one display child reported fatal");
     }
-    drop(conns);
+    if total_mismatch > 0 {
+        log::warn!("fanout: total color mismatches across displays: {total_mismatch}");
+    }
 
     unsafe {
         let _ = vkd.device.device_wait_idle();
-        vkd.device.destroy_semaphore(acquire.sem, None);
-        for r in &releases {
-            vkd.device.destroy_semaphore(r.sem, None);
-        }
         vkd.device.free_memory(img0.memory, None);
         vkd.device.free_memory(img1.memory, None);
         vkd.device.destroy_image(img0.image, None);
@@ -261,7 +292,11 @@ fn pick_modifier(
     vkd: &VkDevice,
     instance: &ash::Instance,
     phys: vk::PhysicalDevice,
+    cross_gpu: bool,
 ) -> Result<u64> {
+    if cross_gpu {
+        return Ok(0);
+    }
     let entries = super::super::vk::modifier::query_supported(instance, phys, FORMAT)?;
     let _ = vkd;
     if let Some(e) = entries
@@ -273,129 +308,154 @@ fn pick_modifier(
     Ok(0)
 }
 
-fn spawn_and_handshake(
-    dev_meta: &super::super::vk::instance::DeviceMeta,
-    display_id: u32,
-) -> Result<DisplayConn> {
-    let socket = make_socket_path(&format!("display{display_id}"))?;
-    let (listener, cleanup) = bind_listener(&socket)?;
-    let child = spawn(&ChildSpec {
-        role: "display",
-        socket: socket.clone(),
-        vk_uuid: dev_meta.uuid,
-        slot: display_id,
-    })?;
-    let stream = accept_with_timeout(&listener, Duration::from_secs(5))?;
-    handshake_orch_side(&stream, dev_meta)?;
-    Ok(DisplayConn {
-        stream,
-        _child: child,
-        _cleanup: cleanup,
-        display_id,
-    })
+fn make_bind_event(renderer: &RendererHandle) -> EventMsg {
+    let snap = renderer.bind_snapshot();
+    let g = snap.lock().unwrap();
+    let s = g.as_ref().expect("bind_snapshot set above");
+    EventMsg::BindBuffers {
+        generation: s.generation,
+        flags: s.flags,
+        count: s.count,
+        fourcc: s.fourcc,
+        width: s.width,
+        height: s.height,
+        modifier: s.modifier,
+        planes_per_buffer: s.planes_per_buffer,
+        stride: s.stride.clone(),
+        plane_offset: s.plane_offset.clone(),
+        size: s.size.clone(),
+    }
 }
 
-fn accept_with_timeout(l: &UnixListener, timeout: Duration) -> Result<UnixStream> {
-    l.set_nonblocking(true)?;
-    let deadline = std::time::Instant::now() + timeout;
+async fn wait_for_sock_ready(path: &std::path::Path, timeout: Duration) -> Result<()> {
+    let deadline = Instant::now() + timeout;
     loop {
-        match l.accept() {
-            Ok((s, _)) => {
-                s.set_nonblocking(false)?;
-                return Ok(s);
+        match tokio::net::UnixStream::connect(path).await {
+            Ok(s) => {
+                drop(s);
+                return Ok(());
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                if std::time::Instant::now() >= deadline {
-                    anyhow::bail!("accept timeout after {:?}", timeout);
+            Err(_) if Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            Err(e) => return Err(anyhow!("socket {} never bound: {e}", path.display())),
+        }
+    }
+}
+
+async fn wait_for_displays_bound(router: &Arc<Router>, n: u32) -> Result<()> {
+    let deadline = Instant::now() + DISPLAY_REGISTER_TIMEOUT;
+    loop {
+        let snap = router.snapshot_displays().await;
+        if snap.len() >= n as usize && snap.iter().all(|d| !d.links.is_empty()) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "only {}/{n} display(s) bound after {:?}",
+                snap.len(),
+                DISPLAY_REGISTER_TIMEOUT
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+struct ChildHandle {
+    child: Option<Child>,
+    slot: u32,
+    status: Option<ChildStatus>,
+}
+
+impl ChildHandle {
+    fn new(child: Child, slot: u32) -> Self {
+        Self {
+            child: Some(child),
+            slot,
+            status: None,
+        }
+    }
+
+    fn poll_exited(&mut self) -> bool {
+        let Some(c) = self.child.as_mut() else {
+            return true;
+        };
+        match c.try_wait() {
+            Ok(Some(_)) => true,
+            Ok(None) => false,
+            Err(_) => true,
+        }
+    }
+
+    fn collect_status(&mut self) -> ChildStatus {
+        let Some(mut child) = self.child.take() else {
+            return self.status.clone().unwrap_or(ChildStatus {
+                role: "display".into(),
+                slot: self.slot,
+                frames: 0,
+                ok: 0,
+                mismatch: 0,
+                clean_exit: false,
+                fatal: Some("no child".into()),
+            });
+        };
+        // Read stdout to EOF so we can parse the JSON status line. The
+        // child closes stdout on exit, so this also waits for it.
+        let stdout = child.stdout.take();
+        let status_from_lines = stdout.and_then(|s| {
+            let reader = BufReader::new(s);
+            let mut last: Option<ChildStatus> = None;
+            for line in reader.lines() {
+                let Ok(line) = line else { break };
+                let trimmed = line.trim();
+                if !trimmed.starts_with('{') {
+                    continue;
                 }
-                std::thread::sleep(Duration::from_millis(50));
+                if let Ok(s) = serde_json::from_str::<ChildStatus>(trimmed) {
+                    last = Some(s);
+                }
             }
-            Err(e) => return Err(e.into()),
+            last
+        });
+        let _ = child.wait();
+        let s = status_from_lines.unwrap_or(ChildStatus {
+            role: "display".into(),
+            slot: self.slot,
+            frames: 0,
+            ok: 0,
+            mismatch: 0,
+            clean_exit: false,
+            fatal: Some("child emitted no status".into()),
+        });
+        self.status = Some(s.clone());
+        s
+    }
+}
+
+impl Clone for ChildStatus {
+    fn clone(&self) -> Self {
+        Self {
+            role: self.role.clone(),
+            slot: self.slot,
+            frames: self.frames,
+            ok: self.ok,
+            mismatch: self.mismatch,
+            clean_exit: self.clean_exit,
+            fatal: self.fatal.clone(),
         }
     }
 }
 
-fn handshake_orch_side(
-    stream: &UnixStream,
-    dev_meta: &super::super::vk::instance::DeviceMeta,
-) -> Result<()> {
-    let (msg, _) = recv_msg(stream).map_err(|e| anyhow!("handshake recv: {e}"))?;
-    let TestMsg::Hello {
-        version,
-        device_uuid_hex,
-        ..
-    } = msg
-    else {
-        anyhow::bail!("expected Hello, got {msg:?}");
-    };
-    if version != PROTOCOL_VERSION {
-        anyhow::bail!("version mismatch");
+fn make_socket_dir() -> Result<std::path::PathBuf> {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .ok_or_else(|| anyhow!("XDG_RUNTIME_DIR is not set"))?;
+    let dir = std::path::PathBuf::from(runtime).join(format!(
+        "waywallen-test-{}-fanout",
+        std::process::id()
+    ));
+    if dir.exists() {
+        let _ = std::fs::remove_dir_all(&dir);
     }
-    let want = super::super::format_uuid_hex(&dev_meta.uuid);
-    if device_uuid_hex != want {
-        anyhow::bail!("uuid mismatch");
-    }
-    send_msg(
-        stream,
-        &TestMsg::Welcome {
-            ok: true,
-            message: "fanout".into(),
-        },
-        &[],
-    )
-    .map_err(|e| anyhow!("send Welcome: {e}"))?;
-    Ok(())
-}
-
-pub fn run_display_child(args: super::super::TestArgs) -> Result<()> {
-    let socket = args.socket.clone().ok_or_else(|| anyhow!("--socket required"))?;
-    let want_uuid = args
-        .vk_uuid
-        .ok_or_else(|| anyhow!("--vk-uuid required"))?;
-    let display_id = args.slot;
-
-    let vk = super::super::vk::instance::create_instance().context("vkCreateInstance")?;
-    let devices = super::super::vk::instance::enumerate(&vk).context("enumerate")?;
-    let dev_meta = super::super::vk::instance::find_by_uuid(&devices, &want_uuid)
-        .ok_or_else(|| anyhow!("display child: vk uuid not found"))?
-        .clone();
-    let vkd = super::super::vk::device::create(&vk.instance, &dev_meta)?;
-
-    let stream = connect_with_retry(&socket, Duration::from_secs(5))?;
-    log::info!("display#{display_id}: connected, device={}", dev_meta.name);
-
-    send_msg(
-        &stream,
-        &TestMsg::Hello {
-            version: PROTOCOL_VERSION,
-            device_uuid_hex: super::super::format_uuid_hex(&dev_meta.uuid),
-            driver_uuid_hex: super::super::format_uuid_hex(&dev_meta.driver_uuid),
-            device_name: dev_meta.name.clone(),
-        },
-        &[],
-    )
-    .map_err(|e| anyhow!("send Hello: {e}"))?;
-    let (welcome, _) = recv_msg(&stream).map_err(|e| anyhow!("recv Welcome: {e}"))?;
-    let TestMsg::Welcome { ok, message } = welcome else {
-        anyhow::bail!("expected Welcome got {welcome:?}");
-    };
-    if !ok {
-        anyhow::bail!("rejected: {message}");
-    }
-
-    super::render_loop::run_peer(&vkd, &stream).context("display")?;
-    Ok(())
-}
-
-fn connect_with_retry(path: &std::path::Path, timeout: Duration) -> Result<UnixStream> {
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        match UnixStream::connect(path) {
-            Ok(s) => return Ok(s),
-            Err(_) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(e) => return Err(anyhow!("connect {}: {e}", path.display())),
-        }
-    }
+    std::fs::create_dir_all(&dir).context("create fanout endpoint dir")?;
+    Ok(dir)
 }

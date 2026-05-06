@@ -69,30 +69,6 @@ pub enum TestMsg {
     },
     LoopDone,
 
-    DisplayBind {
-        display_id: u32,
-        fourcc: u32,
-        modifier: u64,
-        width: u32,
-        height: u32,
-        slot_strides: Vec<u32>,
-        slot_offsets: Vec<u32>,
-        slot_sizes: Vec<u64>,
-    },
-    DisplayFrame {
-        n: u32,
-        slot: u32,
-        expected_rgba: u32,
-    },
-    DisplayReport {
-        display_id: u32,
-        n: u32,
-        slot: u32,
-        expected_rgba: u32,
-        got_rgba: u32,
-        ok: bool,
-    },
-
     Ack,
     Bye {
         reason: String,

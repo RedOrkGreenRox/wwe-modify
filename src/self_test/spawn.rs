@@ -21,6 +21,15 @@ pub struct ChildSpec {
     pub socket: PathBuf,
     pub vk_uuid: [u8; 16],
     pub slot: u32,
+    /// Display-only: forwarded as `--display-name`. Ignored for other roles.
+    pub display_name: Option<String>,
+    /// Display-only: forwarded as `--instance-id`. Empty → not passed.
+    pub instance_id: Option<String>,
+    /// Display-only: forwarded as `--max-frames` (default 60 in child).
+    pub max_frames: Option<u64>,
+    /// Capture child stdout instead of inheriting. Display children
+    /// emit a single JSON status line on exit; orchestrator parses it.
+    pub capture_stdout: bool,
 }
 
 pub fn spawn(spec: &ChildSpec) -> Result<Child> {
@@ -47,7 +56,21 @@ pub fn spawn(spec: &ChildSpec) -> Result<Child> {
         .arg(format_uuid_hex(&spec.vk_uuid))
         .arg("--slot")
         .arg(spec.slot.to_string());
+    if let Some(name) = &spec.display_name {
+        cmd.arg("--display-name").arg(name);
+    }
+    if let Some(id) = &spec.instance_id {
+        if !id.is_empty() {
+            cmd.arg("--instance-id").arg(id);
+        }
+    }
+    if let Some(n) = spec.max_frames {
+        cmd.arg("--max-frames").arg(n.to_string());
+    }
     cmd.stdin(Stdio::null());
+    if spec.capture_stdout {
+        cmd.stdout(Stdio::piped());
+    }
     let child = cmd
         .spawn()
         .with_context(|| format!("spawn child role={}", spec.role))?;

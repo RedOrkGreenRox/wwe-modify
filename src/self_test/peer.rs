@@ -65,7 +65,7 @@ pub fn run_renderer(_args: TestArgs) -> Result<()> {
 }
 
 pub fn run_display(args: TestArgs) -> Result<()> {
-    super::tests::fanout::run_display_child(args)
+    super::display_consumer::run(args)
 }
 
 fn connect_with_retry(path: &std::path::Path, timeout: Duration) -> Result<UnixStream> {

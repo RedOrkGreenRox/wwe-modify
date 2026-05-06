@@ -11,6 +11,9 @@ pub struct Report {
     pub fatal: Option<String>,
     pub devices: Vec<DeviceMeta>,
     pub picked_device_index: Option<usize>,
+    /// Set only when the children run on a different physical device
+    /// than the orchestrator (cross-GPU dma-buf path).
+    pub child_device_index: Option<usize>,
     pub modifier_matrix: Option<ModifierMatrix>,
     pub render_loop: Option<RenderLoop>,
     pub fanout: Option<Fanout>,
@@ -77,6 +80,10 @@ impl Report {
         self.picked_device_index = self.devices.iter().position(|d| d.uuid == dev.uuid);
     }
 
+    pub fn note_child_device(&mut self, dev: &DeviceMeta) {
+        self.child_device_index = self.devices.iter().position(|d| d.uuid == dev.uuid);
+    }
+
     pub fn emit(&self) {
         let mut stdout = std::io::stdout().lock();
         let _ = self.write_summary(&mut stdout);
@@ -104,15 +111,15 @@ impl Report {
             writeln!(w, "VERDICT:          fail")?;
             return Ok(());
         }
-        if let Some(idx) = self.picked_device_index {
-            if let Some(d) = self.devices.get(idx) {
-                writeln!(
-                    w,
-                    "device:           {}  uuid={}",
-                    d.name,
-                    super::format_uuid_hex(&d.uuid),
-                )?;
-            }
+        writeln!(w, "devices:")?;
+        for (i, d) in self.devices.iter().enumerate() {
+            let mark = self.device_role_mark(i);
+            writeln!(
+                w,
+                "  {mark} [{i}] {}  uuid={}",
+                d.name,
+                super::format_uuid_hex(&d.uuid),
+            )?;
         }
         if let Some(a) = &self.modifier_matrix {
             let ok = a
@@ -167,17 +174,21 @@ impl Report {
         writeln!(w)?;
         writeln!(w, "## vulkan devices")?;
         writeln!(w)?;
-        writeln!(w, "| picked | # | name | uuid | type |")?;
-        writeln!(w, "|:------:|--:|------|------|------|")?;
+        writeln!(w, "| role | # | name | uuid | type |")?;
+        writeln!(w, "|:----:|--:|------|------|------|")?;
         for (i, d) in self.devices.iter().enumerate() {
-            let mark = if Some(i) == self.picked_device_index {
-                "*"
-            } else {
-                ""
+            let role = match (
+                Some(i) == self.picked_device_index,
+                Some(i) == self.child_device_index,
+            ) {
+                (true, true) => "orch+child",
+                (true, false) => "orch",
+                (false, true) => "child",
+                (false, false) => "",
             };
             writeln!(
                 w,
-                "| {mark} | {i} | {} | `{}` | {:?} |",
+                "| {role} | {i} | {} | `{}` | {:?} |",
                 d.name,
                 super::format_uuid_hex(&d.uuid),
                 d.kind,
@@ -265,6 +276,20 @@ impl Report {
             "pass-with-warnings"
         } else {
             "pass"
+        }
+    }
+}
+
+impl Report {
+    fn device_role_mark(&self, i: usize) -> &'static str {
+        match (
+            Some(i) == self.picked_device_index,
+            Some(i) == self.child_device_index,
+        ) {
+            (true, true) => "*+",
+            (true, false) => "* ",
+            (false, true) => "+ ",
+            (false, false) => "  ",
         }
     }
 }

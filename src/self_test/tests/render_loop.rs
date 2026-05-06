@@ -53,7 +53,18 @@ fn unpack_rgba(v: u32) -> [u8; 4] {
     ]
 }
 
-fn pick_modifier(vkd: &VkDevice, instance: &ash::Instance, phys: vk::PhysicalDevice) -> Result<u64> {
+fn pick_modifier(
+    vkd: &VkDevice,
+    instance: &ash::Instance,
+    phys: vk::PhysicalDevice,
+    cross_gpu: bool,
+) -> Result<u64> {
+    // LINEAR is the only modifier guaranteed importable across vendors —
+    // tiled layouts encode a vendor-specific tile shape the consumer
+    // GPU cannot decode. Skip the picker entirely on the cross-GPU path.
+    if cross_gpu {
+        return Ok(0);
+    }
     let entries = super::super::vk::modifier::query_supported(instance, phys, FORMAT)?;
     let _ = vkd;
     if let Some(e) = entries
@@ -70,8 +81,9 @@ pub fn run_orchestrator(
     phys: vk::PhysicalDevice,
     vkd: &VkDevice,
     sock: &UnixStream,
+    cross_gpu: bool,
 ) -> Result<RenderLoop> {
-    let modifier = pick_modifier(vkd, instance, phys)?;
+    let modifier = pick_modifier(vkd, instance, phys, cross_gpu)?;
     log::info!(
         "render_loop: using modifier {:#x} ({})",
         modifier,

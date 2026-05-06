@@ -70,6 +70,39 @@ pub fn import_timeline_opaque_fd(vkd: &VkDevice, fd: OwnedFd) -> Result<Timeline
     Ok(TimelineSemaphore { sem })
 }
 
+/// Binary VkSemaphore exportable as SYNC_FD. Signal it via a queue submit
+/// then call [`export_signaled_sync_fd`] to take the dma_fence sync_file
+/// fd out — that fd is what the production display endpoint hands to
+/// each consumer as the per-frame acquire fence.
+pub fn create_binary_sync_fd_exportable(vkd: &VkDevice) -> Result<vk::Semaphore> {
+    let mut export = vk::ExportSemaphoreCreateInfo::default()
+        .handle_types(vk::ExternalSemaphoreHandleTypeFlags::SYNC_FD);
+    let sem = unsafe {
+        vkd.device.create_semaphore(
+            &vk::SemaphoreCreateInfo::default().push_next(&mut export),
+            None,
+        )
+    }
+    .map_err(|e| anyhow!("vkCreateSemaphore(binary SYNC_FD export): {e}"))?;
+    Ok(sem)
+}
+
+/// Export the SYNC_FD payload of a binary semaphore that has been (or
+/// will soon be) signaled via a queue submit. After export, the
+/// semaphore enters the unsignaled state per the SYNC_FD external
+/// semaphore handle semantics, ready for re-use on the next submit.
+pub fn export_signaled_sync_fd(vkd: &VkDevice, sem: vk::Semaphore) -> Result<OwnedFd> {
+    let raw = unsafe {
+        vkd.ext_sem_fd.get_semaphore_fd(
+            &vk::SemaphoreGetFdInfoKHR::default()
+                .semaphore(sem)
+                .handle_type(vk::ExternalSemaphoreHandleTypeFlags::SYNC_FD),
+        )
+    }
+    .map_err(|e| anyhow!("vkGetSemaphoreFdKHR(SYNC_FD): {e}"))?;
+    Ok(unsafe { std::os::fd::FromRawFd::from_raw_fd(raw) })
+}
+
 pub fn wait_timeline(
     vkd: &VkDevice,
     sem: &TimelineSemaphore,

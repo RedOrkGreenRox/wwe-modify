@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+pub mod display_consumer;
 pub mod orchestrator;
 pub mod peer;
 pub mod proto;
@@ -22,8 +23,17 @@ pub struct TestArgs {
     pub vk_uuid: Option<[u8; 16]>,
     pub socket: Option<PathBuf>,
     pub slot: u32,
-    pub device_idx: Option<usize>,
+    /// 1..=2 entries: `[orch_idx]` or `[orch_idx, child_idx]`. Empty
+    /// means auto-pick (discrete > integrated > virtual > cpu) for
+    /// both. Two distinct indices put the orchestrator and its
+    /// children on different physical devices, exercising the
+    /// cross-GPU dma-buf path.
+    pub device_indices: Vec<usize>,
     pub skip_fanout: bool,
+    // Display-child only: forwarded into `register_display`.
+    pub display_name: Option<String>,
+    pub instance_id: Option<String>,
+    pub max_frames: Option<u64>,
 }
 
 impl TestArgs {
@@ -32,8 +42,11 @@ impl TestArgs {
         let mut vk_uuid: Option<[u8; 16]> = None;
         let mut socket: Option<PathBuf> = None;
         let mut slot: u32 = 0;
-        let mut device_idx: Option<usize> = None;
+        let mut device_indices: Vec<usize> = Vec::new();
         let mut skip_fanout = false;
+        let mut display_name: Option<String> = None;
+        let mut instance_id: Option<String> = None;
+        let mut max_frames: Option<u64> = None;
         let mut it = argv.iter().skip(1).peekable();
         while let Some(a) = it.next() {
             match a.as_str() {
@@ -68,13 +81,44 @@ impl TestArgs {
                         .ok_or_else(|| anyhow::anyhow!("--slot requires a value"))?;
                     slot = v.parse()?;
                 }
-                "--device" => {
+                "--test-gpus" => {
                     let v = it
                         .next()
-                        .ok_or_else(|| anyhow::anyhow!("--device requires a value"))?;
-                    device_idx = Some(v.parse()?);
+                        .ok_or_else(|| anyhow::anyhow!("--test-gpus requires a value"))?;
+                    let mut idxs = Vec::new();
+                    for part in v.split(',') {
+                        let n: usize = part.trim().parse().map_err(|e| {
+                            anyhow::anyhow!("--test-gpus: bad index {part:?}: {e}")
+                        })?;
+                        idxs.push(n);
+                    }
+                    if idxs.is_empty() {
+                        anyhow::bail!("--test-gpus needs at least one index");
+                    }
+                    if idxs.len() > 2 {
+                        anyhow::bail!("--test-gpus accepts at most 2 indices");
+                    }
+                    device_indices = idxs;
                 }
                 "--skip-fanout" => skip_fanout = true,
+                "--display-name" => {
+                    let v = it
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("--display-name requires a value"))?;
+                    display_name = Some(v.clone());
+                }
+                "--instance-id" => {
+                    let v = it
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("--instance-id requires a value"))?;
+                    instance_id = Some(v.clone());
+                }
+                "--max-frames" => {
+                    let v = it
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("--max-frames requires a value"))?;
+                    max_frames = Some(v.parse()?);
+                }
                 other => anyhow::bail!("unknown self-test arg: {other}"),
             }
         }
@@ -83,8 +127,11 @@ impl TestArgs {
             vk_uuid,
             socket,
             slot,
-            device_idx,
+            device_indices,
             skip_fanout,
+            display_name,
+            instance_id,
+            max_frames,
         })
     }
 }

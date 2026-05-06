@@ -34,20 +34,35 @@ pub fn run(args: TestArgs) -> Result<()> {
     }
     report.note_devices(&devices);
 
-    let pick_idx = args.device_idx.unwrap_or_else(|| pick_default(&devices));
-    if pick_idx >= devices.len() {
-        anyhow::bail!(
-            "--device {pick_idx} out of range (have {})",
-            devices.len()
-        );
+    let orch_idx = args
+        .device_indices
+        .first()
+        .copied()
+        .unwrap_or_else(|| pick_default(&devices));
+    let child_idx = args
+        .device_indices
+        .get(1)
+        .copied()
+        .unwrap_or(orch_idx);
+    for (label, idx) in [("orch", orch_idx), ("child", child_idx)] {
+        if idx >= devices.len() {
+            anyhow::bail!(
+                "--test-gpus {label}={idx} out of range (have {})",
+                devices.len()
+            );
+        }
     }
-    let dev_meta = devices[pick_idx].clone();
-    report.note_picked_device(&dev_meta);
+    let orch_dev = devices[orch_idx].clone();
+    let child_dev = devices[child_idx].clone();
+    report.note_picked_device(&orch_dev);
+    if child_idx != orch_idx {
+        report.note_child_device(&child_dev);
+    }
 
-    let vkd = match super::vk::device::create(&vk.instance, &dev_meta) {
+    let vkd = match super::vk::device::create(&vk.instance, &orch_dev) {
         Ok(d) => d,
         Err(e) => {
-            report.fatal(format!("vkCreateDevice on {}: {e}", dev_meta.name));
+            report.fatal(format!("vkCreateDevice on {}: {e}", orch_dev.name));
             report.emit();
             std::process::exit(2);
         }
@@ -58,8 +73,12 @@ pub fn run(args: TestArgs) -> Result<()> {
     let mut child = spawn(&ChildSpec {
         role: "peer",
         socket: peer_sock.clone(),
-        vk_uuid: dev_meta.uuid,
+        vk_uuid: child_dev.uuid,
         slot: 0,
+        display_name: None,
+        instance_id: None,
+        max_frames: None,
+        capture_stdout: false,
     })?;
 
     let stream = match accept_with_timeout(&listener, Duration::from_secs(5)) {
@@ -72,14 +91,14 @@ pub fn run(args: TestArgs) -> Result<()> {
         }
     };
 
-    if let Err(e) = do_handshake(&stream, &dev_meta) {
+    if let Err(e) = do_handshake(&stream, &child_dev) {
         report.fatal(format!("handshake: {e}"));
         let _ = child.kill();
         report.emit();
         std::process::exit(2);
     }
 
-    match super::tests::modifier_matrix::run_orchestrator(&vk.instance, dev_meta.phys, &vkd, &stream) {
+    match super::tests::modifier_matrix::run_orchestrator(&vk.instance, orch_dev.phys, &vkd, &stream) {
         Ok(p) => report.modifier_matrix = Some(p),
         Err(e) => {
             log::warn!("modifier_matrix aborted: {e}");
@@ -89,7 +108,14 @@ pub fn run(args: TestArgs) -> Result<()> {
     let _ = send_msg(&stream, &TestMsg::MatrixDone, &[]);
     let _ = recv_msg(&stream);
 
-    match super::tests::render_loop::run_orchestrator(&vk.instance, dev_meta.phys, &vkd, &stream) {
+    let cross_gpu = orch_dev.uuid != child_dev.uuid;
+    match super::tests::render_loop::run_orchestrator(
+        &vk.instance,
+        orch_dev.phys,
+        &vkd,
+        &stream,
+        cross_gpu,
+    ) {
         Ok(p) => report.render_loop = Some(p),
         Err(e) => log::warn!("render_loop aborted: {e}"),
     }
@@ -105,7 +131,13 @@ pub fn run(args: TestArgs) -> Result<()> {
     let _ = child.wait();
 
     if !args.skip_fanout {
-        match super::tests::fanout::run_orchestrator(&vk.instance, dev_meta.phys, &vkd, &dev_meta) {
+        match super::tests::fanout::run_orchestrator(
+            &vk.instance,
+            orch_dev.phys,
+            &vkd,
+            &child_dev,
+            cross_gpu,
+        ) {
             Ok(p) => report.fanout = Some(p),
             Err(e) => log::warn!("fanout aborted: {e}"),
         }

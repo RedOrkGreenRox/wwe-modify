@@ -1360,10 +1360,13 @@ impl RendererHandle {
             .and_then(|g| g.as_ref().map(|c| c.blacklist.len()))
             .unwrap_or(0)
     }
+}
 
+impl RendererHandle {
     /// Construct a `RendererHandle` with no running child process.
-    /// Useful for routing-table tests that need a handle to register
-    /// against the router but never push frames through it.
+    /// Used by routing-table unit tests AND by the runtime self_test
+    /// (`waywallen --test`) which drives a stub renderer through the
+    /// production endpoint via [`Self::push_self_test_event`] etc.
     pub fn test_stub(id: &str, wp_type: &str) -> Arc<Self> {
         let (a, _b) = StdUnixStream::pair().expect("UnixStream pair");
         let (events_tx, _) = broadcast::channel::<EventMsg>(8);
@@ -1389,13 +1392,34 @@ impl RendererHandle {
             child: Arc::new(TokioMutex::new(None)),
         })
     }
+
+    /// self_test (runtime `--test`): broadcast an event as if the
+    /// renderer subprocess had emitted it. The router task subscribed
+    /// in `register_renderer` picks it up and runs the same hooks
+    /// (`on_renderer_bind` / `on_renderer_frame`) it would for a real
+    /// renderer.
+    pub fn push_self_test_event(&self, ev: EventMsg) {
+        let _ = self.events.send(ev);
+    }
+
+    /// self_test (runtime `--test`): stash a per-frame acquire sync_fd
+    /// the way the manager's reader thread does for production
+    /// renderers. The display endpoint dups one out of the deque on
+    /// each `forward_frame_ready` via [`clone_sync_fd`].
+    pub fn push_self_test_sync_fd(&self, seq: u64, fd: OwnedFd) {
+        if let Ok(mut g) = self.sync_fds.lock() {
+            g.push_back((seq, fd));
+            while g.len() > SYNC_FD_RETENTION {
+                g.pop_front();
+            }
+        }
+    }
 }
 
-#[cfg(test)]
 impl RendererManager {
     /// Insert a pre-built handle into the manager's map without
-    /// spawning a child process. Pair with `RendererHandle::test_stub`
-    /// for unit tests of the router/reaper logic.
+    /// spawning a child process. Used by routing-table unit tests
+    /// AND the runtime self_test (`waywallen --test`).
     pub async fn register_test_handle(&self, handle: Arc<RendererHandle>) {
         let mut inner = self.inner.lock().await;
         inner.renderers.insert(handle.id.clone(), handle);
