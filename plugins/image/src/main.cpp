@@ -46,12 +46,9 @@ struct Options {
     uint32_t    extent_mode { 0 };
     bool        decode_only { false };
     bool        vulkan_probe { false };
-    // Test hook: probe the picked Vulkan device for supported (fourcc,
-    // modifier) pairs and emit a `PeerCaps`-shaped JSON document on
-    // stdout, then exit. Consumed by the dmabuf_roundtrip_e2e test
-    // orchestrator to compute the producer × consumer cap intersection
-    // before per-pair iteration.
+    // Test hook
     bool        print_caps { false };
+    std::string render_node;
 };
 
 [[noreturn]] void die(const std::string& msg) {
@@ -76,6 +73,7 @@ Options parse_args(int argc, char** argv) {
         else if (a == "--decode-only")  o.decode_only = true;
         else if (a == "--vulkan-probe") o.vulkan_probe = true;
         else if (a == "--print-caps")   o.print_caps = true;
+        else if (a == "--render-node")  o.render_node = next();
         // Tolerate other `--key value` extras (none defined for image
         // today) by skipping their value.
         else if (a.size() >= 2 && a[0] == '-' && a[1] == '-' && i + 1 < argc) {
@@ -586,8 +584,16 @@ int main(int argc, char** argv) {
     opt.width       = init.extent_w;
     opt.height      = init.extent_h;
     opt.extent_mode = init.extent_mode;
-    // No settings keys consumed by the image renderer today (its
-    // schema declares fps, but the image plugin doesn't act on it).
+    if (opt.render_node.empty()) {
+        for (size_t i = 0; i < init.settings.count; ++i) {
+            const ww_kv_t& kv = init.settings.data[i];
+            if (kv.key && std::strcmp(kv.key, "render_node") == 0
+                && kv.value && *kv.value) {
+                opt.render_node = kv.value;
+                break;
+            }
+        }
+    }
     ww_bridge_init_free(&init);
 
     /* --- Decode + Vulkan setup --- */
@@ -603,7 +609,10 @@ int main(int argc, char** argv) {
     opt.width  = rgba_buf.width;
     opt.height = rgba_buf.height;
 
-    auto producer_res = wavsen::video::Producer::create(opt.width, opt.height);
+    auto producer_res = opt.render_node.empty()
+        ? wavsen::video::Producer::create(opt.width, opt.height)
+        : wavsen::video::Producer::create_with_render_node(
+              opt.width, opt.height, opt.render_node);
     if (producer_res.is_err()) {
         die("vk_producer: " + std::move(producer_res).unwrap_err().message);
     }

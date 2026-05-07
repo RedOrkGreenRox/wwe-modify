@@ -12,6 +12,7 @@
 #ifndef WAYWALLEN_BRIDGE_PROBE_VK_H
 #define WAYWALLEN_BRIDGE_PROBE_VK_H
 
+#include <stdint.h>
 #include <vulkan/vulkan.h>
 
 #ifdef __cplusplus
@@ -24,6 +25,8 @@ extern "C" {
 typedef struct ww_bridge_vk_dt {
     PFN_vkGetInstanceProcAddr                  vkGetInstanceProcAddr;
     /* Physical-device queries. Resolved against the live instance. */
+    PFN_vkEnumeratePhysicalDevices             vkEnumeratePhysicalDevices;
+    PFN_vkEnumerateDeviceExtensionProperties   vkEnumerateDeviceExtensionProperties;
     PFN_vkGetPhysicalDeviceProperties          vkGetPhysicalDeviceProperties;
     PFN_vkGetPhysicalDeviceProperties2         vkGetPhysicalDeviceProperties2;
     PFN_vkGetPhysicalDeviceFormatProperties2   vkGetPhysicalDeviceFormatProperties2;
@@ -57,6 +60,35 @@ int ww_bridge_vk_dt_load(ww_bridge_vk_dt_t *dt,
 void ww_bridge_vk_log_gpu_info(const char *prefix,
                                const ww_bridge_vk_dt_t *dt,
                                VkPhysicalDevice phys);
+
+/* Resolve a "/dev/dri/renderD*" path to the matching VkPhysicalDevice's
+ * 16-byte `VkPhysicalDeviceIDProperties.deviceUUID`, so callers can
+ * filter their own device picker by UUID (e.g. wescene's
+ * `Instance::ChoosePhysicalDevice`).
+ *
+ * Walks `vkEnumeratePhysicalDevices(instance)`, filters devices that
+ * expose `VK_EXT_physical_device_drm`, then via
+ * `vkGetPhysicalDeviceProperties2` (chained with DRM + ID props) finds
+ * the one whose `(renderMajor, renderMinor)` matches the major:minor of
+ * `stat(render_node_path).st_rdev`.
+ *
+ * Caller owns `instance`; it must be Vulkan 1.1+ or have
+ * `VK_KHR_get_physical_device_properties2` enabled. `dt` must already be
+ * populated via `ww_bridge_vk_dt_load(dt, gIPA, instance)`.
+ *
+ * Returns:
+ *   0           on success.
+ *  -EINVAL      on NULL args.
+ *  -ENOTSUP     dt is missing one of vkEnumeratePhysicalDevices,
+ *               vkEnumerateDeviceExtensionProperties, or
+ *               vkGetPhysicalDeviceProperties2.
+ *  -ENOENT      no physical device matched the render major:minor.
+ *  -errno       negative errno from stat(render_node_path) on failure.
+ */
+int ww_bridge_vk_resolve_render_node(const ww_bridge_vk_dt_t *dt,
+                                     VkInstance instance,
+                                     const char *render_node_path,
+                                     uint8_t out_uuid[16]);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -6,7 +6,5 @@ priority = 100
 spawn_version = 3
 
 [renderer.settings]
-# Frame rate the image renderer drives bridge presents at. Image
-# wallpapers are static so this only governs the redraw heartbeat
-# (cursor input, idle composition); 30 is plenty.
 fps = { type = "u32", default = 30, min = 1, max = 240, step = 1, identity = true, label_key = "settings.image.fps", group = "render", order = 10 }
+render_node = { type = "string", default = "", identity = true, label_key = "settings.image.render_node", group = "render", order = 20 }

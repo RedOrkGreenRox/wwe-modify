@@ -1,6 +1,7 @@
-//! /dev/dri 枚举：把本机所有 DRM 设备节点 + 对应 PCI/driver 信息收集出来，
-//! 给 control plane 暴露给 UI，并让 RendererManager 把用户配的 (major, minor)
-//! 翻成 render-node 路径塞进 Init.settings。
+//! /dev/dri enumeration: collect every DRM node + its PCI/driver info,
+//! surface to UI via the control plane, and let `RendererManager` map a
+//! user-picked (major, minor) to a render-node path injected into
+//! `Init.settings`.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -60,10 +61,10 @@ pub(crate) fn enumerate_with_roots(dev_dri: &Path, sysfs_char: &Path) -> Vec<Gpu
         }
     };
 
-    // 按 PCI 设备目录分组：同一块卡的 cardN + renderD1xx 落到同一条
-    // GpuInfo。key 取 PCI 设备目录的规范化路径（沿 sysfs_char/<m>:<n>/device
-    // 链接解到的目标）。无法解析 PCI 的（极少见，比如 vgem）单独成条，用
-    // node 路径当 key。
+    // Group by PCI device directory so a single GPU's cardN + renderD1xx
+    // collapse to one GpuInfo. Key = canonical path of
+    // sysfs_char/<m>:<n>/device. Devices without a PCI parent (vgem etc.)
+    // get their own group keyed by node path.
     let mut groups: BTreeMap<String, GpuInfo> = BTreeMap::new();
 
     for entry in entries.flatten() {
@@ -105,7 +106,8 @@ pub(crate) fn enumerate_with_roots(dev_dri: &Path, sysfs_char: &Path) -> Vec<Gpu
             }
         }
         if let Some(p) = pci {
-            // 已知 PCI 信息覆盖（同组里 card 和 render 解到同一处）
+            // Card + render in the same group resolve to the same PCI dir,
+            // so overwriting is a no-op the second time around.
             g.pci_bdf = Some(p.bdf);
             g.vendor_id = p.vendor;
             g.device_id = p.device;
@@ -120,8 +122,8 @@ pub(crate) fn enumerate_with_roots(dev_dri: &Path, sysfs_char: &Path) -> Vec<Gpu
             g
         })
         .collect();
-    // 排序：有 render node 的优先，再按 render minor / primary minor。让 UI
-    // 的默认顺序稳定。
+    // Stable order for UI: entries with a render node first, then by
+    // render minor / primary minor.
     out.sort_by_key(|g| {
         (
             g.render_node.is_none(),
@@ -212,9 +214,10 @@ mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
 
-    /// 造一个假 sysfs：dev_dri 里放空 renderD128，sysfs_char/<m>:<n>/device
-    /// 链接到一个 PCI 目录，再填 vendor/device/driver。这里跳过 mknod（要 root），
-    /// 只测 parse_pci_dir 这层；enumerate 的整体路径靠 #[ignore] 真机测试。
+    /// Fake sysfs: an empty renderD128 in dev_dri, sysfs_char/<m>:<n>/device
+    /// symlinked to a PCI dir with vendor/device/driver populated. mknod
+    /// would need root, so this exercises parse_pci_dir only; the
+    /// end-to-end enumerate path is covered by the `#[ignore]` live test.
     #[test]
     fn parse_pci_dir_reads_vendor_device_driver() {
         let tmp = tempfile::tempdir().unwrap();

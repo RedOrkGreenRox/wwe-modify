@@ -9,7 +9,10 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 
 int ww_bridge_vk_dt_load(ww_bridge_vk_dt_t *dt,
                          PFN_vkGetInstanceProcAddr get_instance_proc_addr,
@@ -23,6 +26,10 @@ int ww_bridge_vk_dt_load(ww_bridge_vk_dt_t *dt,
      * VK_NULL_HANDLE only the pre-instance entry points resolve, so
      * pass a real instance to populate the rest. Per-field explicit
      * casts keep the unit free of `typeof` under -Wpedantic. */
+    dt->vkEnumeratePhysicalDevices = (PFN_vkEnumeratePhysicalDevices)
+        get_instance_proc_addr(instance, "vkEnumeratePhysicalDevices");
+    dt->vkEnumerateDeviceExtensionProperties = (PFN_vkEnumerateDeviceExtensionProperties)
+        get_instance_proc_addr(instance, "vkEnumerateDeviceExtensionProperties");
     dt->vkGetPhysicalDeviceProperties = (PFN_vkGetPhysicalDeviceProperties)
         get_instance_proc_addr(instance, "vkGetPhysicalDeviceProperties");
     dt->vkGetPhysicalDeviceProperties2 = (PFN_vkGetPhysicalDeviceProperties2)
@@ -86,4 +93,88 @@ void ww_bridge_vk_log_gpu_info(const char *prefix,
     };
     ww_bridge_log_gpu_info(prefix, fields,
                            sizeof(fields) / sizeof(fields[0]));
+}
+
+int ww_bridge_vk_resolve_render_node(const ww_bridge_vk_dt_t *dt,
+                                     VkInstance instance,
+                                     const char *render_node_path,
+                                     uint8_t out_uuid[16]) {
+    if (!dt || !render_node_path || !out_uuid) return -EINVAL;
+    if (instance == VK_NULL_HANDLE) return -EINVAL;
+    if (!dt->vkEnumeratePhysicalDevices
+        || !dt->vkEnumerateDeviceExtensionProperties
+        || !dt->vkGetPhysicalDeviceProperties2)
+        return -ENOTSUP;
+
+    struct stat st;
+    if (stat(render_node_path, &st) != 0) return -errno;
+    const dev_t want_rdev = st.st_rdev;
+
+    uint32_t pd_count = 0;
+    if (dt->vkEnumeratePhysicalDevices(instance, &pd_count, NULL) != VK_SUCCESS
+        || pd_count == 0)
+        return -ENOENT;
+
+    VkPhysicalDevice *pds = (VkPhysicalDevice *)
+        calloc(pd_count, sizeof(*pds));
+    if (!pds) return -ENOMEM;
+    if (dt->vkEnumeratePhysicalDevices(instance, &pd_count, pds) != VK_SUCCESS) {
+        free(pds);
+        return -ENOENT;
+    }
+
+    int rc = -ENOENT;
+    for (uint32_t i = 0; i < pd_count; ++i) {
+        VkPhysicalDevice pd = pds[i];
+
+        /* Need VK_EXT_physical_device_drm to map (renderMajor, renderMinor)
+         * to a /dev/dri path. Skip devices without it. */
+        uint32_t ec = 0;
+        if (dt->vkEnumerateDeviceExtensionProperties(pd, NULL, &ec, NULL) != VK_SUCCESS
+            || ec == 0)
+            continue;
+        VkExtensionProperties *exts = (VkExtensionProperties *)
+            calloc(ec, sizeof(*exts));
+        if (!exts) continue;
+        if (dt->vkEnumerateDeviceExtensionProperties(pd, NULL, &ec, exts) != VK_SUCCESS) {
+            free(exts);
+            continue;
+        }
+        int has_drm = 0;
+        for (uint32_t j = 0; j < ec; ++j) {
+            if (strcmp(exts[j].extensionName, "VK_EXT_physical_device_drm") == 0) {
+                has_drm = 1;
+                break;
+            }
+        }
+        free(exts);
+        if (!has_drm) continue;
+
+        VkPhysicalDeviceDrmPropertiesEXT drm;
+        memset(&drm, 0, sizeof(drm));
+        drm.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT;
+
+        VkPhysicalDeviceIDProperties id;
+        memset(&id, 0, sizeof(id));
+        id.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES;
+        id.pNext = &drm;
+
+        VkPhysicalDeviceProperties2 p2;
+        memset(&p2, 0, sizeof(p2));
+        p2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        p2.pNext = &id;
+        dt->vkGetPhysicalDeviceProperties2(pd, &p2);
+
+        if (!drm.hasRender) continue;
+        const dev_t pd_rdev = makedev((unsigned)drm.renderMajor,
+                                      (unsigned)drm.renderMinor);
+        if (pd_rdev != want_rdev) continue;
+
+        memcpy(out_uuid, id.deviceUUID, VK_UUID_SIZE);
+        rc = 0;
+        break;
+    }
+
+    free(pds);
+    return rc;
 }

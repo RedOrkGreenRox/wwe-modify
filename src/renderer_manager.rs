@@ -541,12 +541,14 @@ impl RendererManager {
                 .clone(),
         };
 
-        // 把用户的 GPU 选择翻成 render_node 路径再交给子进程：plugin
-        // settings 里持久化的是 `gpu_drm_dev = "<major>:<minor>"`（与
-        // wire 上的 drm_render_major/minor 对齐），子进程契约消费的是
-        // `render_node` 路径。命中则注入 render_node 并把 gpu_drm_dev
-        // 从下发设置里剔除；不命中（启动 reconcile 该清未清的兜底）
-        // 不注入，让子进程走默认设备选择。
+        // Translate the user's GPU choice into a render_node path before
+        // it reaches the subprocess: plugin settings persist
+        // `gpu_drm_dev = "<major>:<minor>"` (mirroring drm_render_major/
+        // minor on the wire); the subprocess contract consumes
+        // `render_node` (a path). On a hit we inject render_node and
+        // strip gpu_drm_dev from the kv we ship. On a miss (defensive —
+        // startup reconcile should have already cleared it) we leave
+        // both out and let the subprocess pick a default device.
         if let Some(raw) = req.settings.remove(crate::gpu::GPU_DRM_DEV_KEY) {
             if let Some((major, minor)) = crate::gpu::parse_drm_dev(&raw) {
                 let resolved = self
