@@ -96,13 +96,22 @@
       the feature set implied by the negotiated version; clients MUST
       NOT gate on features field contents.
 
+  v5 (features-first modifier filter):
+    - `consumer_caps` drops the `usages` per-modifier u32 array. The
+      daemon's picker never consumed it; both peers now filter
+      modifiers locally by `VkFormatFeatureFlags` and only the
+      surviving (fourcc, modifier, plane_count) tuples hit the wire.
+    - Wire-incompatible with v4. v4 clients send an extra `usages[]`
+      array that decode now fails on; daemon rejects them via
+      hello.client_protocol_version range check.
+
   Informational features (welcome.features, advisory only in v3+):
     "explicit_sync_fd"           — acquire fence as dma_fence sync_file.
     "drm_syncobj_release"        — release fence as drm_syncobj fd.
     "modifier_negotiation_v1"    — consumer_caps + bind_failed plumbing.
   Optional features (reserved): "color_management", "hdr"
 -->
-<protocol name="waywallen_display" version="4">
+<protocol name="waywallen_display" version="5">
 
   <!-- ==================================================================
        REQUESTS  (display -> manager)
