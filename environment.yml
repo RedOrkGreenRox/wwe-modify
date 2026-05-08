@@ -33,6 +33,7 @@ dependencies:
   # bundled into the AppImage by linuxdeploy.
   - libvulkan-headers
   - libvulkan-loader
+  - libgles-devel
   - mesa-libgbm-devel-conda-x86_64
   - lz4-c
 

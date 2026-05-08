@@ -531,6 +531,7 @@ message Event {
     LibrariesAdded         libraries_added           = 12;
     StatusSync             status_sync               = 13;
     SettingsChanged        settings_changed          = 14;
+    DisplayConnectionFailed display_connection_failed = 15;
   }
 }
 

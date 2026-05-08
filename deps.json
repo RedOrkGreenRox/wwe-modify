@@ -35,7 +35,7 @@
     }
   },
   {
-    "commit": "5878b2058eb67adb615f691889d93e3ab13ba7d2",
+    "commit": "f4f45c507d3d69fd6b31e3139c0d63a57622c0d0",
     "dest": "build/_flatpak_deps/rstd-src",
     "disable-shallow-clone": true,
     "type": "git",
