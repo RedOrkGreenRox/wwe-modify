@@ -236,23 +236,55 @@ static int probe_caps(ww_pool_t *pool, uint32_t width, uint32_t height) {
 }
 
 /* Pick a memory type from the producer device that can back an
- * exportable VkImage. Cross-GPU PRIME translates regardless of
- * HOST_VISIBLE / DEVICE_LOCAL — the only correctness requirement is
- * dma-buf exportability, which is enforced at vkCreateImage time
- * via VkExternalMemoryImageCreateInfo.handleTypes = DMA_BUF_BIT_EXT.
- * Prefer DEVICE_LOCAL when allowed (faster), else any matching type.
+ * exportable VkImage.
+ *
+ * `prefer_host_visible` is the cross-vendor switch. When the daemon
+ * negotiates the COMPAT_LINEAR path (consumer is on a different vendor),
+ * VRAM is the wrong answer: the dma-buf points at producer-only memory
+ * the importing GPU cannot reference in a CS submit. radv reports this
+ * as "Not enough memory for command submission" and loses the device.
+ * See cross_gpu.md and the test path `waywallen --test --test-gpus 1,0`.
+ *
+ * For OPTIMIZED same-GPU paths, DEVICE_LOCAL is still the right answer
+ * (faster, and the consumer's GPU can read its own VRAM via PCIe).
+ *
  * Returns UINT32_MAX only if typeBits is empty. */
-static uint32_t pick_memory_type(vk_state_t *st, uint32_t type_bits) {
+static uint32_t pick_memory_type(vk_state_t *st,
+                                 uint32_t type_bits,
+                                 bool prefer_host_visible) {
     VkPhysicalDeviceMemoryProperties mp = {0};
     st->vkGetPhysicalDeviceMemoryProperties(st->phys, &mp);
-    /* Pass 1: prefer DEVICE_LOCAL. */
-    for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
-        if (!(type_bits & (1u << i))) continue;
-        if (mp.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
-            return i;
+
+    if (prefer_host_visible) {
+        /* Pass 1: HOST_VISIBLE && !DEVICE_LOCAL — true GTT/sysmem,
+         * the only PRIME-importable type cross-vendor. */
+        for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
+            if (!(type_bits & (1u << i))) continue;
+            VkMemoryPropertyFlags f = mp.memoryTypes[i].propertyFlags;
+            if ((f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) &&
+                !(f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+                return i;
+            }
+        }
+        /* Pass 2: any HOST_VISIBLE (BAR is acceptable on some HW). */
+        for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
+            if (!(type_bits & (1u << i))) continue;
+            if (mp.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
+                return i;
+            }
+        }
+        /* Pass 3: any matching type (last resort; dma-buf may still
+         * be importable depending on the driver pair). */
+    } else {
+        /* Pass 1: prefer DEVICE_LOCAL (fast path on same-GPU). */
+        for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
+            if (!(type_bits & (1u << i))) continue;
+            if (mp.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
+                return i;
+            }
         }
     }
-    /* Pass 2: any allowed type. */
+    /* Final pass: any allowed type. */
     for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
         if (type_bits & (1u << i)) return i;
     }
@@ -338,13 +370,31 @@ static int alloc_slot(ww_pool_t *pool, uint32_t slot_index,
     st->vkGetImageMemoryRequirements2(st->device, &mri, &mr);
 
     uint32_t mem_type = pick_memory_type(
-        st, mr.memoryRequirements.memoryTypeBits);
+        st, mr.memoryRequirements.memoryTypeBits, linear_path);
     if (mem_type == UINT32_MAX) {
         fprintf(stderr,
-                "ww_pool[vulkan]: no memory type matches image typeBits=0x%x\n",
-                mr.memoryRequirements.memoryTypeBits);
+                "ww_pool[vulkan]: no memory type matches image typeBits=0x%x "
+                "(linear_path=%d)\n",
+                mr.memoryRequirements.memoryTypeBits, (int)linear_path);
         st->vkDestroyImage(st->device, image, NULL);
         return -EIO;
+    }
+    if (linear_path) {
+        VkPhysicalDeviceMemoryProperties mp = {0};
+        st->vkGetPhysicalDeviceMemoryProperties(st->phys, &mp);
+        VkMemoryPropertyFlags pf = mp.memoryTypes[mem_type].propertyFlags;
+        if (!(pf & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
+            /* Last-resort fallback inside pick_memory_type picked a
+             * non-HOST_VISIBLE type. The cross-vendor consumer is very
+             * likely to fail to import this dma-buf for GPU use. Warn
+             * loudly so the operator sees it before the consumer dies. */
+            fprintf(stderr,
+                    "ww_pool[vulkan]: COMPAT_LINEAR slot fell back to "
+                    "non-HOST_VISIBLE memtype %u (flags=0x%x); cross-vendor "
+                    "consumers may fail. typeBits=0x%x\n",
+                    mem_type, (unsigned)pf,
+                    mr.memoryRequirements.memoryTypeBits);
+        }
     }
 
     VkMemoryDedicatedAllocateInfo ded = {0};

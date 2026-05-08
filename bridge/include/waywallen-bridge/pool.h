@@ -49,9 +49,17 @@ typedef enum ww_mem_source {
      * default for OPTIMIZED paths. */
     WW_MEM_SRC_GPU_NATIVE = 0,
 
-    /* GBM_BO_USE_LINEAR / Vulkan LINEAR-tiled exportable. Always
-     * non-tiled, GTT-backed on every Mesa driver, PRIME-importable
-     * across GPUs without explicit HOST_VISIBLE semantics. */
+    /* GBM_BO_USE_LINEAR / Vulkan LINEAR-tiled exportable.
+     *
+     * EGL/GBM: GBM_BO_USE_LINEAR lands in GTT/sysmem on every Mesa
+     * driver — PRIME-importable across GPUs by construction.
+     *
+     * Vulkan: the bridge MUST pick a HOST_VISIBLE memory type for this
+     * source (see `pool_vulkan.c::pick_memory_type`). On the NVIDIA
+     * proprietary driver, the LINEAR-tiling image's default memtype
+     * is DEVICE_LOCAL VRAM, which a different-vendor GPU cannot
+     * reference in a CS submit ("Not enough memory for command
+     * submission" on amdgpu, then device-lost). See cross_gpu.md. */
     WW_MEM_SRC_GPU_LINEAR = 1,
 
     /* /dev/dma_heap/system. Reserved for the case where neither GBM
@@ -271,6 +279,15 @@ int  ww_bridge_pool_acquire_slot(ww_pool_t      *pool,
  * from its rendering API:
  *   - EGL/GBM: `eglDupNativeFenceFDANDROID` after `glFlush`.
  *   - Vulkan:  `vkGetSemaphoreFdKHR(SYNC_FD)` after queue submit.
+ *             Use a binary semaphore created with
+ *             `VkExportSemaphoreCreateInfo.handleTypes = SYNC_FD`;
+ *             OPAQUE_FD (timeline) is NOT cross-vendor portable.
+ *
+ * The fd is REQUIRED on the COMPAT_LINEAR / GPU_LINEAR path: cross-
+ * vendor importing GPUs (notably amdgpu) refuse to schedule a foreign
+ * dma-buf without an explicit dma_fence dependency and report
+ * "Not enough memory for command submission" before losing the device.
+ * On OPTIMIZED same-GPU paths the fd is optional but recommended.
  *
  * The bridge will close the fd; plugin MUST NOT close it after this
  * call. Pass -1 only on shutdown (consumers will see no acquire

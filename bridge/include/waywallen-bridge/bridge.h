@@ -108,17 +108,48 @@ int ww_bridge_send_bind_buffers(int sock,
 /* Emit `FrameReady` with a single acquire sync_fd (dma_fence sync_file).
  * `m->release_point` names the timeline value the daemon will signal on
  * the producer-exported `release_syncobj` once every consumer has
- * finished sampling this frame. */
+ * finished sampling this frame.
+ *
+ * `sync_fd` semantics:
+ *   - REQUIRED on the COMPAT_LINEAR / GPU_LINEAR path (the daemon
+ *     negotiated a cross-vendor consumer; amdgpu and other importing
+ *     drivers refuse to schedule a foreign dma-buf without an explicit
+ *     dma_fence wait, manifesting as "Not enough memory for command
+ *     submission" and a lost device).
+ *   - OPTIONAL on OPTIMIZED same-GPU paths (driver-internal scheduling
+ *     carries the producer-consumer dependency).
+ *
+ * The fd MUST be a SYNC_FD (dma_fence sync_file), produced via
+ * `vkGetSemaphoreFdKHR(SYNC_FD)` on a binary semaphore created with
+ * `VkExportSemaphoreCreateInfo.handleTypes = SYNC_FD`. OPAQUE_FD
+ * timeline exports are NOT cross-vendor portable and MUST NOT be used
+ * here. Pass `-1` when no fence is being signalled (same-GPU only). */
 int ww_bridge_send_frame_ready(int sock,
                                const ww_evt_frame_ready_t *m,
                                int sync_fd);
 
-/* Emit `ReleaseSyncobj` carrying the producer's exported timeline
- * drm_syncobj fd. Send exactly once per connection, after `Ready` and
- * before any `FrameReady`. The fd is the OPAQUE_FD export of a Vulkan
- * TIMELINE semaphore on the renderer's `VkDevice`. The caller retains
- * ownership of `release_syncobj_fd` and is responsible for closing it
- * after this call returns (the kernel dup'd it into SCM_RIGHTS). */
+/* Emit `ReleaseSyncobj` carrying the producer's timeline drm_syncobj fd.
+ * Send exactly once per connection, after `Ready` and before any
+ * `FrameReady`.
+ *
+ * The fd is a kernel `drm_syncobj` HANDLE_TO_FD export (timeline
+ * semantics — points are u64 release_point values). It is wire-
+ * compatible with `vkGetSemaphoreFdKHR(OPAQUE_FD)` on radv (which is
+ * implemented as drm_syncobj), but the canonical producer for this fd
+ * is the bridge itself via `ww_drm_syncobj_create` /
+ * `ww_drm_syncobj_export_fd` — kernel ioctls work on every driver,
+ * which Vulkan's OPAQUE_FD export does not (NVIDIA's OPAQUE_FD payload
+ * is a private format incompatible with drm_syncobj).
+ *
+ * Consumer guidance: do NOT `vkImportSemaphoreFdKHR(OPAQUE_FD)` this fd
+ * on a different-vendor GPU — it will be rejected with "Failed to
+ * allocate semaphore device memory" or similar. Signal release via
+ * `DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL` (kernel ioctl, vendor-agnostic)
+ * after the consumer's GPU work has retired. See cross_gpu.md.
+ *
+ * The caller retains ownership of `release_syncobj_fd` and is
+ * responsible for closing it after this call returns (the kernel
+ * dup'd it into SCM_RIGHTS). */
 int ww_bridge_send_release_syncobj(int sock, int release_syncobj_fd);
 
 /* Emit `FormatCaps` — the producer's modifier-negotiation declaration.
