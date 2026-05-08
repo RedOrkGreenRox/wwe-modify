@@ -53,6 +53,10 @@ ColumnLayout {
             return false;
         if (t === kString)
             return !(schema.choices && schema.choices.length > 0);
+        // u32 falls back to a (dense) textfield when the range is too
+        // wide to be useful on a slider.
+        if (t === kU32)
+            return !(_hasNumericRange() && _intRangeFitsSlider());
         return !_hasNumericRange();
     }
 
@@ -60,6 +64,14 @@ ColumnLayout {
         const lo = schema.min || "";
         const hi = schema.max || "";
         return lo.length > 0 && hi.length > 0;
+    }
+
+    // u32 sliders feel right up to a ~1000-unit span; beyond that the
+    // step granularity gets coarse and a textfield is friendlier.
+    function _intRangeFitsSlider() {
+        const lo = root._toFloat(root.schema.min, 0);
+        const hi = root._toFloat(root.schema.max, 0);
+        return (hi - lo) <= 1000;
     }
 
     function _toFloat(s, fallback) {
@@ -130,6 +142,8 @@ ColumnLayout {
             case root.kBool:
                 return boolField;
             case root.kU32:
+                return (root._hasNumericRange() && root._intRangeFitsSlider())
+                    ? sliderField : numericField;
             case root.kF32:
                 return root._hasNumericRange() ? sliderField : numericField;
             case root.kString:
@@ -194,6 +208,7 @@ ColumnLayout {
         MD.TextField {
             text: root.value
             placeholderText: root.label
+            mdState.dense: true
             inputMethodHints: root.schema.type === root.kU32 ? Qt.ImhDigitsOnly : Qt.ImhFormattedNumbersOnly
             validator: root.schema.type === root.kU32 ? intValidator : doubleValidator
             onEditingFinished: root._emit(text)
