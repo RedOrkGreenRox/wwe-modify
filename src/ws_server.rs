@@ -1551,6 +1551,11 @@ fn apply_wallpaper_sorts(
                     let sb = lookup(b).and_then(|m| m.size).or(b.size).unwrap_or(0);
                     sa.cmp(&sb)
                 }
+                pb::WallpaperSortKey::LastModified => {
+                    let ma = lookup(a).and_then(|m| m.modified_at).unwrap_or(0);
+                    let mb = lookup(b).and_then(|m| m.modified_at).unwrap_or(0);
+                    ma.cmp(&mb)
+                }
                 pb::WallpaperSortKey::Unspecified => Ordering::Equal,
             };
             if desc { ord.reverse() } else { ord }

@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Templates as T
 import Qcm.Material as MD
+import waywallen.control as WC
 import waywallen.ui as W
 
 MD.Page {
@@ -42,6 +43,7 @@ MD.Page {
     }
 
     Component.onCompleted: {
+        applySort();
         if (W.Notify.daemonPhase === W.Notify.DaemonPhase.Ready)
             reloadAll();
     }
@@ -126,6 +128,32 @@ MD.Page {
         }
     }
 
+    readonly property var sortOptions: [
+        { name: qsTr("Name"),          key: WC.WallpaperSortKey.WALLPAPER_SORT_KEY_NAME },
+        { name: qsTr("Size"),          key: WC.WallpaperSortKey.WALLPAPER_SORT_KEY_SIZE },
+        { name: qsTr("Last modified"), key: WC.WallpaperSortKey.WALLPAPER_SORT_KEY_LAST_MODIFIED }
+    ]
+    property int sortIndex: 0
+    property bool sortAsc: true
+    property WC.wallpaperSortRule emptySortRule
+
+    function applySort() {
+        const rule = emptySortRule;
+        rule.key = sortOptions[sortIndex].key;
+        rule.direction = sortAsc ? WC.SortDirection.SORT_DIRECTION_ASC
+                                 : WC.SortDirection.SORT_DIRECTION_DESC;
+        wallpaperQuery.sorts = [rule];
+    }
+    function pickSort(idx) {
+        if (idx === sortIndex) {
+            sortAsc = !sortAsc;
+        } else {
+            sortIndex = idx;
+            sortAsc = true;
+        }
+        applySort();
+    }
+
     // Renderers that advertise the selected wallpaper's wp_type, sorted
     // by descending priority. Recomputed on selection or registry change.
     readonly property var rendererCandidates: {
@@ -190,23 +218,43 @@ MD.Page {
                         color: MD.Token.color.on_surface
                     }
 
+                    MD.EmbedChip {
+                        id: sortChip
+                        text: root.sortOptions[root.sortIndex].name
+                        trailingIconName: root.sortAsc ? MD.Token.icon.arrow_downward
+                                                       : MD.Token.icon.arrow_upward
+                        borderWidth: 1
+                        onClicked: sortMenu.open()
+
+                        MD.Menu {
+                            id: sortMenu
+                            parent: sortChip
+                            y: parent.height
+                            model: root.sortOptions
+                            contentDelegate: MD.MenuItem {
+                                required property var modelData
+                                required property int index
+                                text: modelData.name
+                                icon.name: index === root.sortIndex
+                                    ? (root.sortAsc ? MD.Token.icon.arrow_downward
+                                                    : MD.Token.icon.arrow_upward)
+                                    : ' '
+                                onClicked: {
+                                    root.pickSort(index);
+                                    sortMenu.close();
+                                }
+                            }
+                        }
+                    }
+
                     MD.ActionToolBar {
                         Layout.fillWidth: true
                         actions: [
                             MD.Action {
                                 icon.name: MD.Token.icon.filter_list
-                                text: wallpaperQuery.hasActiveFilters ? 'Filters on' : 'Filters'
+                                text: 'Filters'
+                                checked: wallpaperQuery.hasActiveFilters
                                 onTriggered: filterDialog.open()
-                            },
-                            MD.Action {
-                                icon.name: MD.Token.icon.clear_all
-                                text: 'Clear filters'
-                                enabled: wallpaperQuery.hasActiveFilters
-                                onTriggered: {
-                                    wallpaperFilterModel.removeRows(0, wallpaperFilterModel.rowCount());
-                                    wallpaperFilterModel.filterLogics = [];
-                                    wallpaperFilterModel.apply();
-                                }
                             },
                             MD.Action {
                                 icon.name: MD.Token.icon.hard_drive
