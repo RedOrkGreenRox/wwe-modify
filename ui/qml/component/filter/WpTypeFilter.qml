@@ -10,6 +10,7 @@ QtObject {
     property string value: "image"
     property int condition: WC.StringCondition.STRING_CONDITION_UNSPECIFIED
     property WC.wallpaperStringFilter subfilter
+    property var supportedTypes: []
 
     readonly property var conditionModel: [
         { name: qsTr("is"),     value: WC.StringCondition.STRING_CONDITION_IS },
@@ -17,11 +18,12 @@ QtObject {
         { name: qsTr("any"),    value: WC.StringCondition.STRING_CONDITION_UNSPECIFIED }
     ]
 
-    readonly property var typeOptions: [
-        { name: qsTr("image"), value: "image" },
-        { name: qsTr("video"), value: "video" },
-        { name: qsTr("scene"), value: "scene" }
-    ]
+    readonly property var typeOptions: {
+        const src = supportedTypes && supportedTypes.length > 0
+                  ? supportedTypes
+                  : ["image", "video", "scene"];
+        return src.map(t => ({ name: qsTr(t), value: t }));
+    }
 
     function labelFor(v) {
         const item = typeOptions.find(e => e.value === v);

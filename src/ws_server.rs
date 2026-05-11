@@ -1477,9 +1477,9 @@ fn entry_to_pb(
         .map(|v| v as u32)
         .or(e.height)
         .unwrap_or(0);
-    let format = db_meta
-        .and_then(|m| m.format.clone())
-        .or_else(|| e.format.clone())
+    let content_rating = db_meta
+        .and_then(|m| m.content_rating.clone())
+        .or_else(|| e.content_rating.clone())
         .unwrap_or_default();
     let preview = db_meta
         .and_then(|m| m.preview_path.as_deref())
@@ -1502,7 +1502,7 @@ fn entry_to_pb(
         size,
         width,
         height,
-        format,
+        content_rating,
     }
 }
 

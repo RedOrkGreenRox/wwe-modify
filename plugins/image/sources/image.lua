@@ -86,7 +86,8 @@ function M.scan(ctx)
                         name = name,
                         wp_type = "image",
                         resource = path,
-                        preview = path,
+                        -- Image is its own preview; leave the column
+                        -- empty and let consumers fall back to resource.
                         library_root = dir,
                         metadata = {
                         },

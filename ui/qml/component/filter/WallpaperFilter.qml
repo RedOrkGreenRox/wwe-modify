@@ -9,6 +9,7 @@ MD.ItemDelegate {
     id: root
     required property var model
     required property int index
+    property var supportedTypes: []
     property WC.wallpaperStringFilter emptyStringFilter
     property WC.wallpaperIntFilter emptyIntFilter
 
@@ -16,9 +17,7 @@ MD.ItemDelegate {
 
     readonly property var typeOptions: [
         { name: qsTr("Name"),           value: WC.WallpaperFilterType.WALLPAPER_FILTER_TYPE_NAME,    kind: "string"  },
-        { name: qsTr("Wallpaper type"), value: WC.WallpaperFilterType.WALLPAPER_FILTER_TYPE_WP_TYPE, kind: "wp_type" },
-        { name: qsTr("Library"),        value: WC.WallpaperFilterType.WALLPAPER_FILTER_TYPE_LIBRARY, kind: "string"  },
-        { name: qsTr("Format"),         value: WC.WallpaperFilterType.WALLPAPER_FILTER_TYPE_FORMAT,  kind: "string"  },
+        { name: qsTr("Type"),           value: WC.WallpaperFilterType.WALLPAPER_FILTER_TYPE_WP_TYPE, kind: "wp_type" },
         { name: qsTr("Width"),          value: WC.WallpaperFilterType.WALLPAPER_FILTER_TYPE_WIDTH,   kind: "int"     },
         { name: qsTr("Height"),         value: WC.WallpaperFilterType.WALLPAPER_FILTER_TYPE_HEIGHT,  kind: "int"     },
         { name: qsTr("Size"),           value: WC.WallpaperFilterType.WALLPAPER_FILTER_TYPE_SIZE,    kind: "int"     }
@@ -58,6 +57,7 @@ MD.ItemDelegate {
     W.WpTypeFilter {
         id: wpTypeSpec
         filter: root.currentOption && root.currentOption.kind === "wp_type" ? root.model : null
+        supportedTypes: root.supportedTypes
     }
     W.IntFilter {
         id: intSpec

@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::anyhow;
 
 use crate::error::{Error, Result, ResultExt};
-use sea_orm::sea_query::OnConflict;
+use sea_orm::sea_query::{Expr, OnConflict};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
@@ -270,7 +270,7 @@ pub struct ItemUpsertArgs<'a> {
     pub size: Option<i64>,
     pub width: Option<i32>,
     pub height: Option<i32>,
-    pub format: Option<&'a str>,
+    pub content_rating: Option<&'a str>,
 }
 
 /// Upsert an item keyed by `(library_id, path)`. Every non-key column
@@ -298,7 +298,7 @@ pub async fn upsert_item(db: &DatabaseConnection, args: ItemUpsertArgs<'_>) -> R
         size: Set(args.size),
         width: Set(args.width),
         height: Set(args.height),
-        format: Set(args.format.map(str::to_owned)),
+        content_rating: Set(args.content_rating.map(str::to_owned)),
         create_at: Set(now),
         update_at: Set(now),
         sync_at: Set(now),
@@ -307,7 +307,13 @@ pub async fn upsert_item(db: &DatabaseConnection, args: ItemUpsertArgs<'_>) -> R
     item::Entity::insert(am)
         .on_conflict(
             // CreateAt deliberately omitted from update_columns so the
-            // first-insert value survives every subsequent upsert.
+            // first-insert value survives every subsequent upsert. The
+            // probe-filled media-meta columns (size/width/height/
+            // content_rating) use COALESCE so a sync pass that didn't
+            // pre-fill them (plugin returned None) does not wipe a
+            // value the probe task already wrote — the original
+            // unconditional overwrite caused first-query-after-restart
+            // to return size=0 until the probe re-ran asynchronously.
             OnConflict::columns([item::Column::LibraryId, item::Column::Path])
                 .update_columns([
                     item::Column::Ty,
@@ -316,13 +322,16 @@ pub async fn upsert_item(db: &DatabaseConnection, args: ItemUpsertArgs<'_>) -> R
                     item::Column::PreviewPath,
                     item::Column::Description,
                     item::Column::ExternalId,
-                    item::Column::Size,
-                    item::Column::Width,
-                    item::Column::Height,
-                    item::Column::Format,
                     item::Column::UpdateAt,
                     item::Column::SyncAt,
                 ])
+                .value(item::Column::Size, Expr::cust("COALESCE(excluded.size, size)"))
+                .value(item::Column::Width, Expr::cust("COALESCE(excluded.width, width)"))
+                .value(item::Column::Height, Expr::cust("COALESCE(excluded.height, height)"))
+                .value(
+                    item::Column::ContentRating,
+                    Expr::cust("COALESCE(excluded.content_rating, content_rating)"),
+                )
                 .to_owned(),
         )
         .exec(db)
@@ -627,44 +636,84 @@ pub async fn delete_items_missing(
 
 /// Items needing either a stat-tier refresh OR a media-tier probe.
 ///
-/// Returns rows where any of:
-/// * `stat_at` is NULL or older than `stat_cutoff_ms` (cheap tier)
-/// * `probed_at` is NULL or older than `media_cutoff_ms` (media tier)
-/// * `modified_at > probed_at` (file changed since last media probe)
-///
-/// Returned alongside each item is the absolute `library.path`
-/// (joined with `item.path` in the caller to form the on-disk path).
-pub async fn list_items_pending(
+/// Items where the stat tier still has work to do: never stat'd or
+/// missing a size value (e.g. plugin-inserted entries that didn't
+/// pre-fill size). Stat has no cooldown — once `stat_at` and `size` are
+/// set, the row drops out until a refresh re-imports it.
+pub async fn list_items_needing_stat(
     db: &DatabaseConnection,
-    stat_cutoff_ms: i64,
-    media_cutoff_ms: i64,
-    limit: u64,
 ) -> Result<Vec<(item::Model, String)>> {
-    use sea_orm::sea_query::Expr;
     use sea_orm::Condition;
 
     let rows = item::Entity::find()
         .filter(
             Condition::any()
-                .add(item::Column::StatAt.is_null())
-                .add(item::Column::StatAt.lt(stat_cutoff_ms))
-                .add(item::Column::ProbedAt.is_null())
-                .add(item::Column::ProbedAt.lt(media_cutoff_ms))
-                // SQLite treats NULL comparisons as NULL ⇒ false, so
-                // rows where modified_at IS NULL are excluded here —
-                // they'll be picked up by the stat-stale arm above.
-                .add(
-                    Expr::col(item::Column::ProbedAt)
-                        .lt(Expr::col(item::Column::ModifiedAt)),
-                ),
+                .add(item::Column::Size.is_null())
+                .add(item::Column::StatAt.is_null()),
         )
-        .order_by_asc(item::Column::StatAt)
-        .order_by_asc(item::Column::ProbedAt)
-        .limit(limit)
         .find_also_related(library::Entity)
         .all(db)
         .await
-        .context("select items pending probe")?;
+        .context("select items needing stat")?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|(it, lib)| lib.map(|l| (it, l.path)))
+        .collect())
+}
+
+/// Items where the media tier still has work. The candidate set is
+/// scoped at the SQL layer so non-media items (scene, web, etc.) never
+/// reach the caller:
+///
+/// ```text
+/// (ty IN ('image', 'video'))
+///   AND (path LIKE '%.<ext>' for ext IN probable_exts)
+///   AND (width IS NULL
+///        OR height IS NULL
+///        OR probed_at IS NULL
+///        OR modified_at IS NULL
+///        OR probed_at < modified_at)
+/// ```
+///
+/// `probable_exts` items must be lowercase, no leading dot.
+pub async fn list_items_needing_probe(
+    db: &DatabaseConnection,
+    probable_exts: &[&str],
+) -> Result<Vec<(item::Model, String)>> {
+    use sea_orm::sea_query::Expr;
+    use sea_orm::Condition;
+
+    let mut ext_cond = Condition::any();
+    for ext in probable_exts {
+        ext_cond = ext_cond.add(item::Column::Path.like(format!("%.{ext}")));
+    }
+
+    let type_cond = Condition::any()
+        .add(item::Column::Ty.eq("image"))
+        .add(item::Column::Ty.eq("video"));
+
+    let trigger_cond = Condition::any()
+        .add(item::Column::Width.is_null())
+        .add(item::Column::Height.is_null())
+        .add(item::Column::ProbedAt.is_null())
+        .add(item::Column::ModifiedAt.is_null())
+        .add(
+            Expr::col(item::Column::ProbedAt)
+                .lt(Expr::col(item::Column::ModifiedAt)),
+        );
+
+    let rows = item::Entity::find()
+        .filter(
+            Condition::all()
+                .add(type_cond)
+                .add(ext_cond)
+                .add(trigger_cond),
+        )
+        .find_also_related(library::Entity)
+        .all(db)
+        .await
+        .context("select items needing media probe")?;
 
     Ok(rows
         .into_iter()
@@ -715,10 +764,15 @@ pub async fn update_item_stat<C: ConnectionTrait>(
     Ok(ItemWriteOutcome { changed })
 }
 
-/// Tier-2 media probe result: writes `width`, `height`, `format`, and
-/// `probed_at`. `None` in `meta` means "unknown — leave existing alone".
-/// `update_at` is bumped only when at least one of the three media
-/// columns actually changed.
+/// Tier-2 media probe result: writes `width`, `height`, and `probed_at`.
+/// Probe fallback policy:
+///   1. Use `meta.{width,height}` if libavformat returned one.
+///   2. Else fall back to whatever was already in the row (don't drop a
+///      successful earlier value because this run came back empty).
+///   3. Else write `0` — distinguishes "probed but failed" from
+///      "never probed", so `list_items_needing_probe`'s `width IS NULL`
+///      arm doesn't keep retrying the same broken file.
+/// `update_at` is bumped only when at least one column actually changed.
 pub async fn update_item_media<C: ConnectionTrait>(
     db: &C,
     id: i64,
@@ -733,28 +787,25 @@ pub async fn update_item_media<C: ConnectionTrait>(
     let new_width = meta
         .width
         .and_then(|v| i32::try_from(v).ok())
-        .or(existing.width);
+        .or(existing.width)
+        .unwrap_or(0);
     let new_height = meta
         .height
         .and_then(|v| i32::try_from(v).ok())
-        .or(existing.height);
-    let new_format = meta.format.clone().or_else(|| existing.format.clone());
+        .or(existing.height)
+        .unwrap_or(0);
 
-    let changed = new_width != existing.width
-        || new_height != existing.height
-        || new_format != existing.format;
+    let changed = Some(new_width) != existing.width || Some(new_height) != existing.height;
 
     let now = now_ms();
     let mut am: item::ActiveModel = existing.into();
     if changed {
-        am.width = Set(new_width);
-        am.height = Set(new_height);
-        am.format = Set(new_format);
+        am.width = Set(Some(new_width));
+        am.height = Set(Some(new_height));
         am.update_at = Set(now);
     } else {
         am.width = NotSet;
         am.height = NotSet;
-        am.format = NotSet;
         am.update_at = NotSet;
     }
     am.probed_at = Set(Some(now));
@@ -894,7 +945,7 @@ mod tests {
             size: None,
             width: None,
             height: None,
-            format: None,
+            content_rating: None,
         }
     }
 
@@ -936,7 +987,7 @@ mod tests {
                 size: None,
                 width: None,
                 height: None,
-                format: None,
+                content_rating: None,
             },
         )
         .await
@@ -955,7 +1006,7 @@ mod tests {
                 size: None,
                 width: None,
                 height: None,
-                format: None,
+                content_rating: None,
             },
         )
         .await
@@ -986,7 +1037,7 @@ mod tests {
                 size: Some(123_456),
                 width: Some(1920),
                 height: Some(1080),
-                format: Some("matroska,webm"),
+                content_rating: Some("Everyone"),
             },
         )
         .await
@@ -994,8 +1045,11 @@ mod tests {
         assert_eq!(first.size, Some(123_456));
         assert_eq!(first.width, Some(1920));
         assert_eq!(first.height, Some(1080));
-        assert_eq!(first.format.as_deref(), Some("matroska,webm"));
+        assert_eq!(first.content_rating.as_deref(), Some("Everyone"));
 
+        // Re-upserting with None must preserve the prior probe-filled
+        // values — otherwise plugin re-scans clobber size/width/height
+        // until the probe scheduler runs again.
         let second = upsert_item(
             &db,
             ItemUpsertArgs {
@@ -1010,15 +1064,15 @@ mod tests {
                 size: None,
                 width: None,
                 height: None,
-                format: None,
+                content_rating: None,
             },
         )
         .await
         .unwrap();
-        assert_eq!(second.size, None);
-        assert_eq!(second.width, None);
-        assert_eq!(second.height, None);
-        assert_eq!(second.format, None);
+        assert_eq!(second.size, Some(123_456));
+        assert_eq!(second.width, Some(1920));
+        assert_eq!(second.height, Some(1080));
+        assert_eq!(second.content_rating.as_deref(), Some("Everyone"));
     }
 
     #[tokio::test]

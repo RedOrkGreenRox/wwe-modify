@@ -10,6 +10,7 @@ MD.Dialog {
     id: root
     title: qsTr("Filters")
     property var model
+    property var supportedTypes: []
     horizontalPadding: 16
     implicitWidth: Math.min(440, parent ? parent.width - 48 : 440)
     standardButtons: T.Dialog.Cancel | T.Dialog.Reset | T.Dialog.Apply
@@ -57,6 +58,7 @@ MD.Dialog {
             model: root.model
             delegate: W.WallpaperFilter {
                 width: ListView.view.contentWidth
+                supportedTypes: root.supportedTypes
             }
             implicitHeight: contentHeight
             spacing: 2

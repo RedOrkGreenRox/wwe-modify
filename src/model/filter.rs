@@ -109,16 +109,6 @@ pub fn wallpaper_filter_to_condition(filter: &pb::WallpaperFilterRule) -> Option
             ),
             _ => None,
         },
-        pb::WallpaperFilterType::Format => match filter.payload.as_ref() {
-            Some(Payload::StringFilter(f)) => string_condition_to_condition(
-                || Expr::col((item::Entity, item::Column::Format)),
-                pb::StringCondition::try_from(f.condition)
-                    .unwrap_or(pb::StringCondition::Unspecified),
-                &f.value,
-                true,
-            ),
-            _ => None,
-        },
         pb::WallpaperFilterType::Width => match filter.payload.as_ref() {
             Some(Payload::IntFilter(f)) => int_condition_to_condition(
                 || Expr::col((item::Entity, item::Column::Width)),
@@ -303,7 +293,7 @@ mod tests {
                 size: Some(2048),
                 width: Some(1920),
                 height: Some(1080),
-                format: Some("png"),
+                content_rating: Some("Everyone"),
             },
         )
         .await
@@ -322,7 +312,7 @@ mod tests {
                 size: Some(4096),
                 width: Some(900),
                 height: Some(1600),
-                format: Some("webm"),
+                content_rating: Some("Mature"),
             },
         )
         .await

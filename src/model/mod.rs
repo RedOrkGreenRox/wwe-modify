@@ -46,10 +46,16 @@ pub async fn connect(db_path: &Path) -> Result<DatabaseConnection> {
 /// Tuning notes:
 /// - PRAGMAs run per-connection through `map_sqlx_sqlite_opts`; the
 ///   sea-orm pool reapplies them on every newly-acquired connection,
-///   so `foreign_keys` actually enforces across all 4 readers/writers.
-/// - WAL + `synchronous=NORMAL` + 5s `busy_timeout` is the standard
-///   "concurrent reader, single writer" setup; safe on power loss to
-///   the last committed transaction.
+///   so `foreign_keys` actually enforces consistently.
+/// - WAL + `synchronous=NORMAL` is safe on power loss to the last
+///   committed transaction.
+/// - `max_connections=1` serializes everything against a single SQLite
+///   connection. SQLite is "multi-reader, single-writer" so multiple
+///   pooled connections only paid off for concurrent reads; the price
+///   was `SQLITE_BUSY` / `SQLITE_BUSY_SNAPSHOT` whenever two writers
+///   raced (the latter slips past `busy_timeout`). One connection
+///   removes that whole class of failure — at the cost of read latency
+///   under heavy write contention, which we don't have.
 /// - `mmap_size=128MiB` / `cache_size=2000 pages (~8 MiB)` /
 ///   `journal_size_limit=64MiB` keep memory bounded for the daemon.
 /// - `auto_vacuum=INCREMENTAL` only takes effect when applied to an
@@ -65,8 +71,8 @@ pub async fn connect_url(url: &str) -> Result<DatabaseConnection> {
         .sqlx_logging_level(log::LevelFilter::Debug)
         .sqlx_slow_statements_logging_settings(log::LevelFilter::Info, Duration::from_secs(1))
         .min_connections(1)
-        .max_connections(4)
-        .acquire_timeout(Duration::from_secs(5))
+        .max_connections(1)
+        .acquire_timeout(Duration::from_secs(30))
         .map_sqlx_sqlite_opts(|o| {
             o.foreign_keys(true)
                 .journal_mode(SqliteJournalMode::Wal)

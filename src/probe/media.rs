@@ -12,7 +12,7 @@
 //! between `extradata_size` and `format`). When that happens we still log a
 //! single warning per process and never retry.
 
-use std::ffi::{c_char, c_int, c_uint, c_void, CStr, CString};
+use std::ffi::{c_char, c_int, c_uint, c_void, CString};
 use std::ptr;
 use std::sync::Mutex;
 
@@ -44,7 +44,6 @@ const AVMEDIA_TYPE_VIDEO: c_int = 0;
 pub struct MediaMeta {
     pub width: Option<u32>,
     pub height: Option<u32>,
-    pub format: Option<String>,
 }
 
 /// Probe contract. Implementations must be `Send + Sync` so they can be
@@ -185,21 +184,21 @@ impl AvFormatProbe {
     }
 
     /// Run the libavformat-driven probe. Caller has already verified the
-    /// library loaded; we extract format name + first video stream's
-    /// width/height. Any failure leaves the corresponding field as `None`.
-    fn probe_with_libav(&self, path: &str) -> (Option<u32>, Option<u32>, Option<String>) {
+    /// library loaded; we extract the first video stream's width/height.
+    /// Any failure leaves the corresponding field as `None`.
+    fn probe_with_libav(&self, path: &str) -> (Option<u32>, Option<u32>) {
         let guard = match self.state.lock() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
         };
         let lib = match &*guard {
             LibState::Loaded(Some(l)) => l,
-            _ => return (None, None, None),
+            _ => return (None, None),
         };
 
         let c_path = match CString::new(path) {
             Ok(c) => c,
-            Err(_) => return (None, None, None),
+            Err(_) => return (None, None),
         };
 
         unsafe {
@@ -211,24 +210,12 @@ impl AvFormatProbe {
                 ptr::null_mut(),
             );
             if rc < 0 || ctx.is_null() {
-                return (None, None, None);
+                return (None, None);
             }
 
             // Best effort — even if find_stream_info fails, codecpar may
             // still carry usable width/height for many container formats.
             let _ = (lib.syms.avformat_find_stream_info)(ctx, ptr::null_mut());
-
-            // Format name from iformat->name.
-            let format = if !(*ctx).iformat.is_null() {
-                let name_ptr = (*(*ctx).iformat).name;
-                if name_ptr.is_null() {
-                    None
-                } else {
-                    CStr::from_ptr(name_ptr).to_str().ok().map(|s| s.to_owned())
-                }
-            } else {
-                None
-            };
 
             // Find the first video stream.
             let nb = (*ctx).nb_streams as usize;
@@ -264,7 +251,7 @@ impl AvFormatProbe {
             }
 
             (lib.syms.avformat_close_input)(&mut ctx);
-            (width, height, format)
+            (width, height)
         }
     }
 }
@@ -286,10 +273,9 @@ impl MediaProbe for AvFormatProbe {
             );
             return meta;
         }
-        let (width, height, format) = self.probe_with_libav(path);
+        let (width, height) = self.probe_with_libav(path);
         meta.width = width;
         meta.height = height;
-        meta.format = format;
         meta
     }
 }
@@ -429,15 +415,6 @@ mod tests {
 
         let probe = AvFormatProbe::new();
         let meta = probe.probe_media(tmp.path().to_str().unwrap());
-        // If libavformat is available on the test host, format should
-        // come back. If not, that's also fine — the test just verifies
-        // we don't crash and size is correct.
-        if let Some(fmt) = &meta.format {
-            assert!(
-                fmt.contains("wav"),
-                "expected wav-ish format string, got {fmt:?}"
-            );
-        }
         // Audio-only file — never has video dims.
         assert_eq!(meta.width, None);
         assert_eq!(meta.height, None);

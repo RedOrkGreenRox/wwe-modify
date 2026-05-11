@@ -763,16 +763,10 @@ async fn refresh_sources_inner(app: &Arc<AppState>) -> Result<usize> {
         "probe/refresh",
         "probe/post-refresh",
         async move {
-            // run_pending emits its own info log; we only care about
-            // surfacing the error here.
-            crate::probe::task::run_pending(
-                &db,
-                probe,
-                Some(crate::probe::task::PROBE_REFRESH_BATCH),
-            )
-            .await
-            .map(|_| ())
-            .map_err(anyhow::Error::from)
+            crate::probe::task::run_pending(&db, probe)
+                .await
+                .map(|_| ())
+                .map_err(anyhow::Error::from)
         },
     );
 

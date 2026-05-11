@@ -301,9 +301,13 @@ bool ThumbnailRequest::tryResolveSync(ResolvedJob& out) {
     if (! m_source.isEmpty()) {
         out.job_path = QFileInfo(m_source).absoluteFilePath();
         out.is_video = false;
-    } else if (m_wp_type == u"video"_s && ! m_resource.isEmpty()) {
+    } else if (! m_resource.isEmpty()
+               && (m_wp_type == u"video"_s || m_wp_type == u"image"_s)) {
+        // No preview supplied — generate one from the resource itself.
+        // Videos go through the libavformat extractor; images decode
+        // via QImageReader (handled in ThumbnailJob::run by is_video).
         out.job_path = QFileInfo(m_resource).absoluteFilePath();
-        out.is_video = true;
+        out.is_video = (m_wp_type == u"video"_s);
     } else {
         setCachePathInternal(QUrl());
         setErrorInternal(u"no preview source"_s);

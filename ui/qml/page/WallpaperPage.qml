@@ -120,6 +120,7 @@ MD.Page {
         id: filterDialog
         parent: T.Overlay.overlay
         model: wallpaperFilterModel
+        supportedTypes: pluginQuery.supportedTypes || []
     }
 
     Connections {
@@ -286,7 +287,7 @@ MD.Page {
                                 text: 'Sources'
                                 onTriggered: MD.Util.showPopup('waywallen.ui/PagePopup', {
                                     source: 'waywallen.ui/SourceManagePage'
-                                }, win)
+                                }, root)
                             },
                             MD.Action {
                                 icon.name: MD.Token.icon.refresh
@@ -323,31 +324,55 @@ MD.Page {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
 
-                    MD.VerticalListView {
+                    MD.VerticalGridView {
                         id: m_grid_view
                         anchors.fill: parent
                         clip: true
+                        focus: true
+                        focusPolicy: Qt.StrongFocus
+                        keyNavigationEnabled: true
+                        keyNavigationWraps: true
+                        currentIndex: -1
+                        highlightRangeMode: GridView.NoHighlightRange
                         cacheBuffer: 300
                         displayMarginBeginning: 300
                         displayMarginEnd: 300
                         topMargin: 8
                         bottomMargin: 8
+                        leftMargin: 8
+                        rightMargin: 8
                         visible: m_grid_view.count > 0
 
-                        MD.WidthProvider {
-                            id: m_wp
-                            total: m_grid_view.width
-                            minimum: 150
-                            spacing: 12
-                            leftMargin: 8
-                            rightMargin: 8
-                        }
+                        readonly property int _cols: Math.max(1, Math.floor(width / 162))
+                        cellWidth: (width - leftMargin - rightMargin) / _cols
+                        cellHeight: cellWidth
 
                         model: wallpaperQuery.data
 
                         delegate: WallpaperCard {
-                            widthProvider: m_wp
-                            onClicked: root.selectedWallpaper = wallpaperQuery.data.item(index)
+                            onClicked: {
+                                m_grid_view.currentIndex = index;
+                                root.selectedWallpaper = wallpaperQuery.data.item(index);
+                            }
+                        }
+
+                        highlightFollowsCurrentItem: true
+                        highlight: Component {
+                            Item {
+                                visible: m_grid_view.currentItem !== null
+                                z: 2
+                                // Inset 2 = 6 (card margin) − 4 (ring outset),
+                                // so the ring sits 4px outside the image
+                                // control with the same concentric radius.
+                                Rectangle {
+                                    anchors.fill: parent
+                                    anchors.margins: 2
+                                    color: "transparent"
+                                    border.color: MD.Token.color.primary
+                                    border.width: 3
+                                    radius: MD.Token.shape.corner.extra_small + 4
+                                }
+                            }
                         }
                     }
 
@@ -433,7 +458,7 @@ MD.Page {
                             Layout.preferredHeight: visible ? 200 : 0
                             Layout.margins: 12
                             visible: (root.selectedWallpaper?.preview ?? "") !== ""
-                                     || (root.selectedWallpaper?.wpType === "video"
+                                     || (["video", "image"].indexOf(root.selectedWallpaper?.wpType ?? "") >= 0
                                          && (root.selectedWallpaper?.resource ?? "") !== "")
                             source  : root.selectedWallpaper?.preview ?? ""
                             resource: root.selectedWallpaper?.resource ?? ""
@@ -486,14 +511,16 @@ MD.Page {
                             columnSpacing: 12
                             rowSpacing: 4
 
-                            // Note: proto int64 `size` reaches QML as a
-                            // BigInt-like wrapper, so `!== 0` is always
-                            // true (BigInt vs Number strict-inequality).
-                            // Coerce through `Number(...)` everywhere
-                            // we compare or do arithmetic on it.
+                            // qtprotobuf marks int64 Q_PROPERTYs as
+                            // SCRIPTABLE false, so `wallpaper.size` is
+                            // undefined from QML. Read it via the model's
+                            // C++ helper instead.
+                            readonly property real sizeBytes: wallpaperQuery.data && root.selectedWallpaper
+                                                              ? wallpaperQuery.data.sizeOf(root.selectedWallpaper)
+                                                              : 0
                             readonly property bool hasPath: (root.selectedWallpaper?.resource ?? "") !== ""
                             readonly property bool hasResolution: Number(root.selectedWallpaper?.width ?? 0) > 0 && Number(root.selectedWallpaper?.height ?? 0) > 0
-                            readonly property bool hasSize: Number(root.selectedWallpaper?.size ?? 0) > 0
+                            readonly property bool hasSize: sizeBytes > 0
                             readonly property bool hasFormat: (root.selectedWallpaper?.format ?? "") !== ""
 
                             function shortPath(p) {
@@ -550,7 +577,7 @@ MD.Page {
                             }
                             MD.Text {
                                 visible: m_meta.hasSize
-                                text: m_meta.formatSize(root.selectedWallpaper?.size ?? 0)
+                                text: m_meta.formatSize(m_meta.sizeBytes)
                                 typescale: MD.Token.typescale.body_medium
                                 color: MD.Token.color.on_surface
                             }

@@ -1,5 +1,6 @@
 module;
 #include "QExtra/macro_qt.hpp"
+#include <QtCore/qtypes.h>
 
 #ifdef Q_MOC_RUN
 #    include "waywallen/model/list_models.moc"
@@ -27,6 +28,13 @@ class WallpaperListModel : public kstore::QGadgetListModel,
 
 public:
     WallpaperListModel(QObject* parent = nullptr);
+
+    // qtprotobuf marks `QtProtobuf::int64` Q_PROPERTYs as SCRIPTABLE
+    // false, so QML can't read `wallpaper.size` directly. Return as
+    // qreal (double): safe for any sane file size (< 2^53 bytes).
+    Q_INVOKABLE qreal sizeOf(const waywallen::model::Wallpaper& w) const {
+        return static_cast<qreal>(static_cast<std::int64_t>(w.size()));
+    }
 };
 
 } // namespace waywallen::model

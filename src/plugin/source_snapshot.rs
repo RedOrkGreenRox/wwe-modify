@@ -88,7 +88,7 @@ mod tests {
             size: None,
             width: None,
             height: None,
-            format: None,
+            content_rating: None,
             plugin_name: "test".to_string(),
             library_root: "/tmp".to_string(),
         }

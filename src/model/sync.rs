@@ -130,7 +130,7 @@ pub async fn sync_plugin_entries(
             let size = entry.size;
             let width = entry.width.and_then(|v| i32::try_from(v).ok());
             let height = entry.height.and_then(|v| i32::try_from(v).ok());
-            let format_str = entry.format.clone();
+            let content_rating = entry.content_rating.clone();
 
             let persisted = repo::upsert_item(
                 db,
@@ -146,7 +146,7 @@ pub async fn sync_plugin_entries(
                     size,
                     width,
                     height,
-                    format: format_str.as_deref(),
+                    content_rating: content_rating.as_deref(),
                 },
             )
             .await?;
@@ -208,7 +208,7 @@ mod tests {
             size: None,
             width: None,
             height: None,
-            format: None,
+            content_rating: None,
         }
     }
 
@@ -367,7 +367,7 @@ mod tests {
             size: None,
             width: None,
             height: None,
-            format: None,
+            content_rating: None,
         };
         let _ = sync_plugin_entries(
             &db,
@@ -549,7 +549,7 @@ mod tests {
         assert_eq!(it.size, None);
         assert_eq!(it.width, None);
         assert_eq!(it.height, None);
-        assert_eq!(it.format, None);
+        assert_eq!(it.content_rating, None);
     }
 
     #[tokio::test]
@@ -559,7 +559,7 @@ mod tests {
         e.size = Some(42);
         e.width = Some(1920);
         e.height = Some(1080);
-        e.format = Some("matroska,webm".to_owned());
+        e.content_rating = Some("Everyone".to_owned());
         let _ = sync_plugin_entries(
             &db,
             PluginRef {
@@ -577,7 +577,7 @@ mod tests {
         assert_eq!(it.size, Some(42));
         assert_eq!(it.width, Some(1920));
         assert_eq!(it.height, Some(1080));
-        assert_eq!(it.format.as_deref(), Some("matroska,webm"));
+        assert_eq!(it.content_rating.as_deref(), Some("Everyone"));
     }
 
     #[tokio::test]

@@ -191,7 +191,7 @@ impl SourceManager {
                 size: tbl.get::<i64>("size").ok(),
                 width: tbl.get::<u32>("width").ok(),
                 height: tbl.get::<u32>("height").ok(),
-                format: tbl.get::<String>("format").ok(),
+                content_rating: tbl.get::<String>("content_rating").ok(),
             };
             let idx = self.entries.len();
             self.by_type
@@ -341,13 +341,13 @@ impl SourceManager {
         // ctx.probe(path) -> table|nil
         // Returns a table with present file/media fields, or nil if all
         // fields are None. Composes the cheap stat tier (size) and the
-        // libavformat tier (width/height/format) into a single table so
-        // Lua plugins keep the historical schema.
+        // libavformat tier (width/height) into a single table so Lua
+        // plugins keep the historical schema.
         let probe_arc = Arc::clone(&self.probe);
         let probe_fn = self.lua.create_function(move |lua, path: String| {
             let s = crate::probe::stat::stat_file(&path);
             let m = probe_arc.probe_media(&path);
-            if s.is_none() && m.width.is_none() && m.height.is_none() && m.format.is_none() {
+            if s.is_none() && m.width.is_none() && m.height.is_none() {
                 return Ok(mlua::Value::Nil);
             }
             let tbl = lua.create_table()?;
@@ -359,9 +359,6 @@ impl SourceManager {
             }
             if let Some(v) = m.height {
                 tbl.set("height", v)?;
-            }
-            if let Some(v) = m.format {
-                tbl.set("format", v)?;
             }
             Ok(mlua::Value::Table(tbl))
         })?;
@@ -729,7 +726,6 @@ mod tests {
             meta: MediaMeta {
                 width: Some(1920),
                 height: Some(1080),
-                format: Some("matroska,webm".to_owned()),
             },
         });
         let dir = tempfile::tempdir().unwrap();
@@ -756,7 +752,6 @@ function M.scan(ctx)
             _probe_size = m.size,
             _probe_width = m.width,
             _probe_height = m.height,
-            _probe_format = m.format,
         }},
     }}
 end
@@ -857,7 +852,7 @@ return M
         assert!(entries.iter().all(|e| e.size.is_some()));
         assert!(entries.iter().all(|e| e.width.is_none()));
         assert!(entries.iter().all(|e| e.height.is_none()));
-        assert!(entries.iter().all(|e| e.format.is_none()));
+        assert!(entries.iter().all(|e| e.content_rating.is_none()));
         // SPAWN_VERSION 3: plugins emit empty `metadata`; the canonical
         // resource path lives in `entry.resource` and is surfaced to
         // the renderer via the plugin's `extras(entry)` Lua callback.
