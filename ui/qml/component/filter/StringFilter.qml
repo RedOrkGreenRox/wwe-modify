@@ -10,6 +10,7 @@ QtObject {
     property string value: ""
     property int condition: WC.StringCondition.STRING_CONDITION_UNSPECIFIED
     property WC.wallpaperStringFilter subfilter
+    property bool _syncing: false
 
     readonly property var conditionModel: [
         { name: qsTr("contains"),     value: WC.StringCondition.STRING_CONDITION_CONTAINS },
@@ -41,12 +42,14 @@ QtObject {
         if (!filter.hasStringFilter)
             filter.stringFilter = subfilter;
         const active = filter.hasStringFilter ? filter.stringFilter : subfilter;
+        _syncing = true;
         condition = active.condition;
         value = active.value;
+        _syncing = false;
     }
 
     function commitToFilter() {
-        if (!filter)
+        if (!filter || _syncing)
             return;
         subfilter.condition = condition;
         subfilter.value = value;

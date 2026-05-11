@@ -252,8 +252,17 @@ fn gpu_info_to_pb(g: &crate::gpu::GpuInfo) -> pb::GpuInfo {
 }
 
 fn display_snapshot_to_pb(s: DisplaySnapshot, settings: &SettingsStore) -> pb::DisplayInfo {
-    let resolved = settings.resolved_layout(&s.name);
-    let override_prefs = settings.display_prefs(&s.name).unwrap_or_default();
+    // Per-display prefs are keyed by `instance_id` when the consumer
+    // advertises one (v4); name is only the fallback. Mirrors
+    // `Router::resolved_layout` so the snapshot the UI sees agrees with
+    // what `resync_display_set_config` pushes to the display subprocess.
+    let layout_key: &str = s
+        .instance_id
+        .as_deref()
+        .filter(|iid| settings.display_prefs(iid).is_some())
+        .unwrap_or(s.name.as_str());
+    let resolved = settings.resolved_layout(layout_key);
+    let override_prefs = settings.display_prefs(layout_key).unwrap_or_default();
     pb::DisplayInfo {
         display_id: s.id,
         name: s.name,

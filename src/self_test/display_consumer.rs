@@ -154,7 +154,7 @@ fn run_session(
     let name_c = CString::new(display_name.as_bytes()).context("display name nul")?;
     let inst_c = CString::new(instance_id.as_bytes()).context("instance id nul")?;
     let rc = unsafe {
-        ffi::waywallen_display_begin_connect_v2(
+        ffi::waywallen_display_begin_connect(
             d,
             sock_c.as_ptr(),
             name_c.as_ptr(),
@@ -165,7 +165,7 @@ fn run_session(
         )
     };
     if rc != ffi::WAYWALLEN_OK {
-        anyhow::bail!("begin_connect_v2 rc={rc}");
+        anyhow::bail!("begin_connect rc={rc}");
     }
 
     let fd = unsafe { ffi::waywallen_display_get_fd(d) };
@@ -477,9 +477,7 @@ unsafe extern "C" fn cb_disconnected(
 struct FfiHandleGuard(*mut ffi::waywallen_display_t);
 impl Drop for FfiHandleGuard {
     fn drop(&mut self) {
-        unsafe {
-            ffi::waywallen_display_disconnect(self.0);
-            ffi::waywallen_display_destroy(self.0);
-        }
+        // Same-thread tear-down: close + drain + free.
+        unsafe { ffi::waywallen_display_shutdown(self.0) };
     }
 }

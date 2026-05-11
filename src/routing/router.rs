@@ -204,6 +204,12 @@ pub struct RendererSnapshot {
 pub struct DisplaySnapshot {
     pub id: DisplayId,
     pub name: String,
+    /// Stable per-display key advertised by v4 consumers, used as the
+    /// settings store key for layout overrides. Snapshot consumers must
+    /// prefer this over `name` whenever they look up persisted prefs;
+    /// `name` is just the human-readable connector label and can collide
+    /// across reconnects.
+    pub instance_id: Option<String>,
     pub width: u32,
     pub height: u32,
     pub refresh_mhz: u32,
@@ -1132,6 +1138,7 @@ impl Router {
         Some(DisplaySnapshot {
             id,
             name: s.info.name.clone(),
+            instance_id: s.info.instance_id.clone(),
             width: s.info.width,
             height: s.info.height,
             refresh_mhz: s.info.refresh_mhz,
@@ -1219,6 +1226,7 @@ impl Router {
                 Some(DisplaySnapshot {
                     id,
                     name: s.info.name.clone(),
+                    instance_id: s.info.instance_id.clone(),
                     width: s.info.width,
                     height: s.info.height,
                     refresh_mhz: s.info.refresh_mhz,

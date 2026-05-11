@@ -36,6 +36,8 @@ dependencies:
   - libgles-devel
   - mesa-libgbm-devel-conda-x86_64
   - lz4-c
+  - libva-utils
+  - dav1d-dev
 
   # FFmpeg is built from source by scripts/build_ffmpeg.sh — it gives us a
   # known-minimal codec set and the same sysroot baseline as the rest of the

@@ -145,7 +145,7 @@ cmake --install "$BUILD_DIR"
 
 # ---- 4.5 Build open-wallpaper-engine (waywallen-wescene-renderer) ----
 # Pinned commit; bump explicitly when integrating new owe changes.
-OWE_COMMIT="7894c1dd4d1f05f0a7eaa9e4b3b1e55275f7ab43"
+OWE_COMMIT="46337efac304c3d9001d8b3182afb2bc9d5a0fd8"
 OWE_SRC="$PROJECT_DIR/build/_owe-src"
 OWE_BUILD="$PROJECT_DIR/build/_owe-build"
 
@@ -223,10 +223,7 @@ export LD_LIBRARY_PATH="$HERE/usr/lib:${LD_LIBRARY_PATH:-}"
 export QT_PLUGIN_PATH="$HERE/usr/plugins:${QT_PLUGIN_PATH:-}"
 export QML2_IMPORT_PATH="$HERE/usr/qml:${QML2_IMPORT_PATH:-}"
 export QML_IMPORT_PATH="$QML2_IMPORT_PATH"
-exec "$HERE/usr/bin/waywallen" \
-    --ui "$HERE/usr/bin/waywallen-ui" \
-    --plugin "$HERE/usr/share/waywallen" \
-    "$@"
+exec "$HERE/usr/bin/waywallen" "$@"
 APPEOF
 chmod +x "$APPRUN_TMP"
 
@@ -268,6 +265,7 @@ cp -v "$CONDA_PREFIX/lib/libgcc_s.so.1" "$APPDIR/usr/lib/"
 cp -rv "$APPDIR/usr/lib/qt6/qml/." "$APPDIR/usr/qml/"
 rm -rf "$APPDIR/usr/lib/qt6"
 rm -rf "$APPDIR/lib"/libQt6QuickDialogs*
+rm -rf "$APPDIR/lib"/libvulkan.so.1 "$APPDIR/lib"/libva*
 
 # ---- 8. Drop unused QuickControls2 styles (native libs + QML modules) ----
 step "Pruning unused QuickControls2 styles"

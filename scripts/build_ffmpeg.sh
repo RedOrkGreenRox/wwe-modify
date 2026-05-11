@@ -45,8 +45,10 @@ fi
 # and video container payloads; the audio decoders exist so media_probe can
 # enumerate audio tracks in mp4/mkv files even though we never play them.
 DECODERS=(
-    # video
-    h264 hevc av1 vp8 vp9 mpeg4 mjpeg
+    # video. The built-in `av1` decoder is hwaccel-only (no sw path); we
+    # also enable `libdav1d` for the sw fallback. The decoder pick happens
+    # in video_decoder.cpp: hw paths use native `av1`, sw uses libdav1d.
+    h264 hevc av1 libdav1d vp8 vp9 mpeg4 mjpeg
     # image (also used for image-sequence demuxing)
     png apng webp gif bmp tiff
     # audio (probe-only)
@@ -72,6 +74,12 @@ FILTERS=(
     buffer buffersink abuffer abuffersink
 )
 PROTOCOLS=(file pipe)
+# With --disable-everything, hwaccels must be enabled explicitly. VAAPI covers
+# Intel/AMD via libva (mesa); Vulkan covers VK_KHR_video_decode on radv/anv.
+HWACCELS=(
+    h264_vaapi hevc_vaapi av1_vaapi vp8_vaapi vp9_vaapi mpeg4_vaapi mjpeg_vaapi
+    h264_vulkan hevc_vulkan av1_vulkan
+)
 
 CFG_ARGS=(
     --prefix="$CONDA_PREFIX"
@@ -88,16 +96,20 @@ CFG_ARGS=(
     --enable-pic
     --disable-everything
 
-    # External libs. Vulkan is enabled so libavcodec can offer the
-    # VK_KHR_video_decode hwaccel (h264/hevc/av1) that the video plugin
-    # consumes. Headers come from conda-forge vulkan-headers; the loader
-    # (libvulkan.so.1) ships via vulkan-loader and is bundled into the
-    # AppImage. The X / audio / v4l2 libs aren't in the conda env so
-    # configure auto-disables them; we don't list them here to avoid
-    # flag-name churn between FFmpeg releases.
+    # External libs. Vulkan provides VK_KHR_video_decode hwaccel
+    # (h264/hevc/av1) on radv/anv. VAAPI provides hwaccel via libva (mesa) for
+    # Intel/AMD. Headers come from conda-forge vulkan-headers / libva; the
+    # loaders (libvulkan.so.1, libva.so.2, libva-drm.so.2) ship via
+    # vulkan-loader / libva and are bundled into the AppImage. The X / audio /
+    # v4l2 libs aren't in the conda env so configure auto-disables them; we
+    # don't list them here to avoid flag-name churn between FFmpeg releases.
     --enable-vulkan
-    --disable-vaapi --disable-vdpau
+    --enable-vaapi
+    --disable-vdpau
     --disable-xlib --disable-libxcb
+    # libdav1d for sw AV1 decode (FFmpeg's built-in av1 decoder is
+    # hwaccel-only). Headers/lib come from conda-forge `dav1d`.
+    --enable-libdav1d
 )
 for x in "${DECODERS[@]}";  do CFG_ARGS+=( "--enable-decoder=$x" ); done
 for x in "${ENCODERS[@]}";  do CFG_ARGS+=( "--enable-encoder=$x" ); done
@@ -106,6 +118,7 @@ for x in "${PARSERS[@]}";   do CFG_ARGS+=( "--enable-parser=$x"  ); done
 for x in "${BSFS[@]}";      do CFG_ARGS+=( "--enable-bsf=$x"     ); done
 for x in "${FILTERS[@]}";   do CFG_ARGS+=( "--enable-filter=$x"  ); done
 for x in "${PROTOCOLS[@]}"; do CFG_ARGS+=( "--enable-protocol=$x" ); done
+for x in "${HWACCELS[@]}";  do CFG_ARGS+=( "--enable-hwaccel=$x"  ); done
 
 # Forward the sysroot/optimization flags exported by the conda toolchain
 # activation. configure splices these into every cc invocation it makes, so

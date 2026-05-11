@@ -7,10 +7,11 @@ import Qcm.Material as MD
 QtObject {
     id: root
     property var filter: null
-    property string value: "image"
+    property string value: ""
     property int condition: WC.StringCondition.STRING_CONDITION_UNSPECIFIED
     property WC.wallpaperStringFilter subfilter
     property var supportedTypes: []
+    property bool _syncing: false
 
     readonly property var conditionModel: [
         { name: qsTr("is"),     value: WC.StringCondition.STRING_CONDITION_IS },
@@ -60,13 +61,14 @@ QtObject {
         if (!filter.hasStringFilter)
             filter.stringFilter = subfilter;
         const active = filter.hasStringFilter ? filter.stringFilter : subfilter;
+        _syncing = true;
         condition = active.condition;
-        if (active.value)
-            value = active.value;
+        value = active.value;
+        _syncing = false;
     }
 
     function commitToFilter() {
-        if (!filter)
+        if (!filter || _syncing)
             return;
         subfilter.condition = condition;
         subfilter.value = value;

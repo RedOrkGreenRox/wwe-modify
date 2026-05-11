@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 
 set(APP_ID org.waywallen.waywallen)
 set(APP_NAME "waywallen-ui")
-set(APP_VERSION "0.1.3")
+set(APP_VERSION "0.1.4")
 set(APP_SUMMARY "Wallpaper manager for Wayland")
 set(APP_AUTHOR "hypengw")
 

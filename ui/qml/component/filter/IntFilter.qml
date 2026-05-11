@@ -10,6 +10,7 @@ QtObject {
     property int value: 0
     property int condition: WC.IntCondition.INT_CONDITION_UNSPECIFIED
     property WC.wallpaperIntFilter subfilter
+    property bool _syncing: false
 
     readonly property var conditionModel: [
         { name: qsTr("equal"),         value: WC.IntCondition.INT_CONDITION_EQUAL },
@@ -45,12 +46,14 @@ QtObject {
         if (!filter.hasIntFilter)
             filter.intFilter = subfilter;
         const active = filter.hasIntFilter ? filter.intFilter : subfilter;
+        _syncing = true;
         condition = active.condition;
         value = active.value;
+        _syncing = false;
     }
 
     function commitToFilter() {
-        if (!filter)
+        if (!filter || _syncing)
             return;
         subfilter.condition = condition;
         subfilter.value = value;
