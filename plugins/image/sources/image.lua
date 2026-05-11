@@ -12,6 +12,11 @@ function M.info()
         name = "image",
         types = {"image"},
         version = "0.1.0",
+        library_label = "Image Folder",
+        library_hint =
+            "A directory containing image files. Subdirectories up to two " ..
+            "levels deep are also scanned. Supported formats: PNG, JPEG, " ..
+            "WebP, BMP, TIFF, AVIF, GIF.",
     }
 end
 

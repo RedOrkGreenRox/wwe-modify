@@ -876,6 +876,8 @@ async fn dispatch_inner(
                     name: p.name,
                     types: p.types,
                     version: p.version,
+                    library_label: p.library_label,
+                    library_hint: p.library_hint,
                 })
                 .collect();
             Res::SourceList(pb::SourceListResponse { sources })

@@ -36,8 +36,10 @@ void SourceListQuery::reload() {
             QVariantList items;
             for (const auto& s : rsp.sourceList().sources()) {
                 QVariantMap m;
-                m[u"name"_s]    = s.name();
-                m[u"version"_s] = s.version();
+                m[u"name"_s]         = s.name();
+                m[u"version"_s]      = s.version();
+                m[u"libraryLabel"_s] = s.libraryLabel();
+                m[u"libraryHint"_s]  = s.libraryHint();
                 QStringList types;
                 for (const auto& t : s.types()) {
                     types.append(t);

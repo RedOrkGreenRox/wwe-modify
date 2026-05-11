@@ -325,6 +325,13 @@ message SourcePluginInfo {
   string name = 1;
   repeated string types = 2;
   string version = 3;
+  // Short label a UI shows as the placeholder when prompting for a
+  // library path (e.g. "Steam Library Path"). Empty = UI falls back
+  // to a generic label.
+  string library_label = 4;
+  // Longer helper text describing what kind of path to choose. May
+  // contain newlines. Empty = no hint shown.
+  string library_hint = 5;
 }
 
 message WallpaperApplyRequest {

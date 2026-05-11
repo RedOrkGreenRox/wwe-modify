@@ -20,6 +20,14 @@ pub struct SourcePluginInfo {
     pub name: String,
     pub types: Vec<WallpaperType>,
     pub version: String,
+    /// Short label/placeholder a UI uses when prompting the user for a
+    /// library path (e.g. "Steam Library Path"). Empty when the plugin
+    /// didn't supply one; UIs fall back to a generic label.
+    pub library_label: String,
+    /// Longer helper text explaining what kind of path the user should
+    /// choose. May contain newlines / inline-code Markdown markers
+    /// that the UI is free to render literally. Empty when omitted.
+    pub library_hint: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -628,10 +636,14 @@ impl SourceManager {
                 })
                 .unwrap_or_default();
             let version: String = info.get("version").unwrap_or_else(|_| "0.0.0".into());
+            let library_label: String = info.get("library_label").unwrap_or_default();
+            let library_hint: String = info.get("library_hint").unwrap_or_default();
             out.push(SourcePluginInfo {
                 name: name.clone(),
                 types,
                 version,
+                library_label,
+                library_hint,
             });
         }
         Ok(out)

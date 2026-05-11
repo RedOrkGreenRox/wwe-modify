@@ -1,6 +1,5 @@
 pragma ValueTypeBehavior: Assertable
 import QtQuick
-import QtQuick.Dialogs
 import QtQuick.Layouts
 import Qcm.Material as MD
 import waywallen.ui as W
@@ -27,7 +26,15 @@ MD.Page {
         property string selectedPlugin: ""
     }
 
-    FolderDialog {
+    readonly property var selectedSource: {
+        const list = sourceQuery.sources || [];
+        for (let i = 0; i < list.length; ++i) {
+            if (list[i].name === pluginGroup.selectedPlugin) return list[i];
+        }
+        return null;
+    }
+
+    MD.FolderDialog {
         id: folderDialog
         title: "Choose Library Folder"
         onAccepted: {
@@ -78,7 +85,9 @@ MD.Page {
                 MD.TextField {
                     id: pathInput
                     Layout.fillWidth: true
-                    placeholderText: "Library Path"
+                    placeholderText: (root.selectedSource && root.selectedSource.libraryLabel)
+                                     ? root.selectedSource.libraryLabel
+                                     : "Library Path"
                 }
 
                 MD.IconButton {
@@ -86,6 +95,16 @@ MD.Page {
                     icon.name: MD.Token.icon.folder
                     onClicked: folderDialog.open()
                 }
+            }
+
+            MD.Text {
+                Layout.fillWidth: true
+                visible: root.selectedSource && root.selectedSource.libraryHint
+                         && root.selectedSource.libraryHint.length > 0
+                text: root.selectedSource ? (root.selectedSource.libraryHint || "") : ""
+                wrapMode: Text.WordWrap
+                typescale: MD.Token.typescale.body_small
+                color: MD.Token.color.on_surface_variant
             }
 
             Item {
