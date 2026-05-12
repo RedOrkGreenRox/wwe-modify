@@ -49,8 +49,11 @@ export class DisplayLayoutSetQuery : public Query,
     Q_PROPERTY(int fillmode READ fillmode WRITE setFillmode NOTIFY paramsChanged FINAL)
     Q_PROPERTY(bool alignSet READ alignSet WRITE setAlignSet NOTIFY paramsChanged FINAL)
     Q_PROPERTY(int align READ align WRITE setAlign NOTIFY paramsChanged FINAL)
+    Q_PROPERTY(bool rotationSet READ rotationSet WRITE setRotationSet NOTIFY paramsChanged FINAL)
+    Q_PROPERTY(int rotation READ rotation WRITE setRotation NOTIFY paramsChanged FINAL)
     Q_PROPERTY(bool clearFillmode READ clearFillmode WRITE setClearFillmode NOTIFY paramsChanged FINAL)
     Q_PROPERTY(bool clearAlign READ clearAlign WRITE setClearAlign NOTIFY paramsChanged FINAL)
+    Q_PROPERTY(bool clearRotation READ clearRotation WRITE setClearRotation NOTIFY paramsChanged FINAL)
 
 public:
     DisplayLayoutSetQuery(QObject* parent = nullptr);
@@ -65,10 +68,16 @@ public:
     void setAlignSet(bool v);
     auto align() const -> int { return m_align; }
     void setAlign(int v);
+    auto rotationSet() const -> bool { return m_rotation_set; }
+    void setRotationSet(bool v);
+    auto rotation() const -> int { return m_rotation; }
+    void setRotation(int v);
     auto clearFillmode() const -> bool { return m_clear_fillmode; }
     void setClearFillmode(bool v);
     auto clearAlign() const -> bool { return m_clear_align; }
     void setClearAlign(bool v);
+    auto clearRotation() const -> bool { return m_clear_rotation; }
+    void setClearRotation(bool v);
 
     void reload() override;
 
@@ -80,8 +89,11 @@ private:
     int          m_fillmode { 0 };
     bool         m_align_set { false };
     int          m_align { 0 };
+    bool         m_rotation_set { false };
+    int          m_rotation { 0 };
     bool         m_clear_fillmode { false };
     bool         m_clear_align { false };
+    bool         m_clear_rotation { false };
 };
 
 } // namespace waywallen

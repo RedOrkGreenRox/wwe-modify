@@ -367,19 +367,31 @@ message DisplayLinkInfo {
 // Wallpaper fit policy. Values mirror Plasma's wallpaper plugin enum
 // (Stretched / PreserveAspectFit / PreserveAspectCrop / Tiled /
 // TiledOnlyHorizontally / TiledOnlyVertically / Centered) so the daemon
-// API maps 1:1 onto a future Plasma plugin. Tile* variants are
-// accepted but the daemon currently degrades them to
-// PRESERVE_ASPECT_FIT and logs a warning — the v1 set_config wire
-// can't express texture wrap in a single rect.
+// API maps 1:1 onto a future Plasma plugin. Tile* variants used to
+// exist (tags 4, 5, 6) but were never wired through — the v1
+// set_config wire can't express texture wrap in a single rect, and
+// the daemon was just degrading them to PRESERVE_ASPECT_FIT.
 enum FillMode {
   FILL_MODE_UNSPECIFIED          = 0;
   FILL_MODE_STRETCHED            = 1;
   FILL_MODE_PRESERVE_ASPECT_FIT  = 2;
   FILL_MODE_PRESERVE_ASPECT_CROP = 3;
-  FILL_MODE_TILED                = 4;
-  FILL_MODE_TILED_ONLY_HORIZONTAL = 5;
-  FILL_MODE_TILED_ONLY_VERTICAL   = 6;
   FILL_MODE_CENTERED              = 7;
+  reserved 4, 5, 6;
+  reserved "FILL_MODE_TILED", "FILL_MODE_TILED_ONLY_HORIZONTAL",
+           "FILL_MODE_TILED_ONLY_VERTICAL";
+}
+
+// Buffer-side rotation applied per display. Mirrors a subset of
+// wl_output.transform (0..3 — no flips). The compositor compensates
+// for the declared pre-rotation, so visually the wallpaper appears
+// rotated CW by the chosen angle.
+enum Rotation {
+  ROTATION_UNSPECIFIED = 0;
+  ROTATION_NORMAL      = 1;
+  ROTATION_CW_90       = 2;
+  ROTATION_CW_180      = 3;
+  ROTATION_CW_270      = 4;
 }
 
 // 9-position alignment grid. Used by all FillMode values that don't
@@ -408,6 +420,7 @@ enum Align {
 message LayoutPrefs {
   FillMode fillmode = 1;
   Align    align    = 2;
+  Rotation rotation = 4;
   reserved 3;
   reserved "clear_rgba";
 }
@@ -422,6 +435,8 @@ message LayoutOverride {
   FillMode fillmode = 2;
   bool align_set    = 3;
   Align align       = 4;
+  bool rotation_set = 7;
+  Rotation rotation = 8;
   reserved 5, 6;
   reserved "clear_rgba_set", "clear_rgba";
 }
@@ -476,6 +491,7 @@ message DisplayLayoutSetRequest {
   // field to the global default without sending the full override.
   bool clear_fillmode = 3;
   bool clear_align    = 4;
+  bool clear_rotation = 6;
   reserved 5;
   reserved "clear_clear_rgba";
 }

@@ -288,6 +288,7 @@ fn layout_prefs_to_pb_resolved(r: &crate::settings::ResolvedLayout) -> pb::Layou
     pb::LayoutPrefs {
         fillmode: fillmode_to_pb(r.fillmode) as i32,
         align: align_to_pb(r.align) as i32,
+        rotation: rotation_to_pb(r.rotation) as i32,
     }
 }
 
@@ -300,6 +301,11 @@ fn layout_override_to_pb(p: &crate::settings::DisplayPrefs) -> pb::LayoutOverrid
             .unwrap_or(pb::FillMode::Unspecified) as i32,
         align_set: p.align.is_some(),
         align: p.align.map(align_to_pb).unwrap_or(pb::Align::Unspecified) as i32,
+        rotation_set: p.rotation.is_some(),
+        rotation: p
+            .rotation
+            .map(rotation_to_pb)
+            .unwrap_or(pb::Rotation::Unspecified) as i32,
     }
 }
 
@@ -332,9 +338,6 @@ fn fillmode_to_pb(fm: crate::display::layout::FillMode) -> pb::FillMode {
         F::Stretched => pb::FillMode::Stretched,
         F::PreserveAspectFit => pb::FillMode::PreserveAspectFit,
         F::PreserveAspectCrop => pb::FillMode::PreserveAspectCrop,
-        F::Tiled => pb::FillMode::Tiled,
-        F::TiledOnlyHorizontally => pb::FillMode::TiledOnlyHorizontal,
-        F::TiledOnlyVertically => pb::FillMode::TiledOnlyVertical,
         F::Centered => pb::FillMode::Centered,
     }
 }
@@ -346,10 +349,28 @@ fn fillmode_from_pb(v: i32) -> Option<crate::display::layout::FillMode> {
         pb::FillMode::Stretched => Some(F::Stretched),
         pb::FillMode::PreserveAspectFit => Some(F::PreserveAspectFit),
         pb::FillMode::PreserveAspectCrop => Some(F::PreserveAspectCrop),
-        pb::FillMode::Tiled => Some(F::Tiled),
-        pb::FillMode::TiledOnlyHorizontal => Some(F::TiledOnlyHorizontally),
-        pb::FillMode::TiledOnlyVertical => Some(F::TiledOnlyVertically),
         pb::FillMode::Centered => Some(F::Centered),
+    }
+}
+
+fn rotation_to_pb(r: crate::display::layout::Rotation) -> pb::Rotation {
+    use crate::display::layout::Rotation as R;
+    match r {
+        R::Normal => pb::Rotation::Normal,
+        R::Cw90 => pb::Rotation::Cw90,
+        R::Cw180 => pb::Rotation::Cw180,
+        R::Cw270 => pb::Rotation::Cw270,
+    }
+}
+
+fn rotation_from_pb(v: i32) -> Option<crate::display::layout::Rotation> {
+    use crate::display::layout::Rotation as R;
+    match pb::Rotation::try_from(v).ok()? {
+        pb::Rotation::Unspecified => None,
+        pb::Rotation::Normal => Some(R::Normal),
+        pb::Rotation::Cw90 => Some(R::Cw90),
+        pb::Rotation::Cw180 => Some(R::Cw180),
+        pb::Rotation::Cw270 => Some(R::Cw270),
     }
 }
 
@@ -554,6 +575,7 @@ fn global_event_to_pb(e: &GlobalEvent, state: &Arc<AppState>) -> Option<pb::Even
             let layout_defaults = pb::LayoutPrefs {
                 fillmode: fillmode_to_pb(snap.global.layout.fillmode) as i32,
                 align: align_to_pb(snap.global.layout.align) as i32,
+                rotation: rotation_to_pb(snap.global.layout.rotation) as i32,
             };
             Some(pb::Event {
                 payload: Some(pb::event::Payload::SettingsChanged(pb::SettingsChanged {
@@ -927,14 +949,24 @@ async fn dispatch_inner(
                     .filter(|o| o.align_set)
                     .and_then(|o| align_from_pb(o.align))
             };
+            let new_rotation = if r.clear_rotation {
+                None
+            } else {
+                r.r#override
+                    .as_ref()
+                    .filter(|o| o.rotation_set)
+                    .and_then(|o| rotation_from_pb(o.rotation))
+            };
             state
                 .router
                 .set_display_layout(
                     r.name.clone(),
                     new_fillmode,
                     new_align,
+                    new_rotation,
                     r.clear_fillmode,
                     r.clear_align,
+                    r.clear_rotation,
                 )
                 .await;
             // Look up the (possibly absent) DisplayInfo to return.
@@ -1137,6 +1169,7 @@ async fn dispatch_inner(
             let layout_defaults = pb::LayoutPrefs {
                 fillmode: fillmode_to_pb(snap.global.layout.fillmode) as i32,
                 align: align_to_pb(snap.global.layout.align) as i32,
+                rotation: rotation_to_pb(snap.global.layout.rotation) as i32,
             };
             Res::SettingsGet(pb::SettingsGetResponse {
                 global: Some(pb::GlobalSettings {
@@ -1220,6 +1253,9 @@ async fn dispatch_inner(
                         }
                         if let Some(al) = align_from_pb(ld.align) {
                             s.global.layout.align = al;
+                        }
+                        if let Some(rt) = rotation_from_pb(ld.rotation) {
+                            s.global.layout.rotation = rt;
                         }
                     }
                 }

@@ -355,6 +355,7 @@ impl Router {
             return ResolvedLayout {
                 fillmode: FillMode::default(),
                 align: Default::default(),
+                rotation: Default::default(),
             };
         };
         if let Some(iid) = info.instance_id.as_deref() {
@@ -387,8 +388,10 @@ impl Router {
         display_name: String,
         new_fillmode: Option<crate::display::layout::FillMode>,
         new_align: Option<crate::display::layout::Align>,
+        new_rotation: Option<crate::display::layout::Rotation>,
         clear_fillmode: bool,
         clear_align: bool,
+        clear_rotation: bool,
     ) {
         let Some(settings) = self.settings.get().cloned() else {
             log::warn!(
@@ -426,6 +429,12 @@ impl Router {
             }
             if let Some(v) = new_align {
                 entry.align = Some(v);
+            }
+            if clear_rotation {
+                entry.rotation = None;
+            }
+            if let Some(v) = new_rotation {
+                entry.rotation = Some(v);
             }
             // Prune empty entry to keep the on-disk file tidy.
             if entry.is_empty() {
@@ -1875,11 +1884,23 @@ fn project_link(
 
     if src_full && dst_full {
         let (tex_w, tex_h) = renderer.texture_size();
+        // The consumer (waywallen-display) draws into pre-rotation
+        // display space and rotates the resulting rect onto the actual
+        // display. For 90°/270° that pre-rotation space has swapped
+        // W/H, so fillmode/align math has to fit the (upright) texture
+        // into the swapped display, not into the raw one. The source
+        // rect stays in raw texture coordinates.
+        let (eff_disp_w, eff_disp_h) = match layout.rotation {
+            crate::display::layout::Rotation::Cw90 | crate::display::layout::Rotation::Cw270 => {
+                (info.height as f32, info.width as f32)
+            }
+            _ => (info.width as f32, info.height as f32),
+        };
         let out = crate::display::layout::compute(LayoutInput {
             tex_w: tex_w as f32,
             tex_h: tex_h as f32,
-            disp_w: info.width as f32,
-            disp_h: info.height as f32,
+            disp_w: eff_disp_w,
+            disp_h: eff_disp_h,
             fillmode: layout.fillmode,
             align: layout.align,
             clear_rgba: link.clear_rgba,
@@ -1894,7 +1915,7 @@ fn project_link(
             dest_y: out.dest.1,
             dest_w: out.dest.2,
             dest_h: out.dest.3,
-            transform: link.transform,
+            transform: layout.rotation.to_wl_transform(),
             clear_rgba: out.clear_rgba,
         };
     }
@@ -1941,7 +1962,7 @@ fn project_link(
         dest_y: dy,
         dest_w: dw,
         dest_h: dh,
-        transform: link.transform,
+        transform: layout.rotation.to_wl_transform(),
         clear_rgba: link.clear_rgba,
     }
 }
@@ -2580,6 +2601,7 @@ mod tests {
             // Even with PreserveAspectFit, explicit geometry must win.
             fillmode: FillMode::PreserveAspectFit,
             align: Default::default(),
+            rotation: Default::default(),
         };
         let cfg = project_link(&link, &renderer, &info, 1, &layout);
         assert_eq!(

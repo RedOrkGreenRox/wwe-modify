@@ -2,14 +2,6 @@
 //! fillmode, align)` tuple into the `source_rect` / `dest_rect` /
 //! `clear_color` triple the wire-level `set_config` event carries.
 //!
-//! Tiled variants need sampler wrap or multiple draws and cannot be
-//! expressed as a single `(source_rect, dest_rect)` pair on the
-//! current wire format. They are accepted at the API surface (so
-//! clients can persist their preference) but degrade to
-//! `PreserveAspectFit` inside `compute()` with a one-shot warning.
-//! Future work: protocol bump with a wrap flag, or daemon-side
-//! staging texture.
-//!
 //! Also hosts `display_point_to_texture` — the inverse mapping used
 //! by pointer-event forwarding to translate display-local pixel
 //! coordinates back into renderer-texture pixel coordinates.
@@ -21,14 +13,40 @@ use crate::scheduler::ProjectedConfig;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum FillMode {
-    #[default]
     Stretched,
     PreserveAspectFit,
+    #[default]
     PreserveAspectCrop,
-    Tiled,
-    TiledOnlyHorizontally,
-    TiledOnlyVertically,
     Centered,
+}
+
+/// Buffer-side rotation, expressed as a clockwise turn of the displayed
+/// image. Wire-mapped onto `wl_output.transform` 0..3 (no flipped
+/// variants); the compositor compensates for the declared pre-rotation
+/// so the user sees the wallpaper rotated CW by this much.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Rotation {
+    #[default]
+    Normal,
+    Cw90,
+    Cw180,
+    Cw270,
+}
+
+impl Rotation {
+    /// `wl_output.transform` value matching this rotation. The
+    /// compositor reads this from `set_buffer_transform` as "the buffer
+    /// is pre-rotated by N° CCW", which makes the on-screen image
+    /// appear rotated N° CW.
+    pub fn to_wl_transform(self) -> u32 {
+        match self {
+            Rotation::Normal => 0,
+            Rotation::Cw90 => 1,
+            Rotation::Cw180 => 2,
+            Rotation::Cw270 => 3,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -96,19 +114,7 @@ pub fn compute(i: LayoutInput) -> LayoutOutput {
         };
     }
 
-    let fillmode = match i.fillmode {
-        FillMode::Tiled | FillMode::TiledOnlyHorizontally | FillMode::TiledOnlyVertically => {
-            log::warn!(
-                "display::layout: fillmode {:?} not yet expressible on the wire; \
-                 falling back to PreserveAspectFit",
-                i.fillmode
-            );
-            FillMode::PreserveAspectFit
-        }
-        other => other,
-    };
-
-    match fillmode {
+    match i.fillmode {
         FillMode::Stretched => LayoutOutput {
             source: (0.0, 0.0, i.tex_w, i.tex_h),
             dest: (0.0, 0.0, i.disp_w, i.disp_h),
@@ -156,11 +162,6 @@ pub fn compute(i: LayoutInput) -> LayoutOutput {
                 dest: (dx, dy, dw, dh),
                 clear_rgba: i.clear_rgba,
             }
-        }
-
-        // Unreachable: tile* already mapped above.
-        FillMode::Tiled | FillMode::TiledOnlyHorizontally | FillMode::TiledOnlyVertically => {
-            unreachable!()
         }
     }
 }
@@ -366,28 +367,6 @@ mod tests {
             Align::TopLeft,
         ));
         assert_eq!(out.dest, (0.0, 0.0, 800.0, 600.0));
-    }
-
-    #[test]
-    fn tiled_degrades_to_fit() {
-        let fit = compute(input(
-            (1920.0, 1080.0),
-            (800.0, 600.0),
-            FillMode::PreserveAspectFit,
-            Align::Center,
-        ));
-        for fm in [
-            FillMode::Tiled,
-            FillMode::TiledOnlyHorizontally,
-            FillMode::TiledOnlyVertically,
-        ] {
-            let out = compute(input((1920.0, 1080.0), (800.0, 600.0), fm, Align::Center));
-            assert_eq!(
-                out.source, fit.source,
-                "tile variant {fm:?} should match fit"
-            );
-            assert_eq!(out.dest, fit.dest, "tile variant {fm:?} should match fit");
-        }
     }
 
     #[test]

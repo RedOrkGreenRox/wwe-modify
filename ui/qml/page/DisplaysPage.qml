@@ -16,18 +16,16 @@ MD.Page {
 
     property var selectedId: null
 
-    // FillMode/Align enum values mirror proto::FillMode / proto::Align
-    // (control.proto). Keep the *_VALUES arrays in lockstep with the
-    // enum order; *_LABELS is what the UI shows.
+    // FillMode/Align/Rotation enum values mirror proto::FillMode /
+    // proto::Align / proto::Rotation (control.proto). Keep the *_VALUES
+    // arrays in lockstep with the enum order; *_LABELS is what the UI
+    // shows.
     readonly property var kFillModeValues: [1 // STRETCHED
         , 2 // PRESERVE_ASPECT_FIT
         , 3 // PRESERVE_ASPECT_CROP
-        , 7 // CENTERED
-        , 4 // TILED
-        , 5 // TILED_ONLY_HORIZONTAL
-        , 6  // TILED_ONLY_VERTICAL
+        , 7  // CENTERED
     ]
-    readonly property var kFillModeLabels: ["Stretch", "Fit (preserve aspect)", "Crop (preserve aspect)", "Center (1:1)", "Tile", "Tile horizontally", "Tile vertically"]
+    readonly property var kFillModeLabels: ["Stretch", "Fit (preserve aspect)", "Crop (preserve aspect)", "Center (1:1)"]
     function fillmodeIndex(value) {
         const i = root.kFillModeValues.indexOf(value);
         return i < 0 ? 0 : i;
@@ -39,6 +37,15 @@ MD.Page {
         , 7, 8, 9  // bottom-left, bottom, bottom-right
     ]
     readonly property var kAlignTooltips: ["Top-left", "Top", "Top-right", "Left", "Center", "Right", "Bottom-left", "Bottom", "Bottom-right"]
+
+    // Rotation segmented values, mirror proto::Rotation:
+    //   1=NORMAL, 2=CW_90, 3=CW_180, 4=CW_270
+    readonly property var kRotationValues: [1, 2, 3, 4]
+    readonly property var kRotationLabels: ["0°", "90°", "180°", "270°"]
+    function rotationIndex(value) {
+        const i = root.kRotationValues.indexOf(value);
+        return i < 0 ? 0 : i;
+    }
 
     W.DisplayLayoutSetQuery {
         id: layoutSetQuery
@@ -469,8 +476,10 @@ MD.Page {
                                 layoutSetQuery.fillmodeSet = true;
                                 layoutSetQuery.fillmode = root.kFillModeValues[idx];
                                 layoutSetQuery.alignSet = false;
+                                layoutSetQuery.rotationSet = false;
                                 layoutSetQuery.clearFillmode = false;
                                 layoutSetQuery.clearAlign = false;
+                                layoutSetQuery.clearRotation = false;
                                 layoutSetQuery.reload();
                             }
                         }
@@ -542,12 +551,76 @@ MD.Page {
                                             layoutSetQuery.fillmodeSet = false;
                                             layoutSetQuery.alignSet = true;
                                             layoutSetQuery.align = parent.alignValue;
+                                            layoutSetQuery.rotationSet = false;
                                             layoutSetQuery.clearFillmode = false;
                                             layoutSetQuery.clearAlign = false;
+                                            layoutSetQuery.clearRotation = false;
                                             layoutSetQuery.reload();
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    ColumnLayout {
+                        spacing: 4
+
+                        MD.Text {
+                            text: "Rotation"
+                            typescale: MD.Token.typescale.label_medium
+                            color: MD.Token.color.on_surface_variant
+                        }
+
+                        MD.SegmentedButtonGroup {
+                            id: rotationGroup
+                            size: MD.Enum.XS
+
+                            // Inline buttons; SegmentedButtonGroup's
+                            // updatePositions only recognises segmented
+                            // buttons that are direct children — a
+                            // Repeater here ends up in contentModel as
+                            // an extra slot and shifts PosFirst off the
+                            // real first button.
+                            function applyRotation(rotationValue) {
+                                if (!root.selected)
+                                    return;
+                                layoutSetQuery.name = root.selected.name;
+                                layoutSetQuery.fillmodeSet = false;
+                                layoutSetQuery.alignSet = false;
+                                layoutSetQuery.rotationSet = true;
+                                layoutSetQuery.rotation = rotationValue;
+                                layoutSetQuery.clearFillmode = false;
+                                layoutSetQuery.clearAlign = false;
+                                layoutSetQuery.clearRotation = false;
+                                layoutSetQuery.reload();
+                            }
+                            function isChecked(rotationValue) {
+                                if (!root.selected)
+                                    return rotationValue === 1; // ROTATION_NORMAL
+                                const eff = root.selected.effectiveLayout || ({});
+                                return (eff.rotation || 0) === rotationValue;
+                            }
+
+                            MD.SegmentedButton {
+                                text: root.kRotationLabels[0]
+                                checked: rotationGroup.isChecked(root.kRotationValues[0])
+                                onClicked: rotationGroup.applyRotation(root.kRotationValues[0])
+                            }
+                            MD.SegmentedButton {
+                                text: root.kRotationLabels[1]
+                                checked: rotationGroup.isChecked(root.kRotationValues[1])
+                                onClicked: rotationGroup.applyRotation(root.kRotationValues[1])
+                            }
+                            MD.SegmentedButton {
+                                text: root.kRotationLabels[2]
+                                checked: rotationGroup.isChecked(root.kRotationValues[2])
+                                onClicked: rotationGroup.applyRotation(root.kRotationValues[2])
+                            }
+                            MD.SegmentedButton {
+                                text: root.kRotationLabels[3]
+                                checked: rotationGroup.isChecked(root.kRotationValues[3])
+                                onClicked: rotationGroup.applyRotation(root.kRotationValues[3])
                             }
                         }
                     }

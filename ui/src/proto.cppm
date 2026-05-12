@@ -85,6 +85,7 @@ using proto::SettingsChanged;
 using proto::LayoutPrefs;
 using proto::FillModeGadget::FillMode;
 using proto::AlignGadget::Align;
+using proto::RotationGadget::Rotation;
 using proto::RenderSizePolicyGadget::RenderSizePolicy;
 
 using proto::WallpaperFilterRule;

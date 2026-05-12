@@ -29,7 +29,7 @@ use std::time::Duration;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tokio::sync::Notify;
 
-use crate::display::layout::{Align, FillMode};
+use crate::display::layout::{Align, FillMode, Rotation};
 
 /// Quiet period after the last `update()` before the debounced writer
 /// flushes to disk. Short enough that `Ctrl-C` shortly after a setting
@@ -48,6 +48,7 @@ const DEBOUNCE_WRITE: Duration = Duration::from_secs(2);
 pub struct LayoutDefaults {
     pub fillmode: FillMode,
     pub align: Align,
+    pub rotation: Rotation,
 }
 
 /// Per-display override. Each field is `Option`; `None` means "inherit
@@ -58,11 +59,12 @@ pub struct LayoutDefaults {
 pub struct DisplayPrefs {
     pub fillmode: Option<FillMode>,
     pub align: Option<Align>,
+    pub rotation: Option<Rotation>,
 }
 
 impl DisplayPrefs {
     pub fn is_empty(&self) -> bool {
-        self.fillmode.is_none() && self.align.is_none()
+        self.fillmode.is_none() && self.align.is_none() && self.rotation.is_none()
     }
 }
 
@@ -71,6 +73,7 @@ impl DisplayPrefs {
 pub struct ResolvedLayout {
     pub fillmode: FillMode,
     pub align: Align,
+    pub rotation: Rotation,
 }
 
 /// How the daemon shapes the `(extent_w, extent_h, extent_mode)` it
@@ -543,6 +546,7 @@ impl SettingsStore {
         ResolvedLayout {
             fillmode: prefs.and_then(|p| p.fillmode).unwrap_or(defaults.fillmode),
             align: prefs.and_then(|p| p.align).unwrap_or(defaults.align),
+            rotation: prefs.and_then(|p| p.rotation).unwrap_or(defaults.rotation),
         }
     }
 
@@ -897,6 +901,7 @@ fillmode = "preserve_aspect_fit"
                 DisplayPrefs {
                     fillmode: Some(FillMode::PreserveAspectCrop),
                     align: None,
+                    rotation: None,
                 },
             );
         });

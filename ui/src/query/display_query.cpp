@@ -88,8 +88,11 @@ void DisplayLayoutSetQuery::setFillmodeSet(bool v) { WW_SET(m_fillmode_set, v); 
 void DisplayLayoutSetQuery::setFillmode(int v) { WW_SET(m_fillmode, v); }
 void DisplayLayoutSetQuery::setAlignSet(bool v) { WW_SET(m_align_set, v); }
 void DisplayLayoutSetQuery::setAlign(int v) { WW_SET(m_align, v); }
+void DisplayLayoutSetQuery::setRotationSet(bool v) { WW_SET(m_rotation_set, v); }
+void DisplayLayoutSetQuery::setRotation(int v) { WW_SET(m_rotation, v); }
 void DisplayLayoutSetQuery::setClearFillmode(bool v) { WW_SET(m_clear_fillmode, v); }
 void DisplayLayoutSetQuery::setClearAlign(bool v) { WW_SET(m_clear_align, v); }
+void DisplayLayoutSetQuery::setClearRotation(bool v) { WW_SET(m_clear_rotation, v); }
 #undef WW_SET
 
 void DisplayLayoutSetQuery::reload() {
@@ -101,12 +104,15 @@ void DisplayLayoutSetQuery::reload() {
     ovr.setFillmode(static_cast<proto::FillMode>(m_fillmode));
     ovr.setAlignSet(m_align_set);
     ovr.setAlign(static_cast<proto::Align>(m_align));
+    ovr.setRotationSet(m_rotation_set);
+    ovr.setRotation(static_cast<proto::Rotation>(m_rotation));
 
     proto::DisplayLayoutSetRequest inner;
     inner.setName(m_name);
     inner.setOverride(ovr);
     inner.setClearFillmode(m_clear_fillmode);
     inner.setClearAlign(m_clear_align);
+    inner.setClearRotation(m_clear_rotation);
 
     auto req = proto::Request {};
     req.setDisplayLayoutSet(std::move(inner));
