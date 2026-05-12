@@ -3,9 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::net::Shutdown;
 use std::os::fd::{AsFd, OwnedFd};
+use std::os::unix::fs::FileExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
@@ -23,11 +24,16 @@ use wayland_client::protocol::{
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_buffer_params_v1::{self, ZwpLinuxBufferParamsV1},
+    zwp_linux_dmabuf_feedback_v1::{self, ZwpLinuxDmabufFeedbackV1},
     zwp_linux_dmabuf_v1::{self, ZwpLinuxDmabufV1},
 };
 use wayland_protocols::wp::viewporter::client::{
     wp_viewport::{self, WpViewport},
     wp_viewporter::{self, WpViewporter},
+};
+use wayland_protocols::wp::fractional_scale::v1::client::{
+    wp_fractional_scale_manager_v1::{self, WpFractionalScaleManagerV1},
+    wp_fractional_scale_v1::{self, WpFractionalScaleV1},
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{self, Layer, ZwlrLayerShellV1},
@@ -134,6 +140,13 @@ struct OutputBinding {
     /// updated before worker spawns (we roundtrip after bind so
     /// output metadata has landed).
     scale: std::sync::atomic::AtomicI32,
+    /// Preferred fractional scale from `wp_fractional_scale_v1` in
+    /// 1/120 units. `0` means the protocol either isn't bound or
+    /// hasn't delivered `preferred_scale` yet — fall back to integer
+    /// `scale`. Computing physical = round(logical × scale / 120)
+    /// avoids the ceil-rounding error that produces 4096×2304 for a
+    /// 2560×1440 monitor at 1.25× (integer scale = 2 → over-allocates).
+    fractional_scale_120: AtomicU32,
     /// Optional `wp_viewport` — when bound, gives us explicit
     /// source-rect/dest-rect mapping between buffer and surface
     /// (handles HiDPI + `SetConfig` crop). Absent → fall back to
@@ -181,6 +194,12 @@ struct OutputBinding {
     /// `RegisterDisplay` or `UpdateDisplay`. Skips no-op resends when
     /// `Configure` repeats the same dims.
     last_pushed_size: Mutex<Option<(u32, u32)>>,
+    /// Compositor's main DRM render-node, sampled from
+    /// `App.compositor_drm_*` at binding creation. Reported in
+    /// `RegisterDisplay` so the daemon's DMA-BUF picker can match
+    /// renderer GPU == consumer GPU and take the optimized path.
+    drm_render_major: u32,
+    drm_render_minor: u32,
 }
 
 /// One logical output — wl_output plus the layer_surface/UDS worker
@@ -195,6 +214,13 @@ struct OutputEntry {
     /// Latest integer scale from `wl_output::scale`. Sampled into the
     /// binding on first configure. `1` when the event hasn't fired.
     scale: i32,
+    /// Per-surface `wp_fractional_scale_v1`, when the compositor
+    /// advertised the manager global. Drops on hot-unplug.
+    fractional_scale: Option<WpFractionalScaleV1>,
+    /// Latest `preferred_scale` in 1/120 units. `0` = not delivered
+    /// yet; the configure path falls back to integer `scale` until
+    /// the event arrives.
+    fractional_scale_120: u32,
 }
 
 struct App {
@@ -206,6 +232,34 @@ struct App {
     /// every commit. Older compositors without it fall back to
     /// `wl_surface::set_buffer_scale`.
     viewporter: Option<WpViewporter>,
+    /// Optional `wp_fractional_scale_manager_v1` — when present we
+    /// request a `wp_fractional_scale_v1` per surface and size the
+    /// buffer with the exact preferred scale instead of the integer
+    /// ceiling reported by `wl_output::scale`. Requires viewporter to
+    /// be useful (the buffer is sized in physical pixels and the
+    /// viewport maps it back onto the logical surface extent).
+    fractional_scale_mgr: Option<WpFractionalScaleManagerV1>,
+    /// Default `zwp_linux_dmabuf_feedback_v1` (dmabuf v4+). Kept
+    /// alive so its `main_device` events keep landing if the
+    /// compositor reassigns mid-session. Decoded GPU is stored below.
+    dmabuf_feedback: Option<ZwpLinuxDmabufFeedbackV1>,
+    /// Compositor's main DRM render-node, decoded from the dmabuf
+    /// feedback `main_device` event. `(0, 0)` = unknown — either the
+    /// compositor advertises dmabuf < v4 or the event hasn't fired
+    /// yet. Sampled into each `OutputBinding` at construction and
+    /// reported in `RegisterDisplay`, so the daemon's DMA-BUF picker
+    /// can detect that producer + consumer share a GPU and take the
+    /// `OptimizedSameDevice` path (native tiling + DEVICE_LOCAL)
+    /// instead of `CompatLinear` (LINEAR + cross-device pessimism).
+    compositor_drm_major: u32,
+    compositor_drm_minor: u32,
+    /// Format table delivered by `wp_linux_dmabuf_feedback_v1`. The
+    /// compositor writes a memfd containing 16-byte records:
+    /// `{u32 fourcc; u8 _pad[4]; u64 modifier}`. We read it once on
+    /// `format_table` and index into it from each `tranche_formats`
+    /// event. Empty when no feedback has been delivered (dmabuf < v4
+    /// or the compositor hasn't sent the table yet).
+    dmabuf_format_table: Vec<(u32, u64)>,
     /// Keyed by `wl_output` global name (u32). The same key is used as
     /// Dispatch user-data for every per-output child proxy so events
     /// find their owning entry in O(1).
@@ -227,6 +281,11 @@ impl App {
             layer_shell: None,
             dmabuf: None,
             viewporter: None,
+            fractional_scale_mgr: None,
+            dmabuf_feedback: None,
+            compositor_drm_major: 0,
+            compositor_drm_minor: 0,
+            dmabuf_format_table: Vec::new(),
             outputs: HashMap::new(),
             uds_sock,
             name_prefix,
@@ -267,10 +326,18 @@ impl App {
             .viewporter
             .as_ref()
             .map(|vp| vp.get_viewport(&surface, qh, output_name));
+        // wp_fractional_scale_v1 is per-surface — request it before
+        // commit so `preferred_scale` is delivered alongside the first
+        // configure (avoids one round of mis-sizing on startup).
+        let fractional_scale = self
+            .fractional_scale_mgr
+            .as_ref()
+            .map(|m| m.get_fractional_scale(&surface, qh, output_name));
         surface.commit();
         entry.surface = Some(surface);
         entry.layer_surface = Some(layer_surface);
         entry.viewport = viewport;
+        entry.fractional_scale = fractional_scale;
         log::info!("output {output_name}: layer_surface committed, waiting for configure");
     }
 
@@ -336,6 +403,8 @@ impl Dispatch<WlRegistry, GlobalListContents> for App {
                             binding: None,
                             worker_started: false,
                             scale: 1,
+                            fractional_scale: None,
+                            fractional_scale_120: 0,
                         },
                     );
                     log::info!("hot-plug: wl_output name={name} added; bringing up surface");
@@ -498,6 +567,217 @@ impl Dispatch<WlOutput, u32> for App {
     }
 }
 
+impl Dispatch<ZwpLinuxDmabufFeedbackV1, ()> for App {
+    fn event(
+        state: &mut Self,
+        _p: &ZwpLinuxDmabufFeedbackV1,
+        event: zwp_linux_dmabuf_feedback_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // dmabuf v4 deprecates the v1.format / v1.modifier broadcasts
+        // and delivers the format/modifier set + GPU identity via this
+        // feedback object instead. Compositors built on smithay
+        // (COSMIC) stop emitting v3 events once a client binds at v4,
+        // so we MUST ingest everything from here. Events:
+        //   - main_device(dev): the compositor's main render-node.
+        //   - format_table(fd, size): one-shot memfd of (fourcc, mod)
+        //     records. We index into this from tranche_formats.
+        //   - tranche_target_device(dev): which GPU the next
+        //     tranche_formats applies to. We accept all tranches —
+        //     the daemon's picker filters at negotiation time.
+        //   - tranche_formats(indices): u16 indices into format_table.
+        //   - tranche_flags(uint): scanout/etc; ignored for our path.
+        //   - tranche_done / done: terminators; informational.
+        match event {
+            zwp_linux_dmabuf_feedback_v1::Event::MainDevice { device } => {
+                if device.len() < 8 {
+                    log::warn!(
+                        "dmabuf_feedback: main_device {} bytes (want >=8); ignoring",
+                        device.len()
+                    );
+                    return;
+                }
+                let mut buf = [0u8; 8];
+                buf.copy_from_slice(&device[..8]);
+                let dev = u64::from_ne_bytes(buf);
+                // glibc dev_t encoding (gnu_dev_major / gnu_dev_minor):
+                //   major = ((dev >> 8) & 0xfff) | ((dev >> 32) & ~0xfff)
+                //   minor = (dev & 0xff)         | ((dev >> 12) & ~0xff)
+                let major = (((dev >> 8) & 0xfff) | ((dev >> 32) & !0xfff_u64)) as u32;
+                let minor = ((dev & 0xff) | ((dev >> 12) & !0xff_u64)) as u32;
+                log::info!(
+                    "dmabuf_feedback: main_device dev_t=0x{dev:x} → DRM render-node {major}:{minor}"
+                );
+                state.compositor_drm_major = major;
+                state.compositor_drm_minor = minor;
+            }
+            zwp_linux_dmabuf_feedback_v1::Event::FormatTable { fd, size } => {
+                let size = size as usize;
+                let mut bytes = vec![0u8; size];
+                // Read at absolute offset 0 (`pread`), NOT a sequential
+                // `read` — the compositor sends one memfd to every
+                // client via SCM_RIGHTS, and they all share the same
+                // `f_pos`. If a prior client (or the compositor's own
+                // write) left the cursor at EOF, sequential reads
+                // return zero bytes → tranche_formats fires before any
+                // table data lands → fallback to LINEAR. Positional
+                // reads are unaffected.
+                let file = std::fs::File::from(fd);
+                if let Err(e) = file.read_exact_at(&mut bytes, 0) {
+                    log::warn!("dmabuf_feedback: format_table read failed: {e}");
+                    return;
+                }
+                if size % 16 != 0 {
+                    log::warn!(
+                        "dmabuf_feedback: format_table size={size} is not a multiple of 16 \
+                         (record size); truncating"
+                    );
+                }
+                let entries: Vec<(u32, u64)> = bytes
+                    .chunks_exact(16)
+                    .map(|c| {
+                        let fourcc = u32::from_ne_bytes(c[0..4].try_into().unwrap());
+                        // bytes 4..8 are padding
+                        let modifier = u64::from_ne_bytes(c[8..16].try_into().unwrap());
+                        (fourcc, modifier)
+                    })
+                    .collect();
+                log::info!(
+                    "dmabuf_feedback: format_table loaded {} entries",
+                    entries.len()
+                );
+                state.dmabuf_format_table = entries;
+            }
+            zwp_linux_dmabuf_feedback_v1::Event::TrancheFormats { indices } => {
+                if state.dmabuf_format_table.is_empty() {
+                    log::warn!(
+                        "dmabuf_feedback: tranche_formats before format_table; dropping {} bytes",
+                        indices.len()
+                    );
+                    return;
+                }
+                let table = &state.dmabuf_format_table;
+                let table_len = table.len();
+                let Ok(mut caps) = state.dmabuf_caps.lock() else {
+                    return;
+                };
+                let mut added = 0usize;
+                let mut oor = 0usize;
+                for chunk in indices.chunks_exact(2) {
+                    let idx = u16::from_ne_bytes([chunk[0], chunk[1]]) as usize;
+                    let Some(&(fourcc, modifier)) = table.get(idx) else {
+                        oor += 1;
+                        continue;
+                    };
+                    if caps.entry(fourcc).or_default().insert(modifier) {
+                        added += 1;
+                    }
+                }
+                log::debug!(
+                    "dmabuf_feedback: tranche added {added} new (fourcc,mod) pairs \
+                     ({} indices, {oor} out-of-range, table_len={table_len})",
+                    indices.len() / 2
+                );
+            }
+            zwp_linux_dmabuf_feedback_v1::Event::TrancheTargetDevice { .. }
+            | zwp_linux_dmabuf_feedback_v1::Event::TrancheFlags { .. }
+            | zwp_linux_dmabuf_feedback_v1::Event::TrancheDone => {
+                // Informational. We accept formats from every tranche.
+            }
+            zwp_linux_dmabuf_feedback_v1::Event::Done => {
+                let count: usize = state
+                    .dmabuf_caps
+                    .lock()
+                    .map(|g| g.values().map(|v| v.len()).sum())
+                    .unwrap_or(0);
+                let fourccs = state
+                    .dmabuf_caps
+                    .lock()
+                    .map(|g| g.len())
+                    .unwrap_or(0);
+                log::info!(
+                    "dmabuf_feedback: done — caps now hold {fourccs} fourccs, \
+                     {count} (fourcc,mod) entries"
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<WpFractionalScaleManagerV1, ()> for App {
+    fn event(
+        _state: &mut Self,
+        _p: &WpFractionalScaleManagerV1,
+        _e: wp_fractional_scale_manager_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // wp_fractional_scale_manager_v1 emits no events.
+    }
+}
+
+impl Dispatch<WpFractionalScaleV1, u32> for App {
+    fn event(
+        state: &mut Self,
+        _p: &WpFractionalScaleV1,
+        event: wp_fractional_scale_v1::Event,
+        data: &u32,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
+            let output_name = *data;
+            let Some(entry) = state.outputs.get_mut(&output_name) else {
+                return;
+            };
+            entry.fractional_scale_120 = scale;
+            let Some(binding) = entry.binding.as_ref() else {
+                // No layer_surface configure yet — the configure path
+                // will read entry.fractional_scale_120 when it runs.
+                log::info!(
+                    "output {output_name}: preferred_scale={scale}/120 (cached, pre-configure)"
+                );
+                return;
+            };
+            binding.fractional_scale_120.store(scale, Ordering::SeqCst);
+            // If we've already been configured, recompute physical and
+            // push UpdateDisplay so the daemon resizes its buffer pool.
+            let logical = *binding.logical_size.lock().unwrap();
+            let Some((lw, lh)) = logical else {
+                return;
+            };
+            let physical = if entry.viewport.is_some() {
+                let f = scale as u64;
+                (
+                    ((lw as u64 * f + 60) / 120) as u32,
+                    ((lh as u64 * f + 60) / 120) as u32,
+                )
+            } else {
+                let s = entry.scale.max(1) as u32;
+                (lw.saturating_mul(s), lh.saturating_mul(s))
+            };
+            let prev = *binding.configured_size.lock().unwrap();
+            if prev == Some(physical) {
+                return;
+            }
+            *binding.configured_size.lock().unwrap() = Some(physical);
+            log::info!(
+                "output {output_name}: preferred_scale={scale}/120 → physical {}x{}",
+                physical.0,
+                physical.1
+            );
+            let arc_binding = binding.clone();
+            if let Err(e) = push_resize_if_registered(&arc_binding, physical) {
+                log::warn!("output {output_name}: push update_display failed: {e}");
+            }
+        }
+    }
+}
+
 impl Dispatch<ZwlrLayerShellV1, ()> for App {
     fn event(
         _state: &mut Self,
@@ -550,6 +830,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, u32> for App {
                         configured_size: Mutex::new(None),
                         logical_size: Mutex::new(None),
                         scale: std::sync::atomic::AtomicI32::new(entry.scale.max(1)),
+                        fractional_scale_120: AtomicU32::new(entry.fractional_scale_120),
                         viewport: entry.viewport.clone(),
                         closed: AtomicBool::new(false),
                         stream: RwLock::new(None),
@@ -559,25 +840,42 @@ impl Dispatch<ZwlrLayerSurfaceV1, u32> for App {
                         registered: AtomicBool::new(false),
                         send_lock: Mutex::new(()),
                         last_pushed_size: Mutex::new(None),
+                        drm_render_major: state.compositor_drm_major,
+                        drm_render_minor: state.compositor_drm_minor,
                     })
                 });
                 // `width` / `height` from `configure` are in *logical*
-                // (surface-local) coordinates. For 1:1 rendering on
-                // HiDPI we ask the daemon to produce a buffer of
-                // `logical × integer_scale` physical pixels and then
-                // map that full buffer back down to the logical surface
-                // extent via `wp_viewporter`.
+                // (surface-local) coordinates. Compute the physical
+                // buffer size:
+                //   * If wp_fractional_scale_v1 has delivered a
+                //     preferred_scale AND we have viewporter to map the
+                //     buffer back, use `logical × scale/120` (rounded).
+                //     This matches the compositor's actual fractional
+                //     scale — e.g. 2048×1152 logical @ 1.25× → 2560×1440.
+                //   * Otherwise fall back to `logical × integer_scale`.
+                //     This ceil-rounds (1.25× → 2) and over-allocates,
+                //     but it's the only safe option without viewporter.
                 let scale = entry.scale.max(1);
                 binding.scale.store(scale, Ordering::SeqCst);
-                let physical = (
-                    width.saturating_mul(scale as u32),
-                    height.saturating_mul(scale as u32),
-                );
+                let f120 = entry.fractional_scale_120;
+                binding.fractional_scale_120.store(f120, Ordering::SeqCst);
+                let physical = if f120 > 0 && entry.viewport.is_some() {
+                    let f = f120 as u64;
+                    (
+                        ((width as u64 * f + 60) / 120) as u32,
+                        ((height as u64 * f + 60) / 120) as u32,
+                    )
+                } else {
+                    (
+                        width.saturating_mul(scale as u32),
+                        height.saturating_mul(scale as u32),
+                    )
+                };
                 *binding.logical_size.lock().unwrap() = Some((width, height));
                 *binding.configured_size.lock().unwrap() = Some(physical);
-                if scale > 1 {
+                if physical != (width, height) {
                     log::info!(
-                        "output {output_name}: logical {width}x{height} × scale {scale} → physical {}x{}",
+                        "output {output_name}: logical {width}x{height} → physical {}x{} (fractional_scale_120={f120}, integer_scale={scale})",
                         physical.0,
                         physical.1
                     );
@@ -600,6 +898,8 @@ impl Dispatch<ZwlrLayerSurfaceV1, u32> for App {
                     entry.layer_surface = None;
                     entry.binding = None;
                     entry.worker_started = false;
+                    entry.fractional_scale = None;
+                    entry.fractional_scale_120 = 0;
                 }
             }
             _ => {}
@@ -819,11 +1119,13 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
                 width,
                 height,
                 refresh_mhz: 60_000,
-                // layer-shell hands the dmabuf to the compositor (which
-                // imports on its own GPU); we don't introspect that here,
-                // so report unknown and let the daemon force HOST_VISIBLE.
-                drm_render_major: 0,
-                drm_render_minor: 0,
+                // Sourced from `wp_linux_dmabuf_feedback_v1::main_device`
+                // (v4+). `(0, 0)` when the compositor advertises dmabuf
+                // < v4 — the daemon then falls back to its UNKNOWN path
+                // (CompatLinear + HOST_VISIBLE), same behavior as before
+                // this fix.
+                drm_render_major: binding.drm_render_major,
+                drm_render_minor: binding.drm_render_minor,
                 properties: Vec::new(),
             },
             &[],
@@ -913,11 +1215,30 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
                 mod_counts,
                 modifiers,
                 plane_counts,
+                // Vulkan device UUID isn't exposed by the dmabuf v4
+                // feedback protocol (`main_device` carries dev_t, not a
+                // UUID). Leave the UUID empty and let the picker's
+                // `same_device` check fall through to DRM major:minor
+                // matching — which now works because we populate
+                // drm_render_* below.
                 device_uuid: vec![0, 0, 0, 0],
                 driver_uuid: vec![0, 0, 0, 0],
-                drm_render_major: 0,
-                drm_render_minor: 0,
-                mem_hints: N::MEM_HINT_HOST_VISIBLE,
+                // Critical: the daemon's negotiator builds the consumer
+                // `PeerCaps` from THIS message, not `RegisterDisplay`.
+                // Reporting 0:0 here defeats the picker's same-device
+                // check (DrmNode::UNKNOWN) and forces CompatLinear even
+                // when both peers are on the same physical GPU.
+                drm_render_major: binding.drm_render_major,
+                drm_render_minor: binding.drm_render_minor,
+                // The helper hands the dmabuf fd straight to the
+                // Wayland compositor; we never touch the memory
+                // ourselves. Advertise both so the picker can pick
+                // DEVICE_LOCAL when the renderer also supports it —
+                // see `pick_mem_hint_same_dev` (negotiate.rs:580).
+                // HOST_VISIBLE forces UMA-bandwidth-heavy transfers
+                // every frame on iGPUs; DEVICE_LOCAL keeps the buffer
+                // in tiled GPU memory across producer→compositor.
+                mem_hints: N::MEM_HINT_DEVICE_LOCAL | N::MEM_HINT_HOST_VISIBLE,
                 sync_caps: N::SYNC_SYNCOBJ_TIMELINE | N::SYNC_SYNCOBJ_BINARY,
                 color_caps: N::DEFAULT_COLOR,
                 extent_max_w: 7680,
@@ -1121,18 +1442,32 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
                         gen
                     );
                 } else if let Some(buffer) = pool.get(buffer_index as usize) {
-                    // Throttle commits to compositor vblank: if the
-                    // last frame_callback hasn't fired yet, skip this
-                    // commit (but always ack BufferRelease below so
-                    // the daemon isn't starved). The compositor will
-                    // redraw from whatever buffer is currently
-                    // attached.
-                    if binding.frame_pending.load(Ordering::SeqCst) {
-                        log::trace!(
-                            "[{}] skip commit: frame callback pending",
-                            binding.display_name
-                        );
-                    } else {
+                    // Commit every FrameReady. A previous version
+                    // gated commits on `frame_pending` (cleared by the
+                    // compositor's `wl_callback.done` reply), which is
+                    // the conventional throttle for interactive clients
+                    // that want their producer-side rendering aligned
+                    // to compositor vsync. For a wallpaper layer that
+                    // pattern is wrong:
+                    //   * Producer rate is set by the source video,
+                    //     not the compositor.
+                    //   * COSMIC delivers `wl_callback.done` to
+                    //     layer-shell wallpaper surfaces at very
+                    //     different cadences per output — observed
+                    //     ~6 Hz on a 4K output vs ~18 Hz on a 2K
+                    //     output. The slower output's frame_pending
+                    //     stayed true between FrameReadys, every
+                    //     commit got skipped, the orphaned
+                    //     release_syncobj fds piled up in
+                    //     pending_release_fds, and the daemon's
+                    //     reaper had to force-signal at WAIT_TIMEOUT
+                    //     (~1 Hz) — capping the entire pipeline.
+                    // mpv / gstreamer wlsink commit every frame and
+                    // let the compositor coalesce excess. We do the
+                    // same. `frame_pending` is kept (informational,
+                    // available for future heuristics) but is no
+                    // longer a gate.
+                    {
                         binding.surface.attach(Some(buffer), 0, 0);
 
                         // Map buffer → surface via wp_viewporter when
@@ -1255,12 +1590,20 @@ fn import_dmabufs(
     plane_offset: &[u32],
     fds: Vec<OwnedFd>,
 ) -> Result<Vec<WlBuffer>> {
-    let queue = binding.conn.new_event_queue::<App>();
-    let qh = queue.handle();
+    // Use the main thread's QueueHandle (cloned on the binding) so
+    // wl_buffer events — crucially `Release` — land on the queue that
+    // the main thread actually polls. A previous version created a
+    // throwaway event_queue here and dropped it at function end,
+    // which silently routed every `Release` event into a dead queue:
+    // the helper never signaled the release_syncobj, the daemon's
+    // reaper timed out every wait point ("wait point N timed out /
+    // errored (Timer expired); force-signaling stragglers" at ~1 Hz),
+    // and the producer was throttled to a 1 fps pipeline.
+    let qh = &binding.qh;
 
     let mut buffers = Vec::with_capacity(count as usize);
     for b in 0..count as usize {
-        let params = binding.dmabuf.create_params(&qh, ());
+        let params = binding.dmabuf.create_params(qh, ());
         let mod_hi = (modifier >> 32) as u32;
         let mod_lo = (modifier & 0xffff_ffff) as u32;
         for p in 0..planes_per_buffer as usize {
@@ -1280,7 +1623,7 @@ fn import_dmabufs(
             height as i32,
             fourcc,
             zwp_linux_buffer_params_v1::Flags::empty(),
-            &qh,
+            qh,
             // (output_name, buffer_index) — Dispatch::<WlBuffer> uses
             // these to route the Release event back to the right
             // binding's pending_release_fds queue.
@@ -1288,7 +1631,6 @@ fn import_dmabufs(
         );
         buffers.push(buffer);
     }
-    drop(queue);
     drop(fds);
     Ok(buffers)
 }
@@ -1330,12 +1672,24 @@ fn main() -> Result<()> {
                 ));
             }
             "zwp_linux_dmabuf_v1" => {
-                app.dmabuf = Some(globals.registry().bind::<ZwpLinuxDmabufV1, _, _>(
+                // v4 added the feedback object that delivers
+                // `main_device` — the compositor's main rendering GPU.
+                // Without it we'd report DrmNode::UNKNOWN and the
+                // daemon's picker would force CompatLinear (LINEAR
+                // modifier, cross-device pessimism) even on single-GPU
+                // systems. Bind v4 when offered; v3 still works
+                // (format/modifier broadcasts unchanged) — we just lose
+                // the GPU identity and stay on the slow path.
+                let dmabuf = globals.registry().bind::<ZwpLinuxDmabufV1, _, _>(
                     g.name,
-                    g.version.min(3),
+                    g.version.min(4),
                     &qh,
                     (),
-                ));
+                );
+                if dmabuf.version() >= 4 {
+                    app.dmabuf_feedback = Some(dmabuf.get_default_feedback(&qh, ()));
+                }
+                app.dmabuf = Some(dmabuf);
             }
             "wp_viewporter" => {
                 app.viewporter = Some(globals.registry().bind::<WpViewporter, _, _>(
@@ -1344,6 +1698,15 @@ fn main() -> Result<()> {
                     &qh,
                     (),
                 ));
+            }
+            "wp_fractional_scale_manager_v1" => {
+                app.fractional_scale_mgr =
+                    Some(globals.registry().bind::<WpFractionalScaleManagerV1, _, _>(
+                        g.name,
+                        g.version.min(1),
+                        &qh,
+                        (),
+                    ));
             }
             "wl_output" => {
                 let wl_output = globals.registry().bind::<WlOutput, _, _>(
@@ -1362,6 +1725,8 @@ fn main() -> Result<()> {
                         binding: None,
                         worker_started: false,
                         scale: 1,
+                        fractional_scale: None,
+                        fractional_scale_120: 0,
                     },
                 );
             }
@@ -1385,8 +1750,11 @@ fn main() -> Result<()> {
         bail!("no wl_output available");
     }
     log::info!(
-        "bound globals: compositor + layer_shell + dmabuf + viewporter:{} + {} output(s)",
+        "bound globals: compositor + layer_shell + dmabuf:v{} + viewporter:{} + fractional_scale:{} + dmabuf_feedback:{} + {} output(s)",
+        app.dmabuf.as_ref().map(|d| d.version()).unwrap_or(0),
         app.viewporter.is_some(),
+        app.fractional_scale_mgr.is_some(),
+        app.dmabuf_feedback.is_some(),
         app.outputs.len()
     );
 

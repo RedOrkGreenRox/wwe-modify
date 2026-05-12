@@ -19,5 +19,5 @@ waywallen = { path = "../.." }
 # zwlr_layer_shell_v1 (background surface) and zwp_linux_dmabuf_v1
 # (zero-copy wl_buffer import from daemon-supplied DMA-BUF fds).
 wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+wayland-protocols = { version = "0.32", features = ["client", "unstable", "staging"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
