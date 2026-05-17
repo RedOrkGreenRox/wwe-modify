@@ -12,6 +12,7 @@
 //! new renderer. Phase 2 will replace this with per-display config and
 //! reference-counted lifecycle.
 
+pub mod autopause;
 pub mod router;
 pub mod table;
 

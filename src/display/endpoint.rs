@@ -33,7 +33,13 @@ pub const SERVER_VERSION: &str = concat!("waywallen ", env!("CARGO_PKG_VERSION")
 /// accepts. Bump these when extending the wire protocol; everything
 /// outside the range is rejected at handshake with
 /// `error{code = VERSION_UNSUPPORTED}`.
-pub const MIN_SUPPORTED_CLIENT_VERSION: u32 = PROTOCOL_VERSION;
+///
+/// v7 added the `window_state` request (opcode 12). A v6 client that
+/// never emits it is still fully compatible with a v7 daemon (the
+/// daemon defaults the display to "no autopause condition met"); we
+/// therefore keep MIN at 6 so existing libwaywallen_display
+/// deployments don't break on upgrade.
+pub const MIN_SUPPORTED_CLIENT_VERSION: u32 = 6;
 pub const MAX_SUPPORTED_CLIENT_VERSION: u32 = PROTOCOL_VERSION;
 
 /// Advertised in `welcome.features`. Advisory in v3+ — clients MUST
@@ -384,6 +390,12 @@ async fn run_frame_loop(
                 Some(Ok(Request::UpdateDisplay { width, height, properties: _ })) => {
                     router.update_display_size(display_id, width, height).await;
                     log::info!("display {display_id}: resized to {width}x{height}");
+                }
+                Some(Ok(Request::WindowState { flags })) => {
+                    log::debug!(
+                        "display {display_id}: window_state flags=0x{flags:x}"
+                    );
+                    router.update_display_window_state(display_id, flags).await;
                 }
                 Some(Ok(Request::ConsumerCaps {
                     fourccs, mod_counts, modifiers, plane_counts,

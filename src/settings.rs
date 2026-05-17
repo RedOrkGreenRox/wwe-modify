@@ -60,11 +60,17 @@ pub struct DisplayPrefs {
     pub fillmode: Option<FillMode>,
     pub align: Option<Align>,
     pub rotation: Option<Rotation>,
+    pub autopause_mode: Option<AutopauseMode>,
+    pub autopause_resume_ms: Option<u32>,
 }
 
 impl DisplayPrefs {
     pub fn is_empty(&self) -> bool {
-        self.fillmode.is_none() && self.align.is_none() && self.rotation.is_none()
+        self.fillmode.is_none()
+            && self.align.is_none()
+            && self.rotation.is_none()
+            && self.autopause_mode.is_none()
+            && self.autopause_resume_ms.is_none()
     }
 }
 
@@ -74,6 +80,56 @@ pub struct ResolvedLayout {
     pub fillmode: FillMode,
     pub align: Align,
     pub rotation: Rotation,
+}
+
+/// What the daemon does when window-state reports arrive from a
+/// display. Mirrors the modes of the old KDE wallpaper plugin's
+/// `Common.PauseMode`, but the decision now lives in the daemon.
+///
+/// The mapping from (mode, `WW_WIN_HAS_*` flags) to "paused?" is in
+/// `routing::autopause::decide`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AutopauseMode {
+    /// Never pause from window-state reports.
+    #[default]
+    Never,
+    /// Any mapped (non-minimized) window on this display.
+    Any,
+    /// Any maximized OR fullscreen window on this display.
+    Max,
+    /// Some window on this display has keyboard focus.
+    Focus,
+    /// `Focus` OR `Max`.
+    FocusOrMax,
+    /// Some window on this display is fullscreen.
+    FullScreen,
+}
+
+/// Daemon-wide autopause defaults. Per-display overrides via
+/// `DisplayPrefs::{autopause_mode,autopause_resume_ms}`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutopauseDefaults {
+    pub mode: AutopauseMode,
+    /// Milliseconds of "no autopause condition" required before the
+    /// renderer is allowed to Play again. Smooths bursty fullscreen
+    /// toggles (e.g. video player UI peek).
+    pub resume_ms: u32,
+}
+
+impl Default for AutopauseDefaults {
+    fn default() -> Self {
+        Self { mode: AutopauseMode::Never, resume_ms: 500 }
+    }
+}
+
+/// Resolved autopause settings for a single display (per-display
+/// override falling through to the global default).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResolvedAutopause {
+    pub mode: AutopauseMode,
+    pub resume_ms: u32,
 }
 
 /// How the daemon shapes the `(extent_w, extent_h, extent_mode)` it
@@ -151,6 +207,9 @@ pub struct GlobalSettings {
     /// no per-display override. Drives the daemon-side projection of
     /// `set_config` rects.
     pub layout: LayoutDefaults,
+    /// Daemon-wide autopause defaults. A display with no
+    /// `[displays.<name>] autopause_*` override inherits from here.
+    pub autopause: AutopauseDefaults,
     /// Structured wallpaper-browser filter state. Kept typed in
     /// memory, but serialized into the config file as a JSON string
     /// for compact persistence and backwards compatibility with older
@@ -178,6 +237,7 @@ impl Default for GlobalSettings {
             queue_mode: "sequential".to_string(),
             rotation_secs: 0,
             layout: LayoutDefaults::default(),
+            autopause: AutopauseDefaults::default(),
             wallpaper_filter: WallpaperFilterState::default(),
             wallpaper_sorts: Vec::new(),
         }
@@ -547,6 +607,18 @@ impl SettingsStore {
             fillmode: prefs.and_then(|p| p.fillmode).unwrap_or(defaults.fillmode),
             align: prefs.and_then(|p| p.align).unwrap_or(defaults.align),
             rotation: prefs.and_then(|p| p.rotation).unwrap_or(defaults.rotation),
+        }
+    }
+
+    /// Autopause mode + resume debounce resolved against the
+    /// (per-display override → global default) cascade.
+    pub fn resolved_autopause(&self, display_name: &str) -> ResolvedAutopause {
+        let g = self.inner.read().expect("settings poisoned");
+        let d = g.global.autopause;
+        let prefs = g.displays.get(display_name);
+        ResolvedAutopause {
+            mode: prefs.and_then(|p| p.autopause_mode).unwrap_or(d.mode),
+            resume_ms: prefs.and_then(|p| p.autopause_resume_ms).unwrap_or(d.resume_ms),
         }
     }
 

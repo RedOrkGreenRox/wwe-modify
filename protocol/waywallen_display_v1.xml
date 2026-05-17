@@ -119,13 +119,27 @@
       daemon's range allowed v6 (it won't — daemon only accepts ≥6
       once it advertises v6).
 
+  v7 (window-state reporting for daemon-side autopause):
+    - New request `window_state` (opcode 12): consumer→daemon advisory
+      bitmask describing which kinds of windows currently cover this
+      display. Fire-and-forget; consumers that have no window-state
+      source (GNOME extension before window-management support,
+      headless tests, anything non-KDE) simply never send it — the
+      daemon defaults the display to "no covering windows".
+    - Daemon owns the per-display autopause Mode / ResumeMs settings
+      and is the only side that decides Pause/Play. Consumers MUST
+      NOT debounce or filter; just emit on every observed change.
+    - Wire-compatible with v6 except for the new opcode. v6 clients
+      that never send `window_state` keep working (daemon defaults
+      that display to "no autopause condition met").
+
   Informational features (welcome.features, advisory only in v3+):
     "explicit_sync_fd"           — acquire fence as dma_fence sync_file.
     "drm_syncobj_release"        — release fence as drm_syncobj fd.
     "modifier_negotiation_v1"    — consumer_caps + bind_failed plumbing.
   Optional features (reserved): "color_management", "hdr"
 -->
-<protocol name="waywallen_display" version="6">
+<protocol name="waywallen_display" version="7">
 
   <!-- ==================================================================
        REQUESTS  (display -> manager)
@@ -350,6 +364,36 @@
   -->
   <request name="unbind_done" opcode="11">
     <arg name="buffer_generation" type="u64"/>
+  </request>
+
+  <!--
+    Periodic / on-change window-state report from the consumer side.
+    Used by the daemon's per-display autopause feature: each consumer
+    (e.g. the KDE wallpaper plasmoid) computes a small bitmask
+    describing windows that currently cover its display and emits a
+    new `window_state` whenever it changes. The daemon translates the
+    bitmask + per-display autopause Mode setting into renderer
+    Pause/Play.
+
+    Fire-and-forget. Consumers MUST NOT debounce, time-filter, or
+    otherwise interpret the bits — the daemon owns all policy. Bit
+    positions:
+
+      bit 0  WW_WIN_HAS_NON_MINIMIZED  some mapped (non-minimized)
+                                       window covers this display.
+      bit 1  WW_WIN_HAS_ACTIVE         some window on this display
+                                       has keyboard focus.
+      bit 2  WW_WIN_HAS_MAXIMIZED      some window is H+V maximized
+                                       (NOT counting fullscreen).
+      bit 3  WW_WIN_HAS_FULLSCREEN     some window is fullscreen.
+      bits 4..31  reserved, MUST be 0 on send, MUST be ignored on
+                  receive.
+
+    The implicit default for any display that never sends this
+    request is `flags = 0` (no autopause trigger).
+  -->
+  <request name="window_state" opcode="12">
+    <arg name="flags" type="u32"/>
   </request>
 
 

@@ -46,8 +46,9 @@ use crate::renderer_manager::{
     DrmNode, RendererHandle, RendererId, RendererManager, BUF_HOST_VISIBLE,
 };
 use crate::scheduler::{DisplayId, DisplayInfo, ProjectedConfig};
-use crate::settings::{ResolvedLayout, SettingsStore};
+use crate::settings::{ResolvedAutopause, ResolvedLayout, SettingsStore};
 
+use super::autopause;
 use super::table::{Link, LinkDstRect, LinkId, LinkSrcRect, RoutingTable};
 
 /// Wire-translated event streamed from router to a display endpoint.
@@ -236,6 +237,12 @@ struct DisplayState {
     /// legacy clients). The router pairs this with the bound
     /// renderer's `format_caps` to compute a `NegotiatedScheme`.
     consumer_caps: Option<crate::dma::negotiate::PeerCaps>,
+    /// Per-display autopause machine driven by `window_state` requests
+    /// and the resolved `AutopauseMode`. `requested == true` contributes
+    /// toward pausing the renderer this display is linked to (see
+    /// `reconcile_lifecycle`). Resets to default for any display that
+    /// never sends `window_state` — i.e. autopause is off by default.
+    autopause: autopause::State,
 }
 
 struct Inner {
@@ -374,6 +381,24 @@ impl Router {
     /// legacy v3 clients (or v4 clients that explicitly sent empty).
     fn settings_key_for(info: &DisplayInfo) -> &str {
         info.instance_id.as_deref().unwrap_or(&info.name)
+    }
+
+    /// Autopause defaults: per-display override → global default →
+    /// `Never` when no settings store is attached (the test-time
+    /// fallback, matching `resolved_layout` shape).
+    fn resolved_autopause(&self, info: &DisplayInfo) -> ResolvedAutopause {
+        let Some(s) = self.settings.get() else {
+            return ResolvedAutopause {
+                mode: crate::settings::AutopauseMode::Never,
+                resume_ms: 500,
+            };
+        };
+        if let Some(iid) = info.instance_id.as_deref() {
+            if s.display_prefs(iid).is_some() {
+                return s.resolved_autopause(iid);
+            }
+        }
+        s.resolved_autopause(&info.name)
     }
 
     /// Set or clear per-display layout fields. `None` for a field
@@ -773,6 +798,7 @@ impl Router {
                     last_renderer: None,
                     last_buffer_generation: None,
                     consumer_caps: reg.consumer_caps,
+                    autopause: autopause::State::new(),
                 },
             );
             // Phase 1 policy: auto-link to whichever renderer is "first".
@@ -961,6 +987,101 @@ impl Router {
         }
         if let Some(snap) = self.snapshot_display(display_id).await {
             self.emit(RouterEvent::DisplayUpsert(snap));
+        }
+    }
+
+    /// Update the per-display autopause machine from a consumer's
+    /// `window_state` request. Pure-fact reporting: the consumer
+    /// passes the raw bitmask; mode/resume_ms come from settings.
+    ///
+    /// Pause transitions are immediate; resume transitions are held
+    /// for `resume_ms` so that a brief pause→play→pause flap (e.g. a
+    /// video player UI peek) doesn't restart the renderer twice.
+    pub async fn update_display_window_state(
+        self: &Arc<Self>,
+        display_id: DisplayId,
+        flags: u32,
+    ) {
+        // Snapshot under lock: compute the new raw decision and decide
+        // whether anything observable changed.
+        enum Action {
+            ScheduleResume { gen: u64, ms: u32 },
+            Reconcile,
+            Noop,
+        }
+        let action = {
+            let mut inner = self.inner.lock().await;
+            let Some(state) = inner.displays.get_mut(&display_id) else {
+                return;
+            };
+            let resolved = self.resolved_autopause(&state.info);
+            let new_raw = autopause::decide(resolved.mode, flags);
+            let prev_raw = state.autopause.raw_want_pause;
+            let same_flags = state.autopause.last_flags == flags;
+            state.autopause.last_flags = flags;
+            if same_flags && new_raw == prev_raw {
+                Action::Noop
+            } else {
+                state.autopause.raw_want_pause = new_raw;
+                if new_raw {
+                    // Immediate pause: cancel any pending resume by
+                    // bumping the generation, flip requested.
+                    state.autopause.gen = state.autopause.gen.wrapping_add(1);
+                    let changed = !state.autopause.requested;
+                    state.autopause.requested = true;
+                    if changed {
+                        Action::Reconcile
+                    } else {
+                        Action::Noop
+                    }
+                } else if state.autopause.requested {
+                    // Pending resume after debounce. Bump gen so any
+                    // older resume task is invalidated, then arm a
+                    // fresh one.
+                    state.autopause.gen = state.autopause.gen.wrapping_add(1);
+                    Action::ScheduleResume {
+                        gen: state.autopause.gen,
+                        ms: resolved.resume_ms,
+                    }
+                } else {
+                    // Was already not requesting pause; nothing to do.
+                    Action::Noop
+                }
+            }
+        };
+        match action {
+            Action::Noop => {}
+            Action::Reconcile => self.reconcile_lifecycle().await,
+            Action::ScheduleResume { gen, ms } => {
+                let router = Arc::clone(self);
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(ms as u64)).await;
+                    let need_reconcile = {
+                        let mut inner = router.inner.lock().await;
+                        let Some(state) = inner.displays.get_mut(&display_id) else {
+                            return;
+                        };
+                        // A newer transition invalidated us — bail.
+                        if state.autopause.gen != gen {
+                            return;
+                        }
+                        // Raw signal flipped back to "pause" while we
+                        // were sleeping — leave `requested` as-is.
+                        if state.autopause.raw_want_pause {
+                            return;
+                        }
+                        if state.autopause.requested {
+                            state.autopause.requested = false;
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if need_reconcile {
+                        router.reconcile_lifecycle().await;
+                    }
+                });
+            }
         }
     }
 
@@ -1586,32 +1707,62 @@ impl Router {
 
     /// Compute the current Pause/Play diff and dispatch control
     /// messages outside the inner lock. Call after any mutation that
-    /// can change a renderer's enabled-link count.
+    /// can change a renderer's enabled-link count OR a linked
+    /// display's autopause state.
+    ///
+    /// A renderer is paused iff:
+    ///   - it has no enabled link (existing ref-count rule), OR
+    ///   - every enabled link's display has `autopause.requested ==
+    ///     true` (per-display window-state opt-in).
     async fn reconcile_lifecycle(self: &Arc<Self>) {
-        let actions: Vec<(RendererId, ControlMsg)> = {
+        let actions: Vec<(RendererId, ControlMsg, &'static str)> = {
             let mut inner = self.inner.lock().await;
-            let mut out = Vec::new();
+            let mut out: Vec<(RendererId, ControlMsg, &'static str)> = Vec::new();
             for rid in inner.table.renderer_ids() {
-                let active = inner
+                let links: Vec<Link> = inner
                     .table
                     .links_for_renderer(&rid)
-                    .iter()
-                    .any(|l| l.enabled);
+                    .into_iter()
+                    .filter(|l| l.enabled)
+                    .collect();
+                let has_active_link = !links.is_empty();
+                // Autopause rule: only meaningful when there IS at
+                // least one active link. With no links the ref-count
+                // rule dominates.
+                let all_autopaused = has_active_link
+                    && links.iter().all(|l| {
+                        inner
+                            .displays
+                            .get(&l.display_id)
+                            .map(|s| s.autopause.requested)
+                            .unwrap_or(false)
+                    });
+                let should_pause = !has_active_link || all_autopaused;
                 let was_paused = inner.paused_renderers.contains(&rid);
-                if active && was_paused {
+                if !should_pause && was_paused {
                     inner.paused_renderers.remove(&rid);
                     inner.paused_since.remove(&rid);
-                    out.push((rid, ControlMsg::Play));
-                } else if !active && !was_paused {
+                    let cause = if has_active_link {
+                        "autopause-clear"
+                    } else {
+                        "ref-count"
+                    };
+                    out.push((rid, ControlMsg::Play, cause));
+                } else if should_pause && !was_paused {
                     inner.paused_renderers.insert(rid.clone());
                     inner.paused_since.insert(rid.clone(), Instant::now());
-                    out.push((rid, ControlMsg::Pause));
+                    let cause = if has_active_link {
+                        "autopause"
+                    } else {
+                        "ref-count"
+                    };
+                    out.push((rid, ControlMsg::Pause, cause));
                 }
             }
             out
         };
-        let changed_ids: Vec<RendererId> = actions.iter().map(|(id, _)| id.clone()).collect();
-        for (id, msg) in actions {
+        let changed_ids: Vec<RendererId> = actions.iter().map(|(id, _, _)| id.clone()).collect();
+        for (id, msg, cause) in actions {
             let label = match msg {
                 ControlMsg::Pause => "pause",
                 ControlMsg::Play => "play",
@@ -1620,7 +1771,7 @@ impl Router {
             if let Err(e) = self.mgr.send_control(&id, msg).await {
                 log::warn!("router: {label} {id}: {e}");
             } else {
-                log::info!("router: {label} renderer {id} (ref_count diff)");
+                log::info!("router: {label} renderer {id} ({cause})");
             }
         }
         for id in changed_ids {
@@ -2696,6 +2847,151 @@ mod tests {
         router.update_display_size(h.id, 1920, 1080).await;
         // No new SetConfig should land on the rx.
         assert!(last_set_config(&mut h.rx).is_none());
+    }
+
+    // -----------------------------------------------------------------
+    // autopause — daemon-side decision driven by `window_state`
+    // -----------------------------------------------------------------
+
+    use crate::settings::{AutopauseMode, DisplayPrefs, SettingsStore};
+    use super::autopause as ap;
+
+    async fn settings_with_autopause(
+        display_name: &str,
+        mode: AutopauseMode,
+        resume_ms: u32,
+    ) -> Arc<SettingsStore> {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SettingsStore::load_or_default(tmp.path().join("settings.toml")).await;
+        store.update(|s| {
+            s.displays.insert(
+                display_name.to_string(),
+                DisplayPrefs {
+                    autopause_mode: Some(mode),
+                    autopause_resume_ms: Some(resume_ms),
+                    ..Default::default()
+                },
+            );
+        });
+        // Leak the tempdir for the lifetime of the test; the store
+        // holds a PathBuf into it and the debounced writer is still
+        // alive in the background.
+        std::mem::forget(tmp);
+        store
+    }
+
+    #[tokio::test]
+    async fn autopause_pauses_renderer_when_fullscreen_flag_set() {
+        let mgr = Arc::new(RendererManager::new_default());
+        let router = Router::new(mgr.clone());
+        router.attach_settings(
+            settings_with_autopause("HDMI-A-1", AutopauseMode::FullScreen, 100).await,
+        );
+        let r = RendererHandle::test_stub("r1", "scene");
+        mgr.register_test_handle(r.clone()).await;
+        router.register_renderer(r.clone()).await;
+        let h = router.register_display(reg("HDMI-A-1", 1920, 1080)).await;
+        // No autopause condition yet → renderer plays.
+        assert!(!router.is_paused("r1").await);
+
+        // Fullscreen window appears → daemon should pause immediately.
+        router
+            .update_display_window_state(h.id, ap::FLAG_NON_MINIMIZED | ap::FLAG_FULLSCREEN)
+            .await;
+        assert!(router.is_paused("r1").await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn autopause_resume_is_debounced() {
+        let mgr = Arc::new(RendererManager::new_default());
+        let router = Router::new(mgr.clone());
+        router.attach_settings(
+            settings_with_autopause("HDMI-A-1", AutopauseMode::FullScreen, 200).await,
+        );
+        let r = RendererHandle::test_stub("r1", "scene");
+        mgr.register_test_handle(r.clone()).await;
+        router.register_renderer(r.clone()).await;
+        let h = router.register_display(reg("HDMI-A-1", 1920, 1080)).await;
+
+        // Pause.
+        router
+            .update_display_window_state(h.id, ap::FLAG_NON_MINIMIZED | ap::FLAG_FULLSCREEN)
+            .await;
+        assert!(router.is_paused("r1").await);
+
+        // Flag drops → state machine schedules a resume in 200ms. Still
+        // paused immediately afterwards.
+        router
+            .update_display_window_state(h.id, ap::FLAG_NON_MINIMIZED)
+            .await;
+        assert!(router.is_paused("r1").await);
+
+        // Advance past the resume window. The spawned timer fires and
+        // flips `requested` → reconcile_lifecycle sends Play. The
+        // spawned task takes multiple awaits to land (lock + reconcile
+        // + control send via spawn_blocking) so spin briefly until
+        // is_paused flips, capped at a small bound.
+        tokio::time::advance(std::time::Duration::from_millis(250)).await;
+        let mut flipped = false;
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+            if !router.is_paused("r1").await {
+                flipped = true;
+                break;
+            }
+        }
+        assert!(flipped, "resume timer did not flip renderer back to playing");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn autopause_resume_cancelled_by_new_pause() {
+        let mgr = Arc::new(RendererManager::new_default());
+        let router = Router::new(mgr.clone());
+        router.attach_settings(
+            settings_with_autopause("HDMI-A-1", AutopauseMode::FullScreen, 200).await,
+        );
+        let r = RendererHandle::test_stub("r1", "scene");
+        mgr.register_test_handle(r.clone()).await;
+        router.register_renderer(r.clone()).await;
+        let h = router.register_display(reg("HDMI-A-1", 1920, 1080)).await;
+
+        // Pause, then start a resume window, then immediately re-enter
+        // fullscreen — the pending resume timer must be invalidated.
+        router
+            .update_display_window_state(h.id, ap::FLAG_NON_MINIMIZED | ap::FLAG_FULLSCREEN)
+            .await;
+        router
+            .update_display_window_state(h.id, ap::FLAG_NON_MINIMIZED)
+            .await;
+        router
+            .update_display_window_state(h.id, ap::FLAG_NON_MINIMIZED | ap::FLAG_FULLSCREEN)
+            .await;
+
+        tokio::time::advance(std::time::Duration::from_millis(500)).await;
+        // Give any in-flight tasks a chance to run; renderer must
+        // remain paused — the orphan resume timer from the middle
+        // transition fires but bails on gen mismatch.
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+        }
+        assert!(router.is_paused("r1").await);
+    }
+
+    #[tokio::test]
+    async fn autopause_never_mode_is_inert() {
+        let mgr = Arc::new(RendererManager::new_default());
+        let router = Router::new(mgr.clone());
+        // No settings attached → resolved_autopause falls back to
+        // (Never, 500ms).
+        let r = RendererHandle::test_stub("r1", "scene");
+        mgr.register_test_handle(r.clone()).await;
+        router.register_renderer(r.clone()).await;
+        let h = router.register_display(reg("HDMI-A-1", 1920, 1080)).await;
+
+        router
+            .update_display_window_state(h.id, ap::FLAG_NON_MINIMIZED | ap::FLAG_FULLSCREEN)
+            .await;
+        assert!(!router.is_paused("r1").await);
     }
 
     #[tokio::test]

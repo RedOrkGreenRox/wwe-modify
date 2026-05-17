@@ -320,6 +320,26 @@ fn emit_message_decls(out: &mut String, m: &Message, kind: MsgKind) {
 // ---------------------------------------------------------------------------
 
 pub fn emit_source(p: &Protocol) -> String {
+    emit_source_with_include(p, default_c_include(&p.name))
+}
+
+/// Default `#include "..."` path emitted at the top of the generated
+/// C source. Branches by protocol name because the two consumers in
+/// this workspace land the generated header at different install
+/// locations:
+///   - `waywallen-ipc`     → bridge consumers install the header as
+///                            `<waywallen-bridge/ipc_v1.h>`.
+///   - `waywallen-display` → libwaywallen_display keeps it next to
+///                            the .c at `src/generated/ww_proto.h`.
+/// Unknown protocols default to `"ww_proto.h"` (local).
+pub fn default_c_include(protocol_name: &str) -> &'static str {
+    match protocol_name {
+        "waywallen-ipc" | "waywallen_ipc" => "waywallen-bridge/ipc_v1.h",
+        _ => "ww_proto.h",
+    }
+}
+
+pub fn emit_source_with_include(p: &Protocol, include: &str) -> String {
     let mut out = String::new();
     writeln!(
         out,
@@ -328,14 +348,10 @@ pub fn emit_source(p: &Protocol) -> String {
     .unwrap();
     writeln!(out, "/* Source: protocol/{}_v{}.xml */", p.name, p.version).unwrap();
     writeln!(out).unwrap();
-    // The header lives next to bridge consumers under
-    // <waywallen-bridge/ipc_v1.h> per CMake's include path conventions
-    // for this protocol; emit that include literally so the generated
-    // source compiles in-tree without further plumbing.
+    writeln!(out, "#include \"{include}\"").unwrap();
+    writeln!(out).unwrap();
     out.push_str(
-        r#"#include "waywallen-bridge/ipc_v1.h"
-
-#include <stdint.h>
+        r#"#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
