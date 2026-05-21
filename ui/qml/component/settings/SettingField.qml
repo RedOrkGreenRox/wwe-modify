@@ -117,11 +117,13 @@ ColumnLayout {
             name: MD.Token.icon.restart_alt
             size: 16
             color: MD.Token.color.on_surface_variant
-            T.ToolTip.visible: hovered.hovered
-            T.ToolTip.text: "Requires renderer restart"
 
             HoverHandler {
                 id: hovered
+            }
+            MD.ToolTip {
+                visible: hovered.hovered
+                text: "Requires renderer restart"
             }
         }
     }

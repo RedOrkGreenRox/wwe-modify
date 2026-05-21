@@ -1,6 +1,5 @@
 pragma ValueTypeBehavior: Assertable
 import QtQuick
-import QtQuick.Templates as T
 import QtQuick.Layouts
 import Qcm.Material as MD
 import waywallen.ui as W
@@ -54,11 +53,13 @@ Rectangle {
         id: hover
     }
 
-    T.ToolTip.visible: hover.hovered && root.gpu !== null
-    T.ToolTip.delay: 300
-    T.ToolTip.text: root.gpu
-        ? (root.gpu.description
-            + (root.gpu.pciBdf ? "\nPCI " + root.gpu.pciBdf : "")
-            + (root.gpu.renderNode ? "\n" + root.gpu.renderNode : ""))
-        : ""
+    MD.ToolTip {
+        visible: hover.hovered && root.gpu !== null
+        delay: 300
+        text: root.gpu
+            ? (root.gpu.description
+                + (root.gpu.pciBdf ? "\nPCI " + root.gpu.pciBdf : "")
+                + (root.gpu.renderNode ? "\n" + root.gpu.renderNode : ""))
+            : ""
+    }
 }

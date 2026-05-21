@@ -734,8 +734,10 @@ MD.Page {
                         mdState.type: MD.Enum.BtFilled
                         enabled: (W.App.displayManager.displays || []).length > 0
 
-                        T.ToolTip.visible: hovered && !enabled
-                        T.ToolTip.text: "No display connected"
+                        MD.ToolTip {
+                            visible: applyBtn.hovered && !applyBtn.enabled
+                            text: "No display connected"
+                        }
 
                         onClicked: {
                             if (busy)
