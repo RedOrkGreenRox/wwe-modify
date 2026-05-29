@@ -597,6 +597,9 @@ impl RendererManager {
         let mut extra_keys: Vec<&String> = req.extras.keys().collect();
         extra_keys.sort();
         for k in extra_keys {
+            if k != "path" && !renderer_def.extras.iter().any(|w| w == k) {
+                continue;
+            }
             cmd.arg(format!("--{k}")).arg(&req.extras[k]);
         }
         cmd.kill_on_drop(true)
