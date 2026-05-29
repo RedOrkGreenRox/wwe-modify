@@ -50,6 +50,10 @@ MD.Page {
         id: layoutSetQuery
     }
 
+    W.DisplayRenameQuery {
+        id: renameQuery
+    }
+
     function layoutRects() {
         const out = [];
         let x = 0;
@@ -199,7 +203,7 @@ MD.Page {
 
                             MD.Text {
                                 Layout.fillWidth: true
-                                text: rectItem.d.name || ("Display " + rectItem.d.id)
+                                text: rectItem.d.displayLabel || rectItem.d.name || ("Display " + rectItem.d.id)
                                 typescale: MD.Token.typescale.title_small
                                 color: rectItem.hasLink ? MD.Token.color.on_primary_container : MD.Token.color.on_surface
                                 horizontalAlignment: Text.AlignHCenter
@@ -265,12 +269,62 @@ MD.Page {
                     Layout.fillWidth: true
                     spacing: 8
 
+                    readonly property bool canRename: W.Util.supportsDisplayRename
+
+                    MD.TextField {
+                        id: aliasField
+                        Layout.fillWidth: true
+                        visible: parent.canRename
+                        placeholderText: root.selected ? (root.selected.name || ("Display " + root.selected.id)) : ""
+                        readonly property string serverAlias: root.selected ? (root.selected.alias || "") : ""
+                        onServerAliasChanged: if (!activeFocus) text = serverAlias
+                        Component.onCompleted: text = serverAlias
+                        Connections {
+                            target: root
+                            function onSelectedIdChanged() {
+                                aliasField.text = aliasField.serverAlias;
+                            }
+                        }
+                        function commit() {
+                            if (!root.selected)
+                                return;
+                            const trimmed = text.trim();
+                            if (trimmed === serverAlias)
+                                return;
+                            renameQuery.name = root.selected.name;
+                            renameQuery.alias = trimmed;
+                            renameQuery.clear = (trimmed.length === 0);
+                            renameQuery.reload();
+                        }
+                        onAccepted: commit()
+                        onActiveFocusChanged: if (!activeFocus) commit()
+                    }
+
                     MD.Text {
                         Layout.fillWidth: true
-                        text: root.selected ? (root.selected.name || ("Display " + root.selected.id)) : ""
+                        visible: !parent.canRename
+                        text: root.selected ? (root.selected.displayLabel || root.selected.name || ("Display " + root.selected.id)) : ""
                         typescale: MD.Token.typescale.title_medium
                         color: MD.Token.color.on_surface
                         elide: Text.ElideRight
+                    }
+
+                    MD.IconButton {
+                        visible: parent.canRename && !!root.selected && (root.selected.alias || "").length > 0
+                        icon.name: MD.Token.icon.refresh
+                        MD.ToolTip {
+                            visible: parent.hovered
+                            text: "Reset to compositor name"
+                        }
+                        onClicked: {
+                            if (!root.selected)
+                                return;
+                            renameQuery.name = root.selected.name;
+                            renameQuery.alias = "";
+                            renameQuery.clear = true;
+                            renameQuery.reload();
+                            aliasField.text = "";
+                        }
                     }
 
                     MD.IconButton {

@@ -490,6 +490,54 @@ impl Router {
         }
     }
 
+    pub async fn set_display_alias(
+        self: &Arc<Self>,
+        display_name: String,
+        new_alias: Option<String>,
+        clear: bool,
+    ) {
+        let Some(settings) = self.settings.get().cloned() else {
+            log::warn!(
+                "router: set_display_alias({display_name}) called before settings attached"
+            );
+            return;
+        };
+        let target_id = self.find_display_by_name(&display_name).await;
+        let key = match target_id {
+            Some(did) => {
+                let inner = self.inner.lock().await;
+                inner
+                    .displays
+                    .get(&did)
+                    .and_then(|s| s.info.instance_id.clone())
+                    .unwrap_or_else(|| display_name.clone())
+            }
+            None => display_name.clone(),
+        };
+        settings.update(|s| {
+            let entry = s.displays.entry(key.clone()).or_default();
+            if clear {
+                entry.alias = None;
+            }
+            if let Some(v) = new_alias {
+                let trimmed = v.trim();
+                entry.alias = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                };
+            }
+            if entry.is_empty() {
+                s.displays.remove(&key);
+            }
+        });
+        if let Some(did) = target_id {
+            if let Some(snap) = self.snapshot_display(did).await {
+                self.emit(RouterEvent::DisplayUpsert(snap));
+            }
+        }
+    }
+
     /// Re-emit `set_config` for a single display to pick up new
     /// settings. Cheaper than `sync_display` because it skips the
     /// Bind/Unbind diff check; settings changes never alter

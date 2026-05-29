@@ -987,7 +987,7 @@ MD.Page {
 
                                 MD.FilterChip {
                                     required property var modelData
-                                    text: modelData?.name || ("Display " + modelData?.id)
+                                    text: (modelData?.displayLabel ?? "") || (modelData?.name ?? "").replace(/^waywallen-[a-z]+-[a-z]+-/, "") || ("Display " + modelData?.id)
                                     checked: root.applyTargetIds.indexOf(modelData?.id) >= 0
                                     onClicked: root.toggleTarget(modelData?.id)
                                 }

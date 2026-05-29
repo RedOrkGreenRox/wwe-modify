@@ -58,6 +58,7 @@ Display::Display(const proto::DisplayInfo& info, QObject* parent)
     : QObject(parent),
       m_id(info.displayId()),
       m_name(info.name()),
+      m_alias(info.alias()),
       m_width(info.width()),
       m_height(info.height()),
       m_refresh_mhz(info.refreshMhz()),
@@ -70,10 +71,18 @@ Display::Display(const proto::DisplayInfo& info, QObject* parent)
 void Display::updateFrom(const proto::DisplayInfo& info) {
     rstd_assert(info.displayId() == m_id, "Display::updateFrom id mismatch");
 
+    bool label_changed = false;
     if (m_name != info.name()) {
         m_name = info.name();
         Q_EMIT nameChanged();
+        label_changed = true;
     }
+    if (m_alias != info.alias()) {
+        m_alias = info.alias();
+        Q_EMIT aliasChanged();
+        label_changed = true;
+    }
+    if (label_changed) Q_EMIT displayLabelChanged();
     bool size_changed = false;
     if (m_width != info.width()) {
         m_width      = info.width();

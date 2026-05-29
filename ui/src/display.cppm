@@ -29,6 +29,8 @@ class Display : public QObject {
 
     Q_PROPERTY(quint64 id READ id CONSTANT FINAL)
     Q_PROPERTY(QString name READ name NOTIFY nameChanged FINAL)
+    Q_PROPERTY(QString alias READ alias NOTIFY aliasChanged FINAL)
+    Q_PROPERTY(QString displayLabel READ displayLabel NOTIFY displayLabelChanged FINAL)
     Q_PROPERTY(quint32 width READ width NOTIFY sizeChanged FINAL)
     Q_PROPERTY(quint32 height READ height NOTIFY sizeChanged FINAL)
     Q_PROPERTY(quint32 refreshMhz READ refreshMhz NOTIFY refreshMhzChanged FINAL)
@@ -51,6 +53,8 @@ public:
 
     auto id() const -> quint64 { return m_id; }
     auto name() const -> const QString& { return m_name; }
+    auto alias() const -> const QString& { return m_alias; }
+    auto displayLabel() const -> QString { return m_alias.isEmpty() ? m_name : m_alias; }
     auto width() const -> quint32 { return m_width; }
     auto height() const -> quint32 { return m_height; }
     auto refreshMhz() const -> quint32 { return m_refresh_mhz; }
@@ -65,6 +69,8 @@ public:
     void updateFrom(const proto::DisplayInfo& info);
 
     Q_SIGNAL void nameChanged();
+    Q_SIGNAL void aliasChanged();
+    Q_SIGNAL void displayLabelChanged();
     Q_SIGNAL void sizeChanged();
     Q_SIGNAL void refreshMhzChanged();
     Q_SIGNAL void linksChanged();
@@ -77,6 +83,7 @@ private:
 
     quint64      m_id;
     QString      m_name;
+    QString      m_alias;
     quint32      m_width;
     quint32      m_height;
     quint32      m_refresh_mhz;

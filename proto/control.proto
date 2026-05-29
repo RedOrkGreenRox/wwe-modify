@@ -62,6 +62,7 @@ message Request {
     WallpaperGetRequest       wallpaper_get = 42;
     WallpaperPropertySetRequest wallpaper_property_set = 43;
     WallpaperApplyViaPortalRequest wallpaper_apply_via_portal = 44;
+    DisplayRenameRequest      display_rename = 45;
   }
 }
 
@@ -111,6 +112,7 @@ message Response {
     WallpaperGetResponse       wallpaper_get = 42;
     WallpaperPropertySetResponse wallpaper_property_set = 43;
     WallpaperApplyViaPortalResponse wallpaper_apply_via_portal = 44;
+    DisplayRenameResponse      display_rename = 45;
   }
 }
 
@@ -529,6 +531,17 @@ message DisplayInfo {
   // against `GpuList` to show a human description.
   uint32 drm_render_major = 9;
   uint32 drm_render_minor = 10;
+  string alias = 11;
+}
+
+message DisplayRenameRequest {
+  string name  = 1;
+  string alias = 2;
+  bool   clear = 3;
+}
+
+message DisplayRenameResponse {
+  DisplayInfo display = 1;
 }
 
 message DisplayListRequest {}
