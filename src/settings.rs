@@ -66,6 +66,7 @@ pub struct DisplayPrefs {
     /// when the display re-connects mid-session. `None` falls back to
     /// `GlobalSettings::last_wallpaper`.
     pub last_wallpaper: Option<String>,
+    pub alias: Option<String>,
 }
 
 impl DisplayPrefs {
@@ -76,6 +77,7 @@ impl DisplayPrefs {
             && self.autopause_mode.is_none()
             && self.autopause_resume_ms.is_none()
             && self.last_wallpaper.is_none()
+            && self.alias.is_none()
     }
 }
 

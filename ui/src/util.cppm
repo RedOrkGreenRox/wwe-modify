@@ -27,12 +27,16 @@ public:
     /// `display::spawner::detect_de` semantics. New variants grow
     /// here when an empty-state hint needs to fork on DE.
     enum class Desktop {
-        Unknown = 0,
-        Kde     = 1,
+        Unknown  = 0,
+        Kde      = 1,
+        Hyprland = 2,
+        Sway     = 3,
+        Niri     = 4,
     };
     Q_ENUM(Desktop)
 
     Q_PROPERTY(Desktop desktop READ desktop CONSTANT FINAL)
+    Q_PROPERTY(bool supportsDisplayRename READ supportsDisplayRename CONSTANT FINAL)
 
     explicit Util(QObject* parent);
     ~Util() override;
@@ -42,6 +46,7 @@ public:
     static Util* create(QQmlEngine*, QJSEngine*);
 
     Desktop     desktop() const;
+    bool        supportsDisplayRename() const;
 
     Q_INVOKABLE QString bbcodeToHtml(const QString& src) const;
 

@@ -12,6 +12,8 @@ test = false
 anyhow = "1.0"
 log = "0.4"
 env_logger = "0.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 # Reuse the daemon's display-wire protocol codec so the bin speaks the
 # same bytes as `waywallen-display-v1` without a reimplementation.
 waywallen = { path = "../.." }

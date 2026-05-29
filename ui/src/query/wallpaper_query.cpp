@@ -22,7 +22,7 @@ namespace waywallen
 // ---------------------------------------------------------------------------
 
 WallpaperListQuery::WallpaperListQuery(QObject* parent): QueryList(parent) {
-    setLimit(60);
+    setLimit(0);
     tdata()->set_store(tdata(), AppStore::instance()->wallpapers);
     connect_requet_reload(&WallpaperListQuery::wpTypeChanged, this);
     connect_requet_reload(&WallpaperListQuery::filterStateChanged, this);

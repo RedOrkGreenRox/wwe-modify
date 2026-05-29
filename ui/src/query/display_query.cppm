@@ -96,4 +96,33 @@ private:
     bool         m_clear_rotation { false };
 };
 
+export class DisplayRenameQuery : public Query,
+                                  public QueryExtra<control::v1::Response, DisplayRenameQuery> {
+    Q_OBJECT
+    QML_ELEMENT
+
+    Q_PROPERTY(QString name READ name WRITE setName NOTIFY paramsChanged FINAL)
+    Q_PROPERTY(QString alias READ alias WRITE setAlias NOTIFY paramsChanged FINAL)
+    Q_PROPERTY(bool clear READ clear WRITE setClear NOTIFY paramsChanged FINAL)
+
+public:
+    DisplayRenameQuery(QObject* parent = nullptr);
+
+    auto name() const -> const QString& { return m_name; }
+    void setName(const QString& v);
+    auto alias() const -> const QString& { return m_alias; }
+    void setAlias(const QString& v);
+    auto clear() const -> bool { return m_clear; }
+    void setClear(bool v);
+
+    void reload() override;
+
+    Q_SIGNAL void paramsChanged();
+
+private:
+    QString m_name;
+    QString m_alias;
+    bool    m_clear { false };
+};
+
 } // namespace waywallen

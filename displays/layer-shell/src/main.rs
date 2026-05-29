@@ -1,4 +1,10 @@
 //! waywallen-display-layer-shell — Wayland layer-shell wallpaper client.
+//!
+//! Connects to a Wayland compositor that supports `zwlr_layer_shell_v1`
+//! (Hyprland, Sway, Niri, River, …) and registers each output as a
+//! display with the daemon over the waywallen-display UDS protocol.
+
+mod hyprland_watcher;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::net::Shutdown;
@@ -7,6 +13,7 @@ use std::os::unix::fs::FileExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::MutexGuard;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
@@ -46,61 +53,6 @@ use waywallen::display::proto::{
     codec, Event as ProtoEvent, Request as ProtoRequest, PROTOCOL_NAME, PROTOCOL_VERSION,
 };
 
-// ---------------------------------------------------------------------------
-// CLI
-// ---------------------------------------------------------------------------
-
-struct Args {
-    socket: PathBuf,
-    name_prefix: String,
-}
-
-fn usage() -> ! {
-    eprintln!(
-        "usage: waywallen-display-layer-shell [--socket PATH] [--name STR]\n\
-         \n\
-         Environment:\n\
-           WAYWALLEN_SOCKET   fallback UDS path when --socket is omitted\n\
-           WAYLAND_DISPLAY    required — picks the compositor to attach to"
-    );
-    std::process::exit(2);
-}
-
-fn parse_args() -> Args {
-    let mut socket: Option<PathBuf> = None;
-    let mut name_prefix = String::from("waywallen-layer-shell");
-    let mut it = std::env::args().skip(1);
-    while let Some(arg) = it.next() {
-        match arg.as_str() {
-            "--socket" => {
-                socket = it.next().map(PathBuf::from);
-                if socket.is_none() {
-                    eprintln!("--socket requires a value");
-                    usage();
-                }
-            }
-            "--name" => {
-                name_prefix = it.next().unwrap_or_else(|| {
-                    eprintln!("--name requires a value");
-                    usage();
-                });
-            }
-            "-h" | "--help" => usage(),
-            other => {
-                eprintln!("unknown argument: {other}");
-                usage();
-            }
-        }
-    }
-    let socket = socket
-        .or_else(|| std::env::var_os("WAYWALLEN_SOCKET").map(PathBuf::from))
-        .unwrap_or_else(default_socket_path);
-    Args {
-        socket,
-        name_prefix,
-    }
-}
-
 fn default_socket_path() -> PathBuf {
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
@@ -112,100 +64,49 @@ fn default_socket_path() -> PathBuf {
 // Per-output state
 // ---------------------------------------------------------------------------
 
-/// Shared surface + protocol proxies a single output's UDS worker needs
-/// to attach frames. All proxies in wayland-client 0.31 are `Send + Sync`,
-/// so the worker thread can invoke requests freely; writes are serialized
-/// through the shared `Connection` and flushed explicitly.
-struct OutputBinding {
+pub struct OutputBinding {
     display_name: String,
     surface: WlSurface,
     dmabuf: ZwpLinuxDmabufV1,
     conn: Connection,
-    /// QueueHandle used for child proxies created from the worker
-    /// thread (frame callbacks, dmabuf params). Clone of the main
-    /// thread's queue handle.
     qh: QueueHandle<App>,
-    /// Global name of the owning `wl_output`. Used as user-data when
-    /// requesting frame callbacks so the main-thread Dispatch routes
-    /// the `Done` event back to the right `frame_pending` flag.
     output_name: u32,
-    /// Physical buffer size (logical × integer_scale) the daemon must
-    /// render at for 1:1 mapping on HiDPI. Populated on the first
-    /// layer_surface Configure; worker advertises this as the display
-    /// size when registering with the daemon.
     configured_size: Mutex<Option<(u32, u32)>>,
-    /// Logical surface size (from `zwlr_layer_surface_v1::configure`).
-    /// Used as the viewport destination so the compositor maps the
-    /// physical-size buffer onto the correct surface extent.
     logical_size: Mutex<Option<(u32, u32)>>,
-    /// Integer output scale from `wl_output::scale`. Defaults to 1;
-    /// updated before worker spawns (we roundtrip after bind so
-    /// output metadata has landed).
     scale: std::sync::atomic::AtomicI32,
-    /// Preferred fractional scale from `wp_fractional_scale_v1` in
-    /// 1/120 units. `0` means the protocol either isn't bound or
-    /// hasn't delivered `preferred_scale` yet — fall back to integer
-    /// `scale`. Computing physical = round(logical × scale / 120)
-    /// avoids the ceil-rounding error that produces 4096×2304 for a
-    /// 2560×1440 monitor at 1.25× (integer scale = 2 → over-allocates).
     fractional_scale_120: AtomicU32,
-    /// Optional `wp_viewport` — when bound, gives us explicit
-    /// source-rect/dest-rect mapping between buffer and surface
-    /// (handles HiDPI + `SetConfig` crop). Absent → fall back to
-    /// `wl_surface::set_buffer_scale`.
     viewport: Option<WpViewport>,
-    /// Set to `true` when the corresponding `wl_output` is removed at
-    /// runtime (hot-unplug). The worker checks before reconnect; the
-    /// main thread also `shutdown(2)`s the active stream so any
-    /// blocking `recv_event` returns immediately.
     closed: AtomicBool,
-    /// Most-recent live UDS connection. Worker stashes it after a
-    /// successful `connect`; cleared on session exit. Main thread
-    /// reads + shutdowns it on hot-unplug.
     stream: RwLock<Option<Arc<UnixStream>>>,
-    /// `true` while a `wl_callback::done` is outstanding. Set after
-    /// commit + frame(); cleared by the `WlCallback` Dispatch impl.
-    /// Gates whether the worker commits a new buffer (throttles to
-    /// compositor vblank) — `BufferRelease` is always sent so the
-    /// daemon keeps producing.
     frame_pending: AtomicBool,
-    /// Per-buffer-index FIFO of release_syncobj fds we've received
-    /// from the daemon and not yet signaled. Worker pushes on each
-    /// `frame_ready`; the main thread pops + SIGNALs in the
-    /// `WlBuffer::Release` Dispatch handler. Indexed by `buffer_index`
-    /// so a fan-out renderer (mpv/wescene) signals the right fence
-    /// when the compositor releases a specific slot. Vec is grown to
-    /// `count` when `bind_buffers` arrives.
     pending_release_fds: Mutex<Vec<VecDeque<OwnedFd>>>,
-    /// Live (fourcc → set of modifier) view of what the wlroots
-    /// compositor advertised over `zwp_linux_dmabuf_v1` v3
-    /// `format`/`modifier` events. Shared with the main thread; the
-    /// worker reads a snapshot when it sends `consumer_caps`. We
-    /// don't subscribe to feedback v4 yet — v3 broadcasts the full
-    /// table on bind, which is delivered before we open a UDS.
     dmabuf_caps: Arc<Mutex<BTreeMap<u32, BTreeSet<u64>>>>,
-    /// Set once the worker finished `RegisterDisplay` + `ConsumerCaps`.
-    /// Gates the main thread from sending `UpdateDisplay` mid-init.
     registered: AtomicBool,
-    /// Serializes wire writes — once the worker is past init the only
-    /// other writer is the main thread pushing `UpdateDisplay` on
-    /// `Configure`, but holding this protects against any future
-    /// concurrent senders too.
     send_lock: Mutex<()>,
-    /// Last `(width, height)` we successfully pushed via either
-    /// `RegisterDisplay` or `UpdateDisplay`. Skips no-op resends when
-    /// `Configure` repeats the same dims.
     last_pushed_size: Mutex<Option<(u32, u32)>>,
-    /// Compositor's main DRM render-node, sampled from
-    /// `App.compositor_drm_*` at binding creation. Reported in
-    /// `RegisterDisplay` so the daemon's DMA-BUF picker can match
-    /// renderer GPU == consumer GPU and take the optimized path.
     drm_render_major: u32,
     drm_render_minor: u32,
+    window_flags: AtomicU32,
 }
 
-/// One logical output — wl_output plus the layer_surface/UDS worker
-/// set we attached to it.
+impl OutputBinding {
+    pub fn display_name(&self) -> &str {
+        &self.display_name
+    }
+    pub fn window_flags(&self) -> &AtomicU32 {
+        &self.window_flags
+    }
+    pub fn is_registered(&self) -> bool {
+        self.registered.load(Ordering::SeqCst)
+    }
+    pub fn current_stream(&self) -> Option<Arc<UnixStream>> {
+        self.stream.read().unwrap().as_ref().cloned()
+    }
+    pub fn send_lock_guard(&self) -> MutexGuard<'_, ()> {
+        self.send_lock.lock().unwrap()
+    }
+}
+
 struct OutputEntry {
     wl_output: WlOutput,
     surface: Option<WlSurface>,
@@ -213,92 +114,35 @@ struct OutputEntry {
     viewport: Option<WpViewport>,
     binding: Option<Arc<OutputBinding>>,
     worker_started: bool,
-    /// Latest integer scale from `wl_output::scale`. Sampled into the
-    /// binding on first configure. `1` when the event hasn't fired.
     scale: i32,
-    /// Per-surface `wp_fractional_scale_v1`, when the compositor
-    /// advertised the manager global. Drops on hot-unplug.
     fractional_scale: Option<WpFractionalScaleV1>,
-    /// Latest `preferred_scale` in 1/120 units. `0` = not delivered
-    /// yet; the configure path falls back to integer `scale` until
-    /// the event arrives.
     fractional_scale_120: u32,
+    output_name_str: Option<String>,
 }
 
 struct App {
     compositor: Option<WlCompositor>,
     layer_shell: Option<ZwlrLayerShellV1>,
     dmabuf: Option<ZwpLinuxDmabufV1>,
-    /// Optional `wp_viewporter` — if the compositor exposes it, each
-    /// surface gets a viewport and we set explicit source/dest rects
-    /// every commit. Older compositors without it fall back to
-    /// `wl_surface::set_buffer_scale`.
     viewporter: Option<WpViewporter>,
-    /// Optional `wp_fractional_scale_manager_v1` — when present we
-    /// request a `wp_fractional_scale_v1` per surface and size the
-    /// buffer with the exact preferred scale instead of the integer
-    /// ceiling reported by `wl_output::scale`. Requires viewporter to
-    /// be useful (the buffer is sized in physical pixels and the
-    /// viewport maps it back onto the logical surface extent).
     fractional_scale_mgr: Option<WpFractionalScaleManagerV1>,
-    /// Default `zwp_linux_dmabuf_feedback_v1` (dmabuf v4+). Kept
-    /// alive so its `main_device` events keep landing if the
-    /// compositor reassigns mid-session. Decoded GPU is stored below.
     dmabuf_feedback: Option<ZwpLinuxDmabufFeedbackV1>,
-    /// Compositor's main DRM render-node, decoded from the dmabuf
-    /// feedback `main_device` event. `(0, 0)` = unknown — either the
-    /// compositor advertises dmabuf < v4 or the event hasn't fired
-    /// yet. Sampled into each `OutputBinding` at construction and
-    /// reported in `RegisterDisplay`, so the daemon's DMA-BUF picker
-    /// can detect that producer + consumer share a GPU and take the
-    /// `OptimizedSameDevice` path (native tiling + DEVICE_LOCAL)
-    /// instead of `CompatLinear` (LINEAR + cross-device pessimism).
     compositor_drm_major: u32,
     compositor_drm_minor: u32,
-    /// Format table delivered by `wp_linux_dmabuf_feedback_v1`. The
-    /// compositor writes a memfd containing 16-byte records:
-    /// `{u32 fourcc; u8 _pad[4]; u64 modifier}`. We read it once on
-    /// `format_table` and index into it from each `tranche_formats`
-    /// event. Empty when no feedback has been delivered (dmabuf < v4
-    /// or the compositor hasn't sent the table yet).
     dmabuf_format_table: Vec<(u32, u64)>,
-    /// Keyed by `wl_output` global name (u32). The same key is used as
-    /// Dispatch user-data for every per-output child proxy so events
-    /// find their owning entry in O(1).
     outputs: HashMap<u32, OutputEntry>,
     uds_sock: PathBuf,
     name_prefix: String,
-    /// (fourcc → modifier set) accumulated from
-    /// `zwp_linux_dmabuf_v1` v3 `format`/`modifier` events. Shared
-    /// with every `OutputBinding` so worker threads encode the
-    /// compositor's actual modifier set into `consumer_caps` instead
-    /// of a hardcoded LINEAR-only fallback.
     dmabuf_caps: Arc<Mutex<BTreeMap<u32, BTreeSet<u64>>>>,
-    /// One `wl_pointer` per `wl_seat`, lazily allocated on the seat's
-    /// `capabilities` event when it advertises the Pointer cap. Key is
-    /// the `wl_seat` global name; value is the current pointer +
-    /// per-pointer focus state. Compositor may add/remove the cap
-    /// dynamically — we mirror those transitions.
     pointers: HashMap<u32, PointerCtx>,
+    binding_registry: crate::hyprland_watcher::BindingRegistry,
 }
 
-/// Per-seat pointer focus state. We track which output (`wl_surface`)
-/// the pointer is over so we can forward `pointer_motion`/`button`/
-/// `axis` to the right output's UDS binding, and the latest surface
-/// coords so button/axis events (which don't carry coords) report a
-/// position consistent with the last motion.
 struct PointerCtx {
     pointer: WlPointer,
-    /// Owning `wl_output` global name of the surface the pointer is
-    /// currently inside, set from `Enter`'s surface user-data.
     focus_output: Option<u32>,
-    /// Logical surface coords from the most recent `Enter`/`Motion`.
     last_x: f64,
     last_y: f64,
-    /// Latest `axis_source` seen in the current frame. Wayland delivers
-    /// `axis_source` before the matching `axis` events; we cache it and
-    /// stamp every outgoing `pointer_axis` with the same source.
-    /// `0` (wheel) is the most common, matches the daemon's default.
     axis_source: u32,
 }
 
@@ -319,11 +163,10 @@ impl App {
             name_prefix,
             dmabuf_caps: Arc::new(Mutex::new(BTreeMap::new())),
             pointers: HashMap::new(),
+            binding_registry: crate::hyprland_watcher::new_registry(),
         }
     }
 
-    /// Create the `wl_surface` + layer_surface for a specific output.
-    /// Idempotent — skips outputs that already have their surface up.
     fn bring_up_surface(&mut self, output_name: u32, qh: &QueueHandle<App>) {
         let Some(entry) = self.outputs.get_mut(&output_name) else {
             return;
@@ -348,16 +191,10 @@ impl App {
         layer_surface.set_exclusive_zone(-1);
         layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer_surface.set_size(0, 0);
-        // If the compositor advertises wp_viewporter, attach a viewport
-        // to this surface so we can map arbitrary buffer regions to
-        // arbitrary surface extents (needed for HiDPI + SetConfig).
         let viewport = self
             .viewporter
             .as_ref()
             .map(|vp| vp.get_viewport(&surface, qh, output_name));
-        // wp_fractional_scale_v1 is per-surface — request it before
-        // commit so `preferred_scale` is delivered alongside the first
-        // configure (avoids one round of mis-sizing on startup).
         let fractional_scale = self
             .fractional_scale_mgr
             .as_ref()
@@ -370,8 +207,6 @@ impl App {
         log::info!("output {output_name}: layer_surface committed, waiting for configure");
     }
 
-    /// Spawn the per-output UDS worker once the compositor has
-    /// configured its layer_surface.
     fn maybe_spawn_worker(&mut self, output_name: u32) {
         let Some(entry) = self.outputs.get_mut(&output_name) else {
             return;
@@ -396,7 +231,9 @@ impl App {
     }
 }
 
-// --- Dispatch impls -------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Dispatch impls
+// ---------------------------------------------------------------------------
 
 impl Dispatch<WlRegistry, GlobalListContents> for App {
     fn event(
@@ -414,11 +251,6 @@ impl Dispatch<WlRegistry, GlobalListContents> for App {
                 interface,
                 version,
             } => {
-                // Runtime hot-plug: wl_output drives surface creation;
-                // wl_seat drives pointer attach (compositor may add a
-                // tablet/touchpad seat post-startup). Other singletons
-                // (compositor / dmabuf / layer_shell) don't appear
-                // post-startup in any sane setup.
                 if interface == "wl_output" {
                     if state.outputs.contains_key(&name) {
                         return;
@@ -436,6 +268,7 @@ impl Dispatch<WlRegistry, GlobalListContents> for App {
                             scale: 1,
                             fractional_scale: None,
                             fractional_scale_120: 0,
+                            output_name_str: None,
                         },
                     );
                     log::info!("hot-plug: wl_output name={name} added; bringing up surface");
@@ -452,18 +285,16 @@ impl Dispatch<WlRegistry, GlobalListContents> for App {
                 }
                 if let Some(entry) = state.outputs.remove(&name) {
                     log::info!("hot-unplug: wl_output name={name} removed");
-                    // Tear down the worker thread cooperatively:
-                    //   1. flip `closed` so the reconnect loop exits
-                    //      after its current session.
-                    //   2. if the worker is mid-session (blocked on
-                    //      `recv_event`), shutdown its UnixStream —
-                    //      the kernel unblocks the read and the
-                    //      session returns with an error.
                     if let Some(binding) = entry.binding.as_ref() {
                         binding.closed.store(true, Ordering::SeqCst);
                         if let Some(stream) = binding.stream.read().unwrap().clone() {
                             let _ = stream.shutdown(Shutdown::Both);
                         }
+                        state
+                            .binding_registry
+                            .lock()
+                            .unwrap()
+                            .remove(binding.display_name());
                     }
                     drop(entry);
                 }
@@ -494,9 +325,6 @@ impl Dispatch<WlSurface, u32> for App {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        // Enter/Leave and surface scale events ignored — the compositor
-        // drives layer-surface sizing via configure, and we don't care
-        // which seats hover us.
     }
 }
 
@@ -512,8 +340,6 @@ impl Dispatch<WlSeat, u32> for App {
         let seat_name = *data;
         match event {
             wl_seat::Event::Capabilities { capabilities } => {
-                // WEnum<Capability> — only Pointer matters; keyboard/
-                // touch don't drive the wallpaper.
                 let has_pointer = match capabilities {
                     wayland_client::WEnum::Value(c) => c.contains(wl_seat::Capability::Pointer),
                     _ => false,
@@ -563,7 +389,7 @@ impl Dispatch<WlPointer, u32> for App {
             } => {
                 let output_name = match surface.data::<u32>() {
                     Some(n) => *n,
-                    None => return, // surface from another protocol (cursor?)
+                    None => return,
                 };
                 if let Some(ctx) = state.pointers.get_mut(&seat_name) {
                     ctx.focus_output = Some(output_name);
@@ -645,10 +471,6 @@ impl Dispatch<WlPointer, u32> for App {
                     (out, ctx.last_x, ctx.last_y, ctx.axis_source)
                 };
                 let (x, y) = logical_to_physical(state, output_name, lx, ly);
-                // Wayland value is in fraction-of-pixel; for wheel sources
-                // one click = 10.0. Daemon expects "logical notches" =
-                // wayland / 10 for wheel; for finger/continuous we still
-                // forward in the same scale (renderer-side smoothing).
                 let delta = (value as f32) / 10.0;
                 let (dx, dy) = match axis {
                     wayland_client::WEnum::Value(wl_pointer::Axis::HorizontalScroll) => {
@@ -678,30 +500,19 @@ impl Dispatch<WlPointer, u32> for App {
                         wayland_client::WEnum::Value(wl_pointer::AxisSource::Wheel) => 0,
                         wayland_client::WEnum::Value(wl_pointer::AxisSource::Finger) => 1,
                         wayland_client::WEnum::Value(wl_pointer::AxisSource::Continuous) => 2,
-                        // WheelTilt and unknown sources fall back to wheel —
-                        // the daemon's renderer-side treatment doesn't have a
-                        // separate code for them.
                         _ => 0,
                     };
                 }
             }
-            _ => {} // Frame / AxisStop / AxisDiscrete / AxisValue120 ignored
+            _ => {}
         }
     }
 }
 
-/// Convert Wayland's monotonic-millisecond timestamp (u32 wraps every
-/// ~49.7 days) into the daemon's microsecond field. Truncation is fine
-/// since the daemon only uses it for input-event ordering, not absolute
-/// time; consumers that want monotonic absolute time stamp on receipt.
 fn ms_to_us(time_ms: u32) -> u64 {
     (time_ms as u64).saturating_mul(1000)
 }
 
-/// Scale logical surface coords up to physical buffer pixels. The
-/// daemon's `RegisterDisplay`/`UpdateDisplay` reports physical width/
-/// height, so pointer events must match the same coordinate space.
-/// Uses `fractional_scale_120` when available, else integer `scale`.
 fn logical_to_physical(state: &App, output_name: u32, lx: f64, ly: f64) -> (f32, f32) {
     let Some(entry) = state.outputs.get(&output_name) else {
         return (lx as f32, ly as f32);
@@ -718,10 +529,6 @@ fn logical_to_physical(state: &App, output_name: u32, lx: f64, ly: f64) -> (f32,
     ((lx * s) as f32, (ly * s) as f32)
 }
 
-/// Send a pointer request through the focused output's UDS stream.
-/// Silent no-op while the worker is mid-handshake (`registered=false`)
-/// — early-input arrivals at startup would otherwise race with the
-/// `Hello`/`RegisterDisplay` exchange.
 fn send_pointer_req(state: &App, output_name: u32, req: &ProtoRequest, label: &str) {
     let Some(entry) = state.outputs.get(&output_name) else {
         return;
@@ -757,11 +564,6 @@ impl Dispatch<WlBuffer, (u32, u32)> for App {
                 "wl_buffer {} (out={output_name} idx={buffer_index}) released",
                 buffer.id()
             );
-            // Pop the next pending release_syncobj fd for this slot
-            // and SIGNAL it. The daemon's reaper is waiting on this
-            // fd; once signaled, it TRANSFERs the fence onto the
-            // producer's release timeline so the producer can reuse
-            // the buffer for its next submit.
             let Some(binding) = state
                 .outputs
                 .get(&output_name)
@@ -783,11 +585,6 @@ impl Dispatch<WlBuffer, (u32, u32)> for App {
                     );
                 }
             } else {
-                // Either we received Release before any frame_ready
-                // (unlikely but legal — daemon may bind without
-                // immediately producing) or our fd queue ran dry
-                // because the daemon stopped producing. Either way
-                // there's nothing to signal.
                 log::trace!(
                     "[{}] Release(idx={buffer_index}) with empty pending fd queue",
                     binding.display_name
@@ -806,9 +603,6 @@ impl Dispatch<WlCallback, u32> for App {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        // Compositor signalled that it presented the last commit; it's
-        // safe to commit another buffer now. user_data carries the
-        // owning wl_output name so we target the right binding.
         if let wl_callback::Event::Done { .. } = event {
             let output_name = *data;
             if let Some(binding) = state
@@ -831,19 +625,24 @@ impl Dispatch<WlOutput, u32> for App {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        // Track the integer buffer scale so HiDPI outputs get a
-        // physically-sized buffer + viewporter mapping.
-        if let wl_output::Event::Scale { factor } = event {
-            let output_name = *data;
-            if let Some(entry) = state.outputs.get_mut(&output_name) {
-                entry.scale = factor.max(1);
-                if let Some(binding) = entry.binding.as_ref() {
-                    binding.scale.store(factor.max(1), Ordering::SeqCst);
+        let output_name = *data;
+        match event {
+            wl_output::Event::Scale { factor } => {
+                if let Some(entry) = state.outputs.get_mut(&output_name) {
+                    entry.scale = factor.max(1);
+                    if let Some(binding) = entry.binding.as_ref() {
+                        binding.scale.store(factor.max(1), Ordering::SeqCst);
+                    }
                 }
             }
+            wl_output::Event::Name { name } => {
+                if let Some(entry) = state.outputs.get_mut(&output_name) {
+                    log::info!("output {output_name}: wl_output.name = {name:?}");
+                    entry.output_name_str = Some(name);
+                }
+            }
+            _ => {}
         }
-        // Output metadata (Name/Geometry/Mode/Done) is informational;
-        // the layer_surface's own Configure event is authoritative.
     }
 }
 
@@ -856,20 +655,6 @@ impl Dispatch<ZwpLinuxDmabufFeedbackV1, ()> for App {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        // dmabuf v4 deprecates the v1.format / v1.modifier broadcasts
-        // and delivers the format/modifier set + GPU identity via this
-        // feedback object instead. Compositors built on smithay
-        // (COSMIC) stop emitting v3 events once a client binds at v4,
-        // so we MUST ingest everything from here. Events:
-        //   - main_device(dev): the compositor's main render-node.
-        //   - format_table(fd, size): one-shot memfd of (fourcc, mod)
-        //     records. We index into this from tranche_formats.
-        //   - tranche_target_device(dev): which GPU the next
-        //     tranche_formats applies to. We accept all tranches —
-        //     the daemon's picker filters at negotiation time.
-        //   - tranche_formats(indices): u16 indices into format_table.
-        //   - tranche_flags(uint): scanout/etc; ignored for our path.
-        //   - tranche_done / done: terminators; informational.
         match event {
             zwp_linux_dmabuf_feedback_v1::Event::MainDevice { device } => {
                 if device.len() < 8 {
@@ -882,9 +667,6 @@ impl Dispatch<ZwpLinuxDmabufFeedbackV1, ()> for App {
                 let mut buf = [0u8; 8];
                 buf.copy_from_slice(&device[..8]);
                 let dev = u64::from_ne_bytes(buf);
-                // glibc dev_t encoding (gnu_dev_major / gnu_dev_minor):
-                //   major = ((dev >> 8) & 0xfff) | ((dev >> 32) & ~0xfff)
-                //   minor = (dev & 0xff)         | ((dev >> 12) & ~0xff)
                 let major = (((dev >> 8) & 0xfff) | ((dev >> 32) & !0xfff_u64)) as u32;
                 let minor = ((dev & 0xff) | ((dev >> 12) & !0xff_u64)) as u32;
                 log::info!(
@@ -896,14 +678,6 @@ impl Dispatch<ZwpLinuxDmabufFeedbackV1, ()> for App {
             zwp_linux_dmabuf_feedback_v1::Event::FormatTable { fd, size } => {
                 let size = size as usize;
                 let mut bytes = vec![0u8; size];
-                // Read at absolute offset 0 (`pread`), NOT a sequential
-                // `read` — the compositor sends one memfd to every
-                // client via SCM_RIGHTS, and they all share the same
-                // `f_pos`. If a prior client (or the compositor's own
-                // write) left the cursor at EOF, sequential reads
-                // return zero bytes → tranche_formats fires before any
-                // table data lands → fallback to LINEAR. Positional
-                // reads are unaffected.
                 let file = std::fs::File::from(fd);
                 if let Err(e) = file.read_exact_at(&mut bytes, 0) {
                     log::warn!("dmabuf_feedback: format_table read failed: {e}");
@@ -911,15 +685,13 @@ impl Dispatch<ZwpLinuxDmabufFeedbackV1, ()> for App {
                 }
                 if size % 16 != 0 {
                     log::warn!(
-                        "dmabuf_feedback: format_table size={size} is not a multiple of 16 \
-                         (record size); truncating"
+                        "dmabuf_feedback: format_table size={size} is not a multiple of 16; truncating"
                     );
                 }
                 let entries: Vec<(u32, u64)> = bytes
                     .chunks_exact(16)
                     .map(|c| {
                         let fourcc = u32::from_ne_bytes(c[0..4].try_into().unwrap());
-                        // bytes 4..8 are padding
                         let modifier = u64::from_ne_bytes(c[8..16].try_into().unwrap());
                         (fourcc, modifier)
                     })
@@ -963,9 +735,7 @@ impl Dispatch<ZwpLinuxDmabufFeedbackV1, ()> for App {
             }
             zwp_linux_dmabuf_feedback_v1::Event::TrancheTargetDevice { .. }
             | zwp_linux_dmabuf_feedback_v1::Event::TrancheFlags { .. }
-            | zwp_linux_dmabuf_feedback_v1::Event::TrancheDone => {
-                // Informational. We accept formats from every tranche.
-            }
+            | zwp_linux_dmabuf_feedback_v1::Event::TrancheDone => {}
             zwp_linux_dmabuf_feedback_v1::Event::Done => {
                 let count: usize = state
                     .dmabuf_caps
@@ -992,7 +762,6 @@ impl Dispatch<WpFractionalScaleManagerV1, ()> for App {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        // wp_fractional_scale_manager_v1 emits no events.
     }
 }
 
@@ -1012,16 +781,12 @@ impl Dispatch<WpFractionalScaleV1, u32> for App {
             };
             entry.fractional_scale_120 = scale;
             let Some(binding) = entry.binding.as_ref() else {
-                // No layer_surface configure yet — the configure path
-                // will read entry.fractional_scale_120 when it runs.
                 log::info!(
                     "output {output_name}: preferred_scale={scale}/120 (cached, pre-configure)"
                 );
                 return;
             };
             binding.fractional_scale_120.store(scale, Ordering::SeqCst);
-            // If we've already been configured, recompute physical and
-            // push UpdateDisplay so the daemon resizes its buffer pool.
             let logical = *binding.logical_size.lock().unwrap();
             let Some((lw, lh)) = logical else {
                 return;
@@ -1084,8 +849,6 @@ impl Dispatch<ZwlrLayerSurfaceV1, u32> for App {
             } => {
                 layer_surface.ack_configure(serial);
                 log::info!("output {output_name}: layer_surface configure {width}x{height}");
-                // Ensure the per-output OutputBinding exists, then
-                // record the size and kick the worker.
                 let Some(entry) = state.outputs.get_mut(&output_name) else {
                     log::warn!("configure for unknown output_name={output_name}");
                     return;
@@ -1096,8 +859,12 @@ impl Dispatch<ZwlrLayerSurfaceV1, u32> for App {
                         .clone()
                         .expect("configure before surface created");
                     let dmabuf = state.dmabuf.clone().expect("configure before dmabuf bind");
+                    let display_name = match entry.output_name_str.as_deref() {
+                        Some(n) if !n.is_empty() => n.to_string(),
+                        _ => format!("{}-{}", state.name_prefix, output_name),
+                    };
                     Arc::new(OutputBinding {
-                        display_name: format!("{}-{}", state.name_prefix, output_name),
+                        display_name,
                         surface,
                         dmabuf,
                         conn: conn.clone(),
@@ -1118,19 +885,13 @@ impl Dispatch<ZwlrLayerSurfaceV1, u32> for App {
                         last_pushed_size: Mutex::new(None),
                         drm_render_major: state.compositor_drm_major,
                         drm_render_minor: state.compositor_drm_minor,
+                        window_flags: AtomicU32::new(0),
                     })
                 });
-                // `width` / `height` from `configure` are in *logical*
-                // (surface-local) coordinates. Compute the physical
-                // buffer size:
-                //   * If wp_fractional_scale_v1 has delivered a
-                //     preferred_scale AND we have viewporter to map the
-                //     buffer back, use `logical × scale/120` (rounded).
-                //     This matches the compositor's actual fractional
-                //     scale — e.g. 2048×1152 logical @ 1.25× → 2560×1440.
-                //   * Otherwise fall back to `logical × integer_scale`.
-                //     This ceil-rounds (1.25× → 2) and over-allocates,
-                //     but it's the only safe option without viewporter.
+                {
+                    let mut reg = state.binding_registry.lock().unwrap();
+                    reg.insert(binding.display_name().to_string(), binding.clone());
+                }
                 let scale = entry.scale.max(1);
                 binding.scale.store(scale, Ordering::SeqCst);
                 let f120 = entry.fractional_scale_120;
@@ -1151,16 +912,12 @@ impl Dispatch<ZwlrLayerSurfaceV1, u32> for App {
                 *binding.configured_size.lock().unwrap() = Some(physical);
                 if physical != (width, height) {
                     log::info!(
-                        "output {output_name}: logical {width}x{height} → physical {}x{} (fractional_scale_120={f120}, integer_scale={scale})",
+                        "output {output_name}: logical {width}x{height} → physical {}x{} \
+                         (fractional_scale_120={f120}, integer_scale={scale})",
                         physical.0,
                         physical.1
                     );
                 }
-                // If the worker is already past RegisterDisplay, push
-                // the new physical size to the daemon so fillmode/align
-                // recompute under the new disp dims. First Configure
-                // (worker not yet spawned) is handled by the upcoming
-                // RegisterDisplay carrying these same dims.
                 let arc_binding = binding.clone();
                 if let Err(e) = push_resize_if_registered(&arc_binding, physical) {
                     log::warn!("output {output_name}: push update_display failed: {e}");
@@ -1192,16 +949,6 @@ impl Dispatch<ZwpLinuxDmabufV1, ()> for App {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        // v3 advertises every (fourcc, modifier) the compositor
-        // accepts via two event streams:
-        //   - `format { format }` — a fourcc supported with implicit
-        //     modifier only.
-        //   - `modifier { format, modifier_hi, modifier_lo }` —
-        //     explicit modifier table; sent for every supported
-        //     (fourcc, modifier) including LINEAR.
-        // We accumulate both into `dmabuf_caps`. Implicit-only fourccs
-        // get a synthetic LINEAR entry so the modifier list is never
-        // empty for a fourcc the compositor mentioned at all.
         match e {
             zwp_linux_dmabuf_v1::Event::Format { format } => {
                 if let Ok(mut g) = state.dmabuf_caps.lock() {
@@ -1249,7 +996,6 @@ impl Dispatch<WpViewporter, ()> for App {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        // wp_viewporter has no events.
     }
 }
 
@@ -1262,18 +1008,14 @@ impl Dispatch<WpViewport, u32> for App {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        // wp_viewport has no events.
     }
 }
 
 // ---------------------------------------------------------------------------
-// UDS worker — one per output, each an independent daemon display.
+// UDS worker — one per output
 // ---------------------------------------------------------------------------
 
 fn uds_worker_loop(sock: PathBuf, binding: Arc<OutputBinding>) {
-    // Exponential backoff to ride out daemon/renderer crash loops without
-    // burning fds. Sessions that survive past STABLE_RESET reset to the
-    // initial delay; short-lived ones double up to MAX.
     const INITIAL: Duration = Duration::from_secs(2);
     const MAX: Duration = Duration::from_secs(30);
     const STABLE_RESET: Duration = Duration::from_secs(20);
@@ -1286,19 +1028,9 @@ fn uds_worker_loop(sock: PathBuf, binding: Arc<OutputBinding>) {
         let started = std::time::Instant::now();
         let res = run_uds_session(&sock, &binding);
         let lived = started.elapsed();
-        // Always clear the active stream slot on session exit so the
-        // hot-unplug path doesn't shutdown a stale fd on the next
-        // connection.
         binding.stream.write().unwrap().take();
         binding.registered.store(false, Ordering::SeqCst);
         binding.last_pushed_size.lock().unwrap().take();
-        // Drop any release_syncobj fds still queued from the dying
-        // session — the compositor will never deliver wl_buffer.Release
-        // for these (the wl_surface state is being torn down), so the
-        // OwnedFds would otherwise leak and eventually exhaust
-        // RLIMIT_NOFILE (manifests as `recv event: ENOBUFS` because the
-        // kernel can't install incoming SCM_RIGHTS fds, then EMFILE on
-        // the next `connect`).
         {
             let mut g = binding.pending_release_fds.lock().unwrap();
             g.clear();
@@ -1328,12 +1060,6 @@ fn uds_worker_loop(sock: PathBuf, binding: Arc<OutputBinding>) {
     }
 }
 
-/// Main-thread call from `Configure`: if the worker has finished
-/// `RegisterDisplay`, send `UpdateDisplay` with the new physical dims.
-/// Skips if the worker hasn't connected yet, isn't past register, or
-/// the size matches what was last pushed. Worker spawn time + the
-/// post-handshake catch-up in `run_uds_session` cover the gap when
-/// `registered` is still false.
 fn push_resize_if_registered(binding: &Arc<OutputBinding>, physical: (u32, u32)) -> Result<()> {
     if !binding.registered.load(Ordering::SeqCst) {
         return Ok(());
@@ -1372,8 +1098,6 @@ fn push_resize_if_registered(binding: &Arc<OutputBinding>, physical: (u32, u32))
 fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
     let stream =
         Arc::new(UnixStream::connect(sock).with_context(|| format!("connect {}", sock.display()))?);
-    // Publish the live stream so the main thread can `shutdown(2)` it
-    // on hot-unplug — that unblocks the blocking `recv_event` below.
     *binding.stream.write().unwrap() = Some(stream.clone());
     let stream: &UnixStream = &stream;
     log::info!(
@@ -1385,7 +1109,7 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
     {
         let _g = binding.send_lock.lock().unwrap();
         codec::send_request(
-            &stream,
+            stream,
             &ProtoRequest::Hello {
                 protocol: PROTOCOL_NAME.to_string(),
                 client_name: binding.display_name.clone(),
@@ -1396,7 +1120,7 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
         )
         .map_err(|e| anyhow!("send hello: {e}"))?;
     }
-    let (welcome, _) = codec::recv_event(&stream).map_err(|e| anyhow!("recv welcome: {e}"))?;
+    let (welcome, _) = codec::recv_event(stream).map_err(|e| anyhow!("recv welcome: {e}"))?;
     match welcome {
         ProtoEvent::Welcome { features, .. } => {
             if !features.iter().any(|s| s == "explicit_sync_fd") {
@@ -1415,21 +1139,13 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
     {
         let _g = binding.send_lock.lock().unwrap();
         codec::send_request(
-            &stream,
+            stream,
             &ProtoRequest::RegisterDisplay {
                 name: binding.display_name.clone(),
-                // layer-shell is a "system" backend with no per-DE
-                // persistent storage of its own; it always sends empty
-                // and the daemon falls back to keying settings by name.
                 instance_id: String::new(),
                 width,
                 height,
                 refresh_mhz: 60_000,
-                // Sourced from `wp_linux_dmabuf_feedback_v1::main_device`
-                // (v4+). `(0, 0)` when the compositor advertises dmabuf
-                // < v4 — the daemon then falls back to its UNKNOWN path
-                // (CompatLinear + HOST_VISIBLE), same behavior as before
-                // this fix.
                 drm_render_major: binding.drm_render_major,
                 drm_render_minor: binding.drm_render_minor,
                 properties: Vec::new(),
@@ -1441,35 +1157,13 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
     *binding.last_pushed_size.lock().unwrap() = Some((width, height));
 
     let display_id =
-        match codec::recv_event(&stream).map_err(|e| anyhow!("recv display_accepted: {e}"))? {
+        match codec::recv_event(stream).map_err(|e| anyhow!("recv display_accepted: {e}"))? {
             (ProtoEvent::DisplayAccepted { display_id }, _) => display_id,
             (other, _) => bail!("expected display_accepted, got opcode {}", other.opcode()),
         };
 
-    // Modifier-negotiation v2 caps. layer-shell hands each dma-buf
-    // to the wayland compositor; the compositor imports on whatever
-    // GPU it owns, so the authoritative per-modifier feedback is
-    // what the compositor advertised over `zwp_linux_dmabuf_v1` v3.
-    // We snapshot the live (fourcc → modifier set) map captured by
-    // the App's dmabuf Dispatch impl and forward the whole thing.
-    //
-    // Empty map means the compositor exposed dmabuf v3 but never
-    // delivered any format/modifier event — extremely unusual but
-    // possible if the roundtrip ordering misses them. Fall back to
-    // the legacy ABGR/XRGB + LINEAR pair so the daemon still has a
-    // viable cross-vendor scheme.
-    //
-    // device_uuid stays zeros; the picker falls back to the DRM node
-    // (also zero — see register_display above), so this consumer is
-    // treated as "unknown device" and forces HOST_VISIBLE on every
-    // renderer. Wlroots dmabuf-feedback v4 would expose a main_device
-    // we could thread through here — left as a follow-up.
     {
         use waywallen::dma::negotiate as N;
-        // Flatten dmabuf_caps directly into the wire-format parallel
-        // arrays under a single lock acquisition. usages/plane_counts
-        // are constant per-modifier here, so bulk-fill them with
-        // vec![v; n] instead of pushing in the inner loop.
         let flat = {
             let guard = binding.dmabuf_caps.lock().unwrap();
             if guard.is_empty() {
@@ -1515,35 +1209,16 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
         };
         let _g = binding.send_lock.lock().unwrap();
         codec::send_request(
-            &stream,
+            stream,
             &ProtoRequest::ConsumerCaps {
                 fourccs,
                 mod_counts,
                 modifiers,
                 plane_counts,
-                // Vulkan device UUID isn't exposed by the dmabuf v4
-                // feedback protocol (`main_device` carries dev_t, not a
-                // UUID). Leave the UUID empty and let the picker's
-                // `same_device` check fall through to DRM major:minor
-                // matching — which now works because we populate
-                // drm_render_* below.
                 device_uuid: vec![0, 0, 0, 0],
                 driver_uuid: vec![0, 0, 0, 0],
-                // Critical: the daemon's negotiator builds the consumer
-                // `PeerCaps` from THIS message, not `RegisterDisplay`.
-                // Reporting 0:0 here defeats the picker's same-device
-                // check (DrmNode::UNKNOWN) and forces CompatLinear even
-                // when both peers are on the same physical GPU.
                 drm_render_major: binding.drm_render_major,
                 drm_render_minor: binding.drm_render_minor,
-                // The helper hands the dmabuf fd straight to the
-                // Wayland compositor; we never touch the memory
-                // ourselves. Advertise both so the picker can pick
-                // DEVICE_LOCAL when the renderer also supports it —
-                // see `pick_mem_hint_same_dev` (negotiate.rs:580).
-                // HOST_VISIBLE forces UMA-bandwidth-heavy transfers
-                // every frame on iGPUs; DEVICE_LOCAL keeps the buffer
-                // in tiled GPU memory across producer→compositor.
                 mem_hints: N::MEM_HINT_DEVICE_LOCAL | N::MEM_HINT_HOST_VISIBLE,
                 sync_caps: N::SYNC_SYNCOBJ_TIMELINE | N::SYNC_SYNCOBJ_BINARY,
                 color_caps: N::DEFAULT_COLOR,
@@ -1562,16 +1237,12 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
 
     binding.registered.store(true, Ordering::SeqCst);
 
-    // Reconcile: a Configure may have arrived with a new size while we
-    // were finishing the handshake; the main thread's push would have
-    // been dropped because `registered` was still false. Diff against
-    // last_pushed_size and emit one UpdateDisplay if needed.
     let latest = *binding.configured_size.lock().unwrap();
     if let Some(latest) = latest {
         if latest != (width, height) {
             let _g = binding.send_lock.lock().unwrap();
             codec::send_request(
-                &stream,
+                stream,
                 &ProtoRequest::UpdateDisplay {
                     width: latest.0,
                     height: latest.1,
@@ -1591,29 +1262,16 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
     }
 
     let mut gen: Option<u64> = None;
-    // Pool destroys every wl_buffer on drop. Without this, each session
-    // (or each new BindBuffers within a session) leaks compositor-side
-    // dma-buf imports — the proxy goes away but the wl_buffer object
-    // persists, holding fds in the compositor process. Over many
-    // reconnects the compositor's fd table is the next thing to blow.
     let mut pool = ManagedPool::default();
     let mut buf_width: u32 = width;
     let mut buf_height: u32 = height;
-    let mut frames_presented: u64 = 0;
-    // Latest SetConfig values, applied on each FrameReady commit.
-    // Source is in raw buffer (renderer texture) coords; transform is the
-    // wl_output::transform enum index. The daemon's dest_rect is in
-    // eff_disp coords and currently always full-screen — the layer
-    // surface fills the configured logical size, so we use that
-    // directly and don't cache dest.
     let mut cfg_source: Option<(f32, f32, f32, f32)> = None;
     let mut cfg_transform: u32 = 0;
-    // Set once on first SetConfig (or first FrameReady with defaults)
-    // so we only call `set_buffer_transform` when it actually changes.
     let mut transform_dirty: bool = true;
 
     loop {
-        let (evt, mut fds) = codec::recv_event(&stream).map_err(|e| anyhow!("recv event: {e}"))?;
+        let (evt, mut fds) =
+            codec::recv_event(stream).map_err(|e| anyhow!("recv event: {e}"))?;
         match evt {
             ProtoEvent::BindBuffers {
                 buffer_generation,
@@ -1633,7 +1291,8 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
                 }
                 if stride.len() != expected || plane_offset.len() != expected {
                     bail!(
-                        "bind_buffers stride/offset arrays size mismatch (expected {}, stride={}, offset={})",
+                        "bind_buffers stride/offset arrays size mismatch \
+                         (expected {}, stride={}, offset={})",
                         expected,
                         stride.len(),
                         plane_offset.len()
@@ -1652,19 +1311,10 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
                     fds,
                 )
                 .context("import DMA-BUFs")?;
-                // Replace pool — old buffers get destroyed via Drop.
                 pool = ManagedPool(new_pool);
                 gen = Some(buffer_generation);
                 buf_width = bw;
                 buf_height = bh;
-                // Reset the per-slot release_syncobj fd queues. Any
-                // pending fds from a prior generation belong to retired
-                // wl_buffers the compositor will never Release; drop
-                // them now (kernel DESTROY) so we don't keep them
-                // around forever. The producer's release timeline is
-                // also a per-renderer object, so dropped points are
-                // benign — its next submit waits on the new
-                // generation's points only.
                 {
                     let mut g = binding.pending_release_fds.lock().unwrap();
                     g.clear();
@@ -1708,29 +1358,12 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
                 buffer_index,
                 seq,
             } => {
-                // fds = [acquire_sync_fd, release_syncobj_fd]
-                //   - acquire fence: dropped here (close); the compositor's
-                //     own zwp_linux_drm_syncobj integration handles real
-                //     acquire sync (or it's implicit via dma-fence on
-                //     the buffer).
-                //   - release syncobj: queued under `buffer_index`. The
-                //     `WlBuffer::Release` Dispatch handler will pop +
-                //     SIGNAL when the compositor reports it's done
-                //     reading. This is the correct semantic point — the
-                //     producer's reuse of this slot now waits on
-                //     "compositor finished" rather than the racy
-                //     "client received frame_ready".
                 if fds.len() == 2 {
                     let release_fd = fds.remove(1);
                     let mut q = binding.pending_release_fds.lock().unwrap();
                     if let Some(slot) = q.get_mut(buffer_index as usize) {
                         slot.push_back(release_fd);
                     } else {
-                        // Buffer index out of range for current
-                        // generation — daemon protocol bug or rebind
-                        // race. Signal immediately so the reaper
-                        // doesn't deadlock waiting on a syncobj that
-                        // will never fire.
                         log::warn!(
                             "[{}] frame_ready idx={buffer_index} out of range \
                              ({}); signaling release_syncobj eagerly",
@@ -1755,58 +1388,16 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
                         gen
                     );
                 } else if let Some(buffer) = pool.get(buffer_index as usize) {
-                    // Commit every FrameReady. A previous version
-                    // gated commits on `frame_pending` (cleared by the
-                    // compositor's `wl_callback.done` reply), which is
-                    // the conventional throttle for interactive clients
-                    // that want their producer-side rendering aligned
-                    // to compositor vsync. For a wallpaper layer that
-                    // pattern is wrong:
-                    //   * Producer rate is set by the source video,
-                    //     not the compositor.
-                    //   * COSMIC delivers `wl_callback.done` to
-                    //     layer-shell wallpaper surfaces at very
-                    //     different cadences per output — observed
-                    //     ~6 Hz on a 4K output vs ~18 Hz on a 2K
-                    //     output. The slower output's frame_pending
-                    //     stayed true between FrameReadys, every
-                    //     commit got skipped, the orphaned
-                    //     release_syncobj fds piled up in
-                    //     pending_release_fds, and the daemon's
-                    //     reaper had to force-signal at WAIT_TIMEOUT
-                    //     (~1 Hz) — capping the entire pipeline.
-                    // mpv / gstreamer wlsink commit every frame and
-                    // let the compositor coalesce excess. We do the
-                    // same. `frame_pending` is kept (informational,
-                    // available for future heuristics) but is no
-                    // longer a gate.
                     {
                         binding.surface.attach(Some(buffer), 0, 0);
 
-                        // Map buffer → surface via wp_viewporter when
-                        // available. Source defaults to the full buffer;
-                        // SetConfig can crop. Destination defaults to
-                        // the logical surface size; SetConfig can shrink.
-                        let src_pre =
+                        // cfg_source is in pre-transform (raw buffer) coords.
+                        // Hyprland validates set_source against pre-transform dims,
+                        // so we pass cfg_source directly and never call
+                        // set_buffer_transform with a non-zero value — doing so would
+                        // cause "Box doesn't fit" protocol errors on rotated configs.
+                        let src =
                             cfg_source.unwrap_or((0.0, 0.0, buf_width as f32, buf_height as f32));
-                        // The daemon computes source in pre-rotation buffer (renderer
-                        // texture) coords. After set_buffer_transform, wp_viewport.set_source
-                        // is in POST-transform coords, with the buffer's effective dims
-                        // swapped for transform=1/3. Passing raw coords trips out_of_buffer
-                        // on rotated configs → surface dies → process exits → respawn loop.
-                        let src = rotate_rect_pre_to_post(
-                            src_pre,
-                            buf_width as f32,
-                            buf_height as f32,
-                            cfg_transform,
-                        );
-                        // The layer surface is screen-aligned and anchored to all 4 edges,
-                        // so it always covers the logical screen size regardless of buffer
-                        // rotation. set_destination takes surface-local logical coords —
-                        // use the configure'd logical size directly. The daemon's dest_rect
-                        // is in eff_disp coords (swapped under rotation, physical pixels);
-                        // converting it would yield the same value for full-screen layouts
-                        // anyway, and there is no way to draw to a sub-rect of a layer.
                         let logical = binding
                             .logical_size
                             .lock()
@@ -1815,37 +1406,28 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
                         let dest = (logical.0 as f32, logical.1 as f32);
 
                         if let Some(vp) = binding.viewport.as_ref() {
-                            // wayland-scanner maps `fixed` args to f64.
                             vp.set_source(src.0 as f64, src.1 as f64, src.2 as f64, src.3 as f64);
                             vp.set_destination(dest.0 as i32, dest.1 as i32);
                         } else {
-                            // Fallback: tell the compositor the buffer
-                            // is scale× larger than the surface.
                             let scale = binding.scale.load(Ordering::SeqCst);
                             if scale > 1 {
                                 binding.surface.set_buffer_scale(scale);
                             }
                         }
 
-                        // Transform — only re-emit when changed.
                         if transform_dirty {
                             binding
                                 .surface
-                                .set_buffer_transform(map_transform(cfg_transform));
+                                .set_buffer_transform(Transform::Normal);
                             transform_dirty = false;
                         }
 
                         binding
                             .surface
                             .damage_buffer(0, 0, buf_width as i32, buf_height as i32);
-                        // Request a frame callback *before* committing
-                        // so the callback is tied to this surface
-                        // state. user_data = output_name so the
-                        // Dispatch impl can find the right binding.
                         binding.surface.frame(&binding.qh, binding.output_name);
                         binding.frame_pending.store(true, Ordering::SeqCst);
                         binding.surface.commit();
-                        frames_presented += 1;
                         if let Err(e) = binding.conn.flush() {
                             log::warn!("[{}] wayland flush failed: {e}", binding.display_name);
                         }
@@ -1859,12 +1441,6 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
                     );
                 }
 
-                // TODO(release-syncobj): import the release_syncobj fd
-                // from `fds[1]` as a drm_syncobj, hook into wl_buffer.release
-                // for this slot, and signal the syncobj from there. v1
-                // dropped the BufferRelease request — the syncobj signal
-                // IS the release. For now both fds are dropped above and
-                // the daemon's placeholder reaper does not block on them.
                 let _ = (g, buffer_index, seq);
             }
             ProtoEvent::Unbind {
@@ -1876,9 +1452,6 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
                         binding.display_name,
                         pool.len()
                     );
-                    // Reassign so Drop destroys every wl_buffer instead
-                    // of just clearing the Vec (which would leak the
-                    // compositor-side objects).
                     pool = ManagedPool::default();
                     gen = None;
                 }
@@ -1891,13 +1464,6 @@ fn run_uds_session(sock: &Path, binding: &OutputBinding) -> Result<()> {
     }
 }
 
-/// Turn daemon-supplied DMA-BUF fds + per-plane metadata into a pool of
-/// `wl_buffer`s via `zwp_linux_buffer_params_v1::create_immed`.
-/// Map the daemon's `transform` u32 (matching `wl_output::transform`
-/// semantics per `protocol/waywallen_display_v1.xml`) to the
-/// wayland-client enum. Unknown values fall back to `Normal` rather
-/// than erroring — the daemon owns the protocol and invalid values
-/// would break far bigger things.
 fn map_transform(t: u32) -> Transform {
     match t {
         0 => Transform::Normal,
@@ -1912,8 +1478,6 @@ fn map_transform(t: u32) -> Transform {
     }
 }
 
-/// Owning pool of imported wl_buffers. On drop, every buffer is
-/// destroyed so the compositor-side dma-buf import is released.
 #[derive(Default)]
 struct ManagedPool(Vec<WlBuffer>);
 
@@ -1932,11 +1496,6 @@ impl std::ops::Deref for ManagedPool {
     }
 }
 
-/// Map a rect from pre-buffer_transform (raw buffer / texture) coords
-/// to the post-buffer_transform coord system wp_viewport.set_source
-/// expects. `ref_w`/`ref_h` are the raw buffer dims. Only the 4
-/// non-flipped wl_output.transform values are supported (the daemon
-/// never produces the flipped variants).
 fn rotate_rect_pre_to_post(
     (x, y, w, h): (f32, f32, f32, f32),
     ref_w: f32,
@@ -1963,17 +1522,7 @@ fn import_dmabufs(
     plane_offset: &[u32],
     fds: Vec<OwnedFd>,
 ) -> Result<Vec<WlBuffer>> {
-    // Use the main thread's QueueHandle (cloned on the binding) so
-    // wl_buffer events — crucially `Release` — land on the queue that
-    // the main thread actually polls. A previous version created a
-    // throwaway event_queue here and dropped it at function end,
-    // which silently routed every `Release` event into a dead queue:
-    // the helper never signaled the release_syncobj, the daemon's
-    // reaper timed out every wait point ("wait point N timed out /
-    // errored (Timer expired); force-signaling stragglers" at ~1 Hz),
-    // and the producer was throttled to a 1 fps pipeline.
     let qh = &binding.qh;
-
     let mut buffers = Vec::with_capacity(count as usize);
     for b in 0..count as usize {
         let params = binding.dmabuf.create_params(qh, ());
@@ -1997,9 +1546,6 @@ fn import_dmabufs(
             fourcc,
             zwp_linux_buffer_params_v1::Flags::empty(),
             qh,
-            // (output_name, buffer_index) — Dispatch::<WlBuffer> uses
-            // these to route the Release event back to the right
-            // binding's pending_release_fds queue.
             (binding.output_name, b as u32),
         );
         buffers.push(buffer);
@@ -2008,24 +1554,81 @@ fn import_dmabufs(
     Ok(buffers)
 }
 
+fn signal_release_syncobj(fd: std::os::fd::OwnedFd) -> anyhow::Result<()> {
+    use waywallen::sync::drm_device;
+    let dev = drm_device().context("open DRM render node")?;
+    let handle = dev
+        .fd_to_handle(&fd)
+        .context("DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE")?;
+    dev.signal(&handle).context("DRM_IOCTL_SYNCOBJ_SIGNAL")?;
+    drop(handle);
+    drop(fd);
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
-// main
+// Entry point
 // ---------------------------------------------------------------------------
 
-fn main() -> Result<()> {
+/// Run the layer-shell display backend. Connects to the Wayland compositor
+/// and the daemon's UDS display socket, registers each output as a display.
+/// Blocks until the compositor disconnects or an unrecoverable error occurs.
+fn usage() -> ! {
+    eprintln!(
+        "usage: waywallen-display-layer-shell [--socket PATH] [--name STR]\n\
+         \n\
+         Environment:\n\
+           WAYWALLEN_SOCKET   fallback UDS path when --socket is omitted\n\
+           WAYLAND_DISPLAY    required — picks the compositor to attach to"
+    );
+    std::process::exit(2);
+}
+
+fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    let args = parse_args();
 
+    let mut socket: Option<PathBuf> = None;
+    let mut name_prefix = String::from("output");
+    let mut it = std::env::args().skip(1);
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--socket" => {
+                socket = it.next().map(PathBuf::from);
+                if socket.is_none() {
+                    eprintln!("--socket requires a value");
+                    usage();
+                }
+            }
+            "--name" => {
+                name_prefix = it.next().unwrap_or_else(|| {
+                    eprintln!("--name requires a value");
+                    usage();
+                });
+            }
+            "-h" | "--help" => usage(),
+            other => {
+                eprintln!("unknown argument: {other}");
+                usage();
+            }
+        }
+    }
+    let socket = socket
+        .or_else(|| std::env::var_os("WAYWALLEN_SOCKET").map(PathBuf::from))
+        .unwrap_or_else(default_socket_path);
+
+    run(socket, name_prefix)
+}
+
+fn run(socket: PathBuf, name_prefix: String) -> anyhow::Result<()> {
     let conn = Connection::connect_to_env()
         .context("connect to WAYLAND_DISPLAY — are you running under a Wayland compositor?")?;
     let (globals, mut queue) = registry_queue_init::<App>(&conn).context("registry init")?;
     let qh: QueueHandle<App> = queue.handle();
 
-    let mut app = App::new(args.socket, args.name_prefix);
+    let mut app = App::new(socket, name_prefix);
 
-    // Bind every global we care about. Outputs are collected into the
-    // App's `outputs` map keyed by global name; every per-output child
-    // proxy carries that name as Dispatch user-data.
+    crate::hyprland_watcher::spawn(app.binding_registry.clone());
+
     for g in globals.contents().clone_list() {
         match g.interface.as_str() {
             "wl_compositor" => {
@@ -2045,14 +1648,6 @@ fn main() -> Result<()> {
                 ));
             }
             "zwp_linux_dmabuf_v1" => {
-                // v4 added the feedback object that delivers
-                // `main_device` — the compositor's main rendering GPU.
-                // Without it we'd report DrmNode::UNKNOWN and the
-                // daemon's picker would force CompatLinear (LINEAR
-                // modifier, cross-device pessimism) even on single-GPU
-                // systems. Bind v4 when offered; v3 still works
-                // (format/modifier broadcasts unchanged) — we just lose
-                // the GPU identity and stay on the slow path.
                 let dmabuf = globals.registry().bind::<ZwpLinuxDmabufV1, _, _>(
                     g.name,
                     g.version.min(4),
@@ -2100,13 +1695,11 @@ fn main() -> Result<()> {
                         scale: 1,
                         fractional_scale: None,
                         fractional_scale_120: 0,
+                        output_name_str: None,
                     },
                 );
             }
             "wl_seat" => {
-                // Bind v5+ if offered so we can read `axis_source`;
-                // v3 still works (axis events only, no source) — we
-                // default to "wheel" when no source has been seen.
                 globals
                     .registry()
                     .bind::<WlSeat, _, _>(g.name, g.version.min(5), &qh, g.name);
@@ -2131,7 +1724,8 @@ fn main() -> Result<()> {
         bail!("no wl_output available");
     }
     log::info!(
-        "bound globals: compositor + layer_shell + dmabuf:v{} + viewporter:{} + fractional_scale:{} + dmabuf_feedback:{} + {} output(s)",
+        "bound globals: compositor + layer_shell + dmabuf:v{} + viewporter:{} + \
+         fractional_scale:{} + dmabuf_feedback:{} + {} output(s)",
         app.dmabuf.as_ref().map(|d| d.version()).unwrap_or(0),
         app.viewporter.is_some(),
         app.fractional_scale_mgr.is_some(),
@@ -2139,17 +1733,10 @@ fn main() -> Result<()> {
         app.outputs.len()
     );
 
-    // Roundtrip once so every `wl_output` has delivered its initial
-    // metadata (Scale / Geometry / Mode / Done) before we create
-    // layer-surfaces. Without this, outputs on HiDPI compositors
-    // would configure us at logical size with `scale=1` and we'd
-    // advertise the wrong physical size to the daemon.
     queue
         .roundtrip(&mut app)
         .context("initial wl_output metadata roundtrip")?;
 
-    // Create the per-output layer_surfaces up-front. The compositor will
-    // emit a Configure event for each, which kicks off its UDS worker.
     let output_keys: Vec<u32> = app.outputs.keys().copied().collect();
     for name in output_keys {
         app.bring_up_surface(name, &qh);
@@ -2161,24 +1748,4 @@ fn main() -> Result<()> {
             return Err(e.into());
         }
     }
-}
-
-/// Import the daemon-allocated binary release_syncobj fd into a handle
-/// on this process's DRM device, signal it, and drop. The signal
-/// unblocks the daemon's reaper which will then TRANSFER the fence
-/// onto the producer's release timeline.
-///
-/// `fd` is consumed (closed by `OwnedFd` drop after `fd_to_handle`
-/// imports it — kernel keeps a separate refcount per handle and per
-/// fd, so the import is independent of the close).
-fn signal_release_syncobj(fd: std::os::fd::OwnedFd) -> anyhow::Result<()> {
-    use waywallen::sync::drm_device;
-    let dev = drm_device().context("open DRM render node")?;
-    let handle = dev
-        .fd_to_handle(&fd)
-        .context("DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE")?;
-    dev.signal(&handle).context("DRM_IOCTL_SYNCOBJ_SIGNAL")?;
-    drop(handle); // DESTROY on this process's side; consumer fd already closed via `fd` drop below
-    drop(fd);
-    Ok(())
 }

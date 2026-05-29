@@ -34,11 +34,26 @@ Util::Desktop Util::desktop() const {
         const QString lower = QString::fromLocal8Bit(xdg).toLower();
         const auto tokens = lower.split(QLatin1Char(':'), Qt::SkipEmptyParts);
         for (const auto& t : tokens) {
-            if (t.trimmed() == QLatin1String("kde")) return Desktop::Kde;
+            const auto v = t.trimmed();
+            if (v == QLatin1String("kde")) return Desktop::Kde;
+            if (v == QLatin1String("hyprland")) return Desktop::Hyprland;
+            if (v == QLatin1String("sway")) return Desktop::Sway;
+            if (v == QLatin1String("niri")) return Desktop::Niri;
         }
         return Desktop::Unknown;
     }();
     return result;
+}
+
+bool Util::supportsDisplayRename() const {
+    switch (desktop()) {
+        case Desktop::Hyprland:
+        case Desktop::Sway:
+        case Desktop::Niri:
+            return true;
+        default:
+            return false;
+    }
 }
 
 // --- BBCode → Qt StyledText HTML subset --------------------------------

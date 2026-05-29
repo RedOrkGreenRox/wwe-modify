@@ -98,7 +98,12 @@ pub fn builtin_display_defs() -> Vec<DisplayDef> {
     defs.push(DisplayDef {
         name: "layer-shell".to_string(),
         bin: layer_shell_bin,
-        de: vec!["niri".to_string()],
+        de: vec![
+            "hyprland".to_string(),
+            "sway".to_string(),
+            "niri".to_string(),
+            "river".to_string(),
+        ],
         priority: 50,
         requires: vec!["wlr-layer-shell".to_string(), "linux-dmabuf-v4".to_string()],
         extra_args: Vec::new(),
@@ -475,17 +480,27 @@ mod tests {
     }
 
     #[test]
-    fn hyprland_picks_none_if_no_match() {
-        // Built-in layer-shell only matches "niri" in my new code (following TOML).
-        // Hyprland doesn't match "kde" or "niri".
+    fn hyprland_picks_layer_shell() {
         let caps = DeCaps {
             xdg_desktop: vec!["hyprland".into()],
             ..Default::default()
         };
-        assert!(matches!(
-            pick_backend(&registry(), &caps),
-            PickOutcome::None
-        ));
+        match pick_backend(&registry(), &caps) {
+            PickOutcome::Matched(d) => assert_eq!(d.name, "layer-shell"),
+            other => panic!("expected Matched(layer-shell), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn sway_picks_layer_shell() {
+        let caps = DeCaps {
+            xdg_desktop: vec!["sway".into()],
+            ..Default::default()
+        };
+        match pick_backend(&registry(), &caps) {
+            PickOutcome::Matched(d) => assert_eq!(d.name, "layer-shell"),
+            other => panic!("expected Matched(layer-shell), got {:?}", other),
+        }
     }
 
     #[test]
@@ -497,6 +512,18 @@ mod tests {
         match pick_backend(&registry(), &caps) {
             PickOutcome::Matched(d) => assert_eq!(d.name, "layer-shell"),
             other => panic!("expected Matched, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn unknown_wm_picks_layer_shell() {
+        let caps = DeCaps {
+            xdg_desktop: vec!["wayfire".into()],
+            ..Default::default()
+        };
+        match pick_backend(&registry(), &caps) {
+            PickOutcome::Matched(d) => assert_eq!(d.name, "layer-shell"),
+            other => panic!("expected Matched(layer-shell), got {:?}", other),
         }
     }
 

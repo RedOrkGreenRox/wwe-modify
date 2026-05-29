@@ -133,6 +133,46 @@ void DisplayLayoutSetQuery::reload() {
     });
 }
 
+DisplayRenameQuery::DisplayRenameQuery(QObject* parent): Query(parent) {}
+
+#define WW_SET(field, val)                                  \
+    do {                                                    \
+        if (this->field != val) {                           \
+            this->field = val;                              \
+            Q_EMIT paramsChanged();                         \
+        }                                                   \
+    } while (0)
+
+void DisplayRenameQuery::setName(const QString& v) { WW_SET(m_name, v); }
+void DisplayRenameQuery::setAlias(const QString& v) { WW_SET(m_alias, v); }
+void DisplayRenameQuery::setClear(bool v) { WW_SET(m_clear, v); }
+#undef WW_SET
+
+void DisplayRenameQuery::reload() {
+    setStatus(Status::Querying);
+    auto backend = App::instance()->backend();
+
+    proto::DisplayRenameRequest inner;
+    inner.setName(m_name);
+    inner.setAlias(m_alias);
+    inner.setClear(m_clear);
+
+    auto req = proto::Request {};
+    req.setDisplayRename(std::move(inner));
+
+    auto self = QWatcher { this };
+    spawn([self, backend, req = std::move(req)]() mutable -> task<void> {
+        auto result = co_await backend->send(std::move(req));
+        co_await asio::post(asio::bind_executor(self->get_executor(), use_task));
+        if (! self) co_return;
+
+        self->inspect_set(result, [](const proto::Response& rsp) {
+            (void)rsp;
+        });
+        co_return;
+    });
+}
+
 } // namespace waywallen
 
 #include "waywallen/query/display_query.moc.cpp"

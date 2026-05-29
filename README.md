@@ -34,6 +34,7 @@ It started life as a Wallpaper Engine plugin for KDE.
 | Desktop | Integration | Mouse input | Auto pause |
 |---------|-------------|:-----------:|:----------:|
 | **KDE Plasma** | [waywallen-display](https://github.com/waywallen/waywallen-display/) | ✅ | ✅ |
+| **Hyprland** | `zwlr_layer_shell_v1` | ✅ | ✅ |
 | **Niri** | `zwlr_layer_shell_v1` | ✅ | ❌ |
 | **Sway** | `zwlr_layer_shell_v1` | ✅ | ❌ |
 | **GNOME** | ️planned | — | — |

@@ -282,6 +282,7 @@ fn display_snapshot_to_pb(s: DisplaySnapshot, settings: &SettingsStore) -> pb::D
         layout_override: Some(layout_override_to_pb(&override_prefs)),
         drm_render_major: s.drm_render_major,
         drm_render_minor: s.drm_render_minor,
+        alias: override_prefs.alias.clone().unwrap_or_default(),
     }
 }
 
@@ -798,6 +799,10 @@ async fn dispatch_inner(
         }
 
         Req::WallpaperList(r) => {
+            log::info!(
+                "WallpaperList: page={} page_size={} wp_type={:?} filters={} search={:?}",
+                r.page, r.page_size, r.wp_type, r.filters.len(), r.search_text
+            );
             // Read from the snapshot mirror (see `source_snapshot.rs`)
             // so an in-flight scan does not block this query.
             let snap = state.source_snapshot.read().await;
@@ -878,6 +883,9 @@ async fn dispatch_inner(
             } else {
                 ((r.page as usize) * page_size, page_size)
             };
+            log::info!(
+                "WallpaperList: total={total} returning offset={offset} take={take}"
+            );
 
             let page_entries: Vec<&crate::wallpaper_type::WallpaperEntry> = filtered_entries
                 .into_iter()
@@ -1132,6 +1140,24 @@ async fn dispatch_inner(
             Res::DisplayLayoutSet(pb::DisplayLayoutSetResponse { display })
         }
 
+        Req::DisplayRename(r) => {
+            let new_alias = if r.clear || r.alias.trim().is_empty() {
+                None
+            } else {
+                Some(r.alias.clone())
+            };
+            state
+                .router
+                .set_display_alias(r.name.clone(), new_alias, r.clear)
+                .await;
+            let snap = state.router.snapshot_displays().await;
+            let display = snap
+                .into_iter()
+                .find(|d| d.name == r.name)
+                .map(|d| display_snapshot_to_pb(d, &state.settings));
+            Res::DisplayRename(pb::DisplayRenameResponse { display })
+        }
+
         Req::WallpaperApply(r) => {
             let entry = {
                 let snap = state.source_snapshot.read().await;
@@ -1269,10 +1295,6 @@ async fn dispatch_inner(
                 }
             };
 
-            // Relink: empty display_ids means "all currently registered
-            // displays" (pre-M4 behaviour). Old renderers left with
-            // zero links get paused immediately and reclaimed by the
-            // router's idle reaper after IDLE_KILL_TIMEOUT.
             if r.display_ids.is_empty() {
                 state.router.relink_all_displays_to(&renderer_id).await;
             } else {

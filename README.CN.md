@@ -34,6 +34,7 @@ Waywallen 是一个为 Linux 桌面打造的动态壁纸方案
 | 桌面 | 集成 | 鼠标输入 | 自动暂停 |
 |------|------|:--------:|:--------:|
 | **KDE Plasma** | [waywallen-display](https://github.com/waywallen/waywallen-display/) | ✅ | ✅ |
+| **Hyprland** | zwlr_layer_shell_v1 | ✅ | ✅ |
 | **Niri** | zwlr_layer_shell_v1 | ✅ | ❌ |
 | **Sway** | zwlr_layer_shell_v1 | ✅ | ❌ |
 | **GNOME** | 规划中 | — | — |
@@ -45,4 +46,4 @@ Waywallen 是一个为 Linux 桌面打造的动态壁纸方案
 | 图片壁纸 | ✅ |
 | 场景壁纸 | ✅ [open-wallpaper-engine](https://github.com/waywallen/open-wallpaper-engine) |
 | 视频壁纸 | ✅ |
-| 网页壁纸 | ✅ [open-wallpaper-engine](https://github.com/waywallen/open-wallpaper-engine)|
+| 网页壁纸 | ✅ [open-wallpaper-engine](https://github.com/waywallen/open-wallpaper-engine) |
