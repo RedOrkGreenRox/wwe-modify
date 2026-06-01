@@ -138,6 +138,7 @@ set(QML_FILES
   qml/component/filter/IntFilter.qml
   qml/component/filter/WpTypeFilter.qml
   qml/component/filter/TagFilter.qml
+  qml/component/filter/TagPickerDialog.qml
   qml/component/filter/EmptyFilter.qml
   qml/component/filter/WallpaperFilter.qml
   qml/component/settings/SettingField.qml

@@ -451,6 +451,7 @@ fn global_to_pb(g: &crate::settings::GlobalSettings) -> pb::GlobalSettings {
         queue_mode: g.queue_mode.clone(),
         rotation_secs: g.rotation_secs,
         wallpaper_skip_types: g.wallpaper_skip_types.clone(),
+        wallpaper_filter_tags: g.wallpaper_filter_tags.clone(),
     }
 }
 
@@ -894,6 +895,27 @@ async fn dispatch_inner(
                         pb::WallpaperStringFilter {
                             value: search_text.to_owned(),
                             condition: pb::StringCondition::Contains as i32,
+                        },
+                    )),
+                });
+            }
+
+            // Quick tag filter: keep only wallpapers having any of the
+            // selected tags, AND-ed in via its own fresh group.
+            if !r.filter_tags.is_empty() {
+                let next_group = filters_with_search
+                    .iter()
+                    .map(|f| f.group)
+                    .max()
+                    .map(|g| g + 1)
+                    .unwrap_or(0);
+                filters_with_search.push(pb::WallpaperFilterRule {
+                    r#type: pb::WallpaperFilterType::Tag as i32,
+                    group: next_group,
+                    payload: Some(pb::wallpaper_filter_rule::Payload::TagFilter(
+                        pb::WallpaperTagFilter {
+                            values: r.filter_tags.clone(),
+                            condition: pb::StringCondition::Is as i32,
                         },
                     )),
                 });
@@ -1511,6 +1533,7 @@ async fn dispatch_inner(
                     s.global.wallpaper_sorts =
                         WallpaperSortRuleState::vec_from_pb(&g.wallpaper_sorts);
                     s.global.wallpaper_skip_types = g.wallpaper_skip_types.clone();
+                    s.global.wallpaper_filter_tags = g.wallpaper_filter_tags.clone();
                     if let Some(ld) = g.layout_defaults.as_ref() {
                         if let Some(fm) = fillmode_from_pb(ld.fillmode) {
                             s.global.layout.fillmode = fm;

@@ -346,6 +346,9 @@ message WallpaperListRequest {
   // independent of the structured filter rules). An entry whose
   // `wp_type` is listed here is dropped before the rule filter runs.
   repeated string skip_types = 9;
+  // Quick tag filter (independent of the structured rules): keep only
+  // wallpapers having any of these tags. Empty = no constraint (all).
+  repeated string filter_tags = 10;
 }
 message WallpaperListResponse {
   repeated WallpaperEntry wallpapers = 1;
@@ -808,6 +811,10 @@ message GlobalSettings {
   // (above the structured filter rules). Persisted so the selection
   // survives restarts.
   repeated string wallpaper_skip_types = 12;
+
+  // Quick tag filter (independent of the rules): show only wallpapers
+  // having any of these tags. Empty = all. Persisted across restarts.
+  repeated string wallpaper_filter_tags = 13;
 }
 
 // When to pause the wallpaper based on window state on the same

@@ -26,6 +26,7 @@ export class WallpaperListQuery : public QueryList,
                    setSorts NOTIFY sortsChanged FINAL)
     Q_PROPERTY(QString searchText READ searchText WRITE setSearchText NOTIFY searchTextChanged FINAL)
     Q_PROPERTY(QStringList skipTypes READ skipTypes WRITE setSkipTypes NOTIFY skipTypesChanged FINAL)
+    Q_PROPERTY(QStringList filterTags READ filterTags WRITE setFilterTags NOTIFY filterTagsChanged FINAL)
     Q_PROPERTY(bool hasActiveFilters READ hasActiveFilters NOTIFY filtersChanged FINAL)
     Q_PROPERTY(qint32 total READ total NOTIFY totalChanged FINAL)
 
@@ -52,6 +53,9 @@ public:
     auto skipTypes() const -> const QStringList&;
     void setSkipTypes(const QStringList&);
 
+    auto filterTags() const -> const QStringList&;
+    void setFilterTags(const QStringList&);
+
     auto hasActiveFilters() const -> bool;
 
     auto total() const -> qint32;
@@ -66,6 +70,7 @@ public:
     Q_SIGNAL void sortsChanged();
     Q_SIGNAL void searchTextChanged();
     Q_SIGNAL void skipTypesChanged();
+    Q_SIGNAL void filterTagsChanged();
     Q_SIGNAL void totalChanged();
 
 private:
@@ -75,6 +80,7 @@ private:
     QList<control::v1::WallpaperSortRule>     m_sorts;
     QString                                   m_search_text;
     QStringList                               m_skip_types;
+    QStringList                               m_filter_tags;
     qint32                                    m_total { 0 };
 };
 

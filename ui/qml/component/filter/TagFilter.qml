@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 import QtQml
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Templates as T
 import waywallen.control as WC
 import waywallen.ui as W
 import Qcm.Material as MD
@@ -57,69 +56,12 @@ QtObject {
                 onClicked: tagDialog.open()
             }
 
-            MD.Dialog {
+            W.TagPickerDialog {
                 id: tagDialog
-                parent: T.Overlay.overlay
-                title: qsTr("Select tags")
-                horizontalPadding: 16
-                implicitWidth: Math.min(330, parent ? parent.width - 48 : 330)
-                standardButtons: T.Dialog.Cancel | T.Dialog.Reset | T.Dialog.Apply
-
-                // Pending selection — only pushed to the rule on Apply.
-                property var pending: []
-                function togglePending(tag) {
-                    const next = (tagDialog.pending || []).slice();
-                    const i = next.indexOf(tag);
-                    if (i >= 0)
-                        next.splice(i, 1);
-                    else
-                        next.push(tag);
-                    tagDialog.pending = next;
-                }
-
-                onAboutToShow: tagDialog.pending = (root.values || []).slice()
-                onApplied: {
-                    root.values = tagDialog.pending;
-                    tagDialog.accept();
-                }
-                onReset: tagDialog.pending = (root.values || []).slice()
-
-                contentItem: MD.VerticalFlickable {
-                    id: tagFlick
-                    contentWidth: width
-                    contentHeight: m_col.implicitHeight
-                    implicitHeight: Math.min(m_col.implicitHeight, 360)
-
-                    ColumnLayout {
-                        id: m_col
-                        width: tagFlick.contentWidth
-                        spacing: 8
-
-                        MD.Text {
-                            Layout.fillWidth: true
-                            visible: !root.allTags || root.allTags.length === 0
-                            text: qsTr("No tags in library")
-                            typescale: MD.Token.typescale.body_medium
-                            color: MD.Token.color.on_surface_variant
-                            wrapMode: Text.WordWrap
-                        }
-
-                        Flow {
-                            Layout.fillWidth: true
-                            visible: root.allTags && root.allTags.length > 0
-                            spacing: 8
-                            Repeater {
-                                model: root.allTags
-                                delegate: MD.FilterChip {
-                                    required property var modelData
-                                    checkable: false
-                                    text: modelData
-                                    checked: (tagDialog.pending || []).indexOf(modelData) >= 0
-                                    onClicked: tagDialog.togglePending(modelData)
-                                }
-                            }
-                        }
-                    }
+                allTags: root.allTags
+                selected: root.values
+                onCommit: function (tags) {
+                    root.values = tags;
                 }
             }
         }

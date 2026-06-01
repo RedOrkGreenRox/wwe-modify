@@ -136,10 +136,11 @@ MD.Page {
         id: autoDetectQuery
     }
 
-    // Skip-types is seeded from settings once; after that the local
-    // selection is authoritative. Re-adopting it on every settings echo
-    // would revert a just-applied toggle whenever the round-trip lags.
-    property bool _skipTypesSeeded: false
+    // Quick filters (skip-types, tag filter) are seeded from settings
+    // once; after that the local selection is authoritative. Re-adopting
+    // them on every settings echo would revert a just-applied toggle
+    // whenever the round-trip lags.
+    property bool _quickFiltersSeeded: false
 
     W.SettingsGetQuery {
         id: filterSettingsGet
@@ -150,9 +151,10 @@ MD.Page {
             // filter state already matches, and m_sorts must already
             // be the persisted value at that point.
             root.restoreSortFromSettings(global.wallpaperSorts || []);
-            if (!root._skipTypesSeeded) {
+            if (!root._quickFiltersSeeded) {
                 wallpaperQuery.skipTypes = global.wallpaperSkipTypes || [];
-                root._skipTypesSeeded = true;
+                wallpaperQuery.filterTags = global.wallpaperFilterTags || [];
+                root._quickFiltersSeeded = true;
             }
             wallpaperFilterModel.replaceState(
                         global.wallpaperFilters || [],
@@ -219,6 +221,11 @@ MD.Page {
                 next.push(ty);
             wallpaperQuery.skipTypes = next;
             root._persistGlobalChange(g => { g.wallpaperSkipTypes = next; });
+        }
+        filterTags: wallpaperQuery.filterTags
+        onApplyFilterTags: function (tags) {
+            wallpaperQuery.filterTags = tags;
+            root._persistGlobalChange(g => { g.wallpaperFilterTags = tags; });
         }
     }
 

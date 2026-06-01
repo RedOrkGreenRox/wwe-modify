@@ -198,6 +198,11 @@ pub struct GlobalSettings {
     /// Wallpaper types hidden by the browser's quick type toggles.
     #[serde(default)]
     pub wallpaper_skip_types: Vec<String>,
+
+    /// Quick tag filter: show only wallpapers having any of these tags.
+    /// Empty = no constraint.
+    #[serde(default)]
+    pub wallpaper_filter_tags: Vec<String>,
 }
 
 impl Default for GlobalSettings {
@@ -211,6 +216,7 @@ impl Default for GlobalSettings {
             wallpaper_filter: WallpaperFilterState::default(),
             wallpaper_sorts: Vec::new(),
             wallpaper_skip_types: Vec::new(),
+            wallpaper_filter_tags: Vec::new(),
         }
     }
 }
@@ -240,6 +246,18 @@ impl GlobalSettings {
                 )),
             });
             next_group += 1;
+        }
+        if !self.wallpaper_filter_tags.is_empty() {
+            filters.push(pb::WallpaperFilterRule {
+                r#type: pb::WallpaperFilterType::Tag as i32,
+                group: next_group,
+                payload: Some(pb::wallpaper_filter_rule::Payload::TagFilter(
+                    pb::WallpaperTagFilter {
+                        values: self.wallpaper_filter_tags.clone(),
+                        condition: pb::StringCondition::Is as i32,
+                    },
+                )),
+            });
         }
         (filters, logics)
     }

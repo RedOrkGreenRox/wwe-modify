@@ -80,6 +80,11 @@ auto global_to_map(const proto::GlobalSettings& g) -> QVariantMap {
         wallpaper_skip_types.append(t);
     }
     m[u"wallpaperSkipTypes"_s] = wallpaper_skip_types;
+    QStringList wallpaper_filter_tags;
+    for (const auto& t : g.wallpaperFilterTags()) {
+        wallpaper_filter_tags.append(t);
+    }
+    m[u"wallpaperFilterTags"_s] = wallpaper_filter_tags;
     return m;
 }
 
@@ -134,6 +139,13 @@ auto map_to_global(const QVariantMap& m) -> proto::GlobalSettings {
             skip.append(v.toString());
         }
         g.setWallpaperSkipTypes(skip);
+    }
+    if (m.contains(u"wallpaperFilterTags"_s)) {
+        QStringList tags;
+        for (const auto& v : m.value(u"wallpaperFilterTags"_s).toList()) {
+            tags.append(v.toString());
+        }
+        g.setWallpaperFilterTags(tags);
     }
     return g;
 }
