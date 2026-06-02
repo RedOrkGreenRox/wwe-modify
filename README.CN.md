@@ -39,11 +39,12 @@ Waywallen 是一个为 Linux 桌面打造的动态壁纸方案
 | **Niri** | zwlr_layer_shell_v1 | ✅ | ❌ |
 | **Sway** | zwlr_layer_shell_v1 | ✅ | ❌ |
 
-## 兼容性
+## 壁纸插件
+- 图片插件
+- 视频插件
+  - 硬解：vulkan、vaapi
 
-| 项目 | 现状 |
-|------|------|
-| 图片壁纸 | ✅ |
-| 场景壁纸 | ✅ [open-wallpaper-engine](https://github.com/waywallen/open-wallpaper-engine) |
-| 视频壁纸 | ✅ |
-| 网页壁纸 | ✅ [open-wallpaper-engine](https://github.com/waywallen/open-wallpaper-engine) |
+### 第三方插件
+- [open-wallpaper-engine](https://github.com/waywallen/open-wallpaper-engine)
+  - 场景壁纸支持
+  - 网页壁纸支持
