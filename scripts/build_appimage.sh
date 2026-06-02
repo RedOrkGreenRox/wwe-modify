@@ -270,6 +270,8 @@ pushd "$APPDIR"
 cp -rv ./usr/lib/qt6/qml/. ./usr/qml/
 rm -rf ./usr/lib/qt6
 rm -rf ./usr/lib/libQt6QuickDialogs*
+rm -rf ./usr/lib/libQt6QuickParticles.so.?
+rm -rf ./usr/lib/libQt6QuickShapesDesignHelpers.so.?
 rm -rf ./usr/lib/libvulkan.so.1 ./lib/libva*
 rm -rf ./usr/lib/libgcc_s.so.1
 rm -rf ./usr/lib/libdbus-1.so.3
