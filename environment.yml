@@ -1,14 +1,10 @@
 # waywallen build environment (conda-forge only).
-# Usage:
-#   first time:  conda env create -f environment.yml
-#   update:      conda env update -n waywallen -f environment.yml --prune
-# Normally invoked automatically by ./scripts/build_appimage.sh.
 name: waywallen
 channels:
   - conda-forge
   - nodefaults
 dependencies:
-  # Qt6 >= 6.10 (UI uses Quick / DBus / Protobuf; Wayland platform plugin is a separate package)
+  # Qt6 >= 6.10 (UI uses Quick / DBus / Protobuf)
   - qt6-main>=6.10
   - qt6-wayland>=6.10
   - freetype
@@ -31,7 +27,6 @@ dependencies:
   - clangxx_linux-64=22
   - sysroot_linux-64=2.28
 
-  # bundled into the AppImage by linuxdeploy.
   - libvulkan-headers
   - libvulkan-loader
   - libgles-devel
@@ -40,9 +35,7 @@ dependencies:
   - libva-utils
   - dav1d-dev
 
-  # FFmpeg is built from source by scripts/build_ffmpeg.sh — it gives us a
-  # known-minimal codec set and the same sysroot baseline as the rest of the
-  # tree. nasm is needed for the asm optimizations; make for ffmpeg's build.
+  # FFmpeg
   - nasm
   - make
 

@@ -11,6 +11,8 @@
 #   - fontconfig: we want the host build (sysconfdir = /etc) so the AppImage
 #     reads the user's /etc/fonts/fonts.conf at runtime; the conda-forge
 #     fontconfig is rooted at the conda prefix and finds no user fonts.
+#   - libpulse: wavsen's default audio backend (libpulse>=14.0); conda-forge
+#     has no client-only package and the host .so is glibc-only.
 #
 # Each lib has its own pkg-config stamp; only missing ones are refreshed.
 # FORCE=1 reinstalls everything. Prerequisites on the host:
@@ -188,5 +190,45 @@ EOF
     step "fontconfig installed -> $stamp"
 }
 
+# libpulse (PulseAudio client) — wavsen::ffi::pulse
+install_pulse() {
+    local stamp="$CONDA_PREFIX/lib/pkgconfig/libpulse.pc"
+    if [[ -f "$stamp" && -z "${FORCE:-}" ]]; then
+        step "libpulse already installed in \$CONDA_PREFIX (set FORCE=1 to refresh)"
+        return 0
+    fi
+
+    host_pkgconf --exists "libpulse >= 14.0" \
+        || fail "host has no libpulse >= 14.0; install pulseaudio-libs-devel / libpulse-dev"
+
+    local pa_ver pa_libdir pa_incdir
+    pa_ver="$(host_pkgconf --modversion libpulse)"
+    pa_libdir="$(host_pkgconf --variable=libdir libpulse)"
+    pa_incdir="$(host_pkgconf --variable=includedir libpulse)"
+
+    step "Copying libpulse $pa_ver from host"
+
+    copy_headers "$pa_incdir" pulse
+    copy_libs    "$pa_libdir" pulse
+    # libpulse.so NEEDs libpulsecommon-*.so from $libdir/pulseaudio via an
+    # $ORIGIN/pulseaudio rpath; stage that dir so the AppImage resolves it.
+    copy_dir_if_present "$pa_libdir/pulseaudio" "$CONDA_PREFIX/lib"
+
+    cat > "$stamp" <<EOF
+prefix=$CONDA_PREFIX
+exec_prefix=\${prefix}
+libdir=\${prefix}/lib
+includedir=\${prefix}/include
+
+Name: libpulse
+Description: PulseAudio Client Interface
+Version: $pa_ver
+Libs: -L\${libdir} -lpulse
+Cflags: -D_REENTRANT -I\${includedir}
+EOF
+    step "libpulse installed -> $stamp"
+}
+
 install_pipewire
 install_fontconfig
+install_pulse
