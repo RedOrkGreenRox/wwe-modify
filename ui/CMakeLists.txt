@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 
 set(APP_ID org.waywallen.waywallen)
 set(APP_NAME "waywallen-ui")
-set(APP_VERSION "0.1.7")
+set(APP_VERSION "0.1.8")
 set(APP_SUMMARY "Wallpaper Manager for Linux")
 set(APP_AUTHOR "hypengw")
 

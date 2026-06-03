@@ -7,7 +7,8 @@
     "type": "git",
     "url": "https://github.com/corrosion-rs/corrosion.git",
     "x-cmake": {
-      "name": "Corrosion"
+      "name": "Corrosion",
+      "find_package_args": "GLOBAL"
     }
   },
   {
@@ -19,7 +20,8 @@
     "url": "https://github.com/chriskohlhoff/asio.git",
     "x-cmake": {
       "name": "asio",
-      "exclude_from_all": true
+      "exclude_from_all": true,
+      "find_package_args": "GLOBAL"
     }
   },
   {
@@ -31,7 +33,8 @@
     "url": "https://github.com/taocpp/PEGTL.git",
     "x-cmake": {
       "name": "pegtl",
-      "exclude_from_all": true
+      "exclude_from_all": true,
+      "find_package_args": "GLOBAL"
     }
   },
   {
@@ -57,7 +60,7 @@
     }
   },
   {
-    "commit": "236348381b8670175e2f20ab8b29a02b61622037",
+    "commit": "d70d19e14437c2e1283e87e8bff43afe7c7e565d",
     "dest": "build/_flatpak_deps/wavsen-src",
     "disable-shallow-clone": true,
     "type": "git",

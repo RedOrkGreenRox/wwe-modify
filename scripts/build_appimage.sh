@@ -149,7 +149,7 @@ cmake --install "$BUILD_DIR"
 
 # ---- 4.5 Build open-wallpaper-engine (waywallen-wescene-renderer) ----
 # Pinned commit; bump explicitly when integrating new owe changes.
-OWE_COMMIT="fe2084f34017225e101423b778fe9bf6b1de1093"
+OWE_COMMIT="787d9c72a02a4cbf683041cd93d770da6650fcdc"
 OWE_SRC="$PROJECT_DIR/build/_owe-src"
 OWE_BUILD="$PROJECT_DIR/build/_owe-build"
 
@@ -250,15 +250,13 @@ LD_LIBRARY_PATH="$INSTALL_DIR/lib:$CONDA_PREFIX/lib" \
 QMAKE="$CONDA_PREFIX/bin/qmake6" \
 EXTRA_PLATFORM_PLUGINS="libqwayland.so" \
 EXTRA_QT_PLUGINS="wayland-decoration-client;wayland-shell-integration" \
+QML_SOURCES_PATHS="$PROJECT_DIR/ui/qml" \
 "$LINUXDEPLOY" \
     --appdir "$APPDIR" \
     --plugin qt \
-    --executable "$INSTALL_DIR/bin/waywallen" \
     --executable "$INSTALL_DIR/bin/waywallen-ui" \
-    --executable "$INSTALL_DIR/bin/waywallen-display-layer-shell" \
-    --executable "$PLUGINS_DIR/org.waywallen.image/bin/waywallen-image-renderer" \
-    --executable "$PLUGINS_DIR/org.waywallen.video/bin/waywallen-video-renderer" \
-    --executable "$PLUGINS_DIR/org.waywallen.open-wallpaper-engine/bin/waywallen-wescene-renderer" \
+    --executable "$INSTALL_DIR/bin/waywallen-video-renderer" \
+    --executable "$INSTALL_DIR/bin/waywallen-wescene-renderer" \
     --desktop-file "$DESKTOP_FILE" \
     --icon-file "$ICON_FILE" \
     --custom-apprun "$APPRUN_TMP"
@@ -269,7 +267,6 @@ cp -v "$CONDA_PREFIX/lib/libgcc_s.so.1" "$APPDIR/usr/lib/"
 
 pushd "$APPDIR"
 cp -rv ./usr/lib/qt6/qml/. ./usr/qml/
-cp -rv "$CONDA_PREFIX/lib/qt6/qml/QtCore" ./usr/qml/
 rm -rf ./usr/lib/qt6
 rm -rf ./usr/lib/libQt6QuickDialogs*
 rm -rf ./usr/lib/libQt6QuickParticles.so.?
