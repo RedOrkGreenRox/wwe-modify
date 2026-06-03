@@ -122,8 +122,6 @@ pub struct RendererDef {
     pub types: Vec<WallpaperType>,
     #[serde(default = "default_priority")]
     pub priority: u32,
-    #[serde(default = "default_version")]
-    pub version: String,
     /// Wire-protocol `Init.spawn_version` the daemon should emit when
     /// spawning this renderer. `None` means "use the daemon's compile-
     /// time `SPAWN_VERSION`" (legacy manifests). Step 2 keeps this

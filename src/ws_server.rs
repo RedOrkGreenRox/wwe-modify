@@ -228,6 +228,7 @@ async fn handle_conn(
 
 fn renderer_def_to_pb(
     def: &crate::plugin::renderer_registry::RendererDef,
+    plugin_version: &str,
 ) -> pb::RendererPluginInfo {
     let mut settings: Vec<pb::SettingSchema> = def
         .settings
@@ -242,7 +243,9 @@ fn renderer_def_to_pb(
         bin: def.bin.to_string_lossy().into_owned(),
         types: def.types.iter().map(|t| t.to_string()).collect(),
         priority: def.priority,
-        version: def.version.clone(),
+        // Renderers no longer carry their own version; they inherit the
+        // owning plugin's. Compatibility is `spawn_version` + bridge.
+        version: plugin_version.to_string(),
         settings,
         plugin_id: def.plugin_id.clone(),
     }
@@ -794,10 +797,21 @@ async fn dispatch_inner(
 
         Req::RendererPluginList(_) => {
             let registry = state.renderer_manager.registry();
+            // Renderer version = owning plugin's version, by plugin_id.
+            let plugin_versions: std::collections::HashMap<&str, &str> = state
+                .plugins
+                .iter()
+                .map(|p| (p.id.as_str(), p.version.as_str()))
+                .collect();
             let renderers = registry
                 .all_renderers()
                 .iter()
-                .map(|def| renderer_def_to_pb(def))
+                .map(|def| {
+                    renderer_def_to_pb(
+                        def,
+                        plugin_versions.get(def.plugin_id.as_str()).copied().unwrap_or(""),
+                    )
+                })
                 .collect();
             // `supported_types` comes from a HashMap; sort so the UI's
             // type chips/menus keep a stable alphabetical order.
@@ -822,7 +836,7 @@ async fn dispatch_inner(
                     let renderers = all
                         .iter()
                         .filter(|def| def.plugin_id == pkg.id)
-                        .map(|def| renderer_def_to_pb(def))
+                        .map(|def| renderer_def_to_pb(def, &pkg.version))
                         .collect();
                     pb::PluginInfo {
                         id: pkg.id.clone(),

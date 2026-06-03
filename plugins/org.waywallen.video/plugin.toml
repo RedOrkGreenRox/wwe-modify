@@ -8,7 +8,7 @@
 [plugin]
 id = "org.waywallen.video"
 name = "Video"
-version = "0.1.6"
+version = "0.1.8"
 
 [source]
 lua = "video.lua"
@@ -17,7 +17,6 @@ lua = "video.lua"
 bin = "bin/waywallen-video-renderer"
 types = ["video"]
 priority = 100
-version = "0.1.6"
 spawn_version = 5
 
 [renderers.waywallen-video.settings]

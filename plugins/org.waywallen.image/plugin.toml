@@ -3,7 +3,7 @@
 [plugin]
 id = "org.waywallen.image"
 name = "Image"
-version = "0.1.6"
+version = "0.1.8"
 
 [source]
 lua = "image.lua"
@@ -12,7 +12,6 @@ lua = "image.lua"
 bin = "bin/waywallen-image-renderer"
 types = ["image"]
 priority = 100
-version = "0.1.6"
 spawn_version = 5
 
 [renderers.waywallen-image.settings]

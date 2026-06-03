@@ -1157,7 +1157,6 @@ baz = "7"
             bin: PathBuf::from("/dev/null"),
             types: vec!["video".into()],
             priority: 100,
-            version: "v0.0.0".into(),
             spawn_version: Some(1),
             extras: Vec::new(),
             settings: s,
