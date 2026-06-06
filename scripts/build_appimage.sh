@@ -18,7 +18,6 @@ set -euo pipefail
 # Script lives in <repo>/scripts/, so PROJECT_DIR is one level up.
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_NAME="${WAYWALLEN_CONDA_ENV:-waywallen}"
-BUILD_DIR="$PROJECT_DIR/build/clang-release"
 APPDIR="$PROJECT_DIR/build/AppDir"
 INSTALL_DIR="$APPDIR/usr"          # AppDir's /usr is the cmake install prefix
 PLUGINS_DIR="$INSTALL_DIR/share/waywallen/plugins"
@@ -57,13 +56,13 @@ rm -rf "$APPDIR"
 APPIMAGE_OUT="$PROJECT_DIR/waywallen-$BUILD_TAG-x86_64.AppImage"
 step "Building AppImage tagged as $BUILD_TAG"
 
-# ---- 1. Check required tools ----
+# ---- Check required tools ----
 command -v conda >/dev/null \
     || fail "conda not found. Install Miniconda first: https://docs.conda.io/projects/miniconda/"
 command -v cargo >/dev/null \
     || fail "cargo not found. Install rustup first: https://rustup.rs/  Then restart your shell and re-run."
 
-# ---- 2. Set up the conda environment ----
+# ---- Set up the conda environment ----
 # Make `conda activate` available inside this script.
 # Note: conda's profile script is not friendly to `set -u`; disable it briefly.
 set +u
@@ -87,13 +86,12 @@ set +u
 conda activate "$ENV_NAME"
 set -u
 
-# ---- 2.4 Build a minimal FFmpeg into the conda env (replaces conda-forge's ffmpeg) ----
+# ---- Build a minimal FFmpeg into the conda env (replaces conda-forge's ffmpeg) ----
 bash "$PROJECT_DIR/scripts/build_ffmpeg.sh"
 
-# ---- 2.4b Copy host syslibs (pipewire, fontconfig) into the conda env ----
+# ---- Copy host syslibs (pipewire, fontconfig) into the conda env ----
 bash "$PROJECT_DIR/scripts/copy_syslibs.sh"
 
-# ---- 2.5 Build the Qt6Protobuf module from source (conda-forge has no qtgrpc package) ----
 QT_VER="$("$CONDA_PREFIX/bin/qmake6" -query QT_VERSION)"
 if [[ ! -f "$CONDA_PREFIX/lib/cmake/Qt6Protobuf/Qt6ProtobufConfig.cmake" ]]; then
     step "Building qtgrpc v$QT_VER from source (one-shot; installs into $CONDA_PREFIX)"
@@ -123,14 +121,10 @@ if command -v ccache >/dev/null 2>&1; then
     CCACHE_ARGS=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
 fi
 
-# ---- 3. CMake configure ----
 step "CMake configure (daemon + UI + image/video renderer plugins)"
-cmake -S "$PROJECT_DIR" -B "$BUILD_DIR" \
-    -G Ninja \
+pushd "$PROJECT_DIR"
+cmake -S "$PROJECT_DIR" --preset clang-release \
     "${CCACHE_ARGS[@]}" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_C_COMPILER=clang \
-    -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_SYSROOT="$CONDA_BUILD_SYSROOT" \
     `# Under sysroot 2.28 pthread lives in libpthread, not libc — pthread must
      # be enabled globally, otherwise C++20 PCMs produced by rstd / qextra etc.
@@ -138,25 +132,27 @@ cmake -S "$PROJECT_DIR" -B "$BUILD_DIR" \
      # when one imports the other.` \
     -DCMAKE_C_FLAGS_INIT="-pthread" \
     -DCMAKE_CXX_FLAGS_INIT="-pthread" \
-    -DCMAKE_LINKER=lld \
     -DCMAKE_PREFIX_PATH="$CONDA_PREFIX" \
     -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
+    -DCMAKE_INTERPROCEDURAL_OPTIMIZATION="ON" \
+    -DCMAKE_CXX_COMPILER_AR="llvm-ar" \
+    -DQML_MATERIAL_BUILD_TYPE="STATIC" \
     -DWAYWALLEN_BUILD_DAEMON=ON \
     -DWAYWALLEN_BUILD_UI=ON \
     -DWAYWALLEN_BUILD_PLUGINS=ON \
     -DWAYWALLEN_BUILD_IMAGE_PLUGIN=ON \
     -DWAYWALLEN_BUILD_VIDEO_PLUGIN=ON
 
-# ---- 4. Build + install ----
-step "Compiling (first build ~10–20 min; subsequent runs are incremental and fast)"
-cmake --build "$BUILD_DIR" --parallel
+step "Compiling)"
+cmake --build build/clang-release --parallel
 
 step "Installing into AppDir: $APPDIR"
-cmake --install "$BUILD_DIR"
+cmake --install build/clang-release
 
-# ---- 4.5 Build open-wallpaper-engine (waywallen-wescene-renderer) ----
-# Pinned commit; bump explicitly when integrating new owe changes.
-OWE_COMMIT="787d9c72a02a4cbf683041cd93d770da6650fcdc"
+popd
+
+# ---- Build open-wallpaper-engine (waywallen-wescene-renderer) ----
+OWE_COMMIT="1a42f3522e26572610c953da9b902db7a7e80fd4"
 OWE_SRC="$PROJECT_DIR/build/_owe-src"
 OWE_BUILD="$PROJECT_DIR/build/_owe-build"
 
@@ -172,19 +168,16 @@ git -C "$OWE_SRC" fetch --quiet origin "$OWE_COMMIT" 2>/dev/null \
 git -C "$OWE_SRC" -c advice.detachedHead=false reset --hard "$OWE_COMMIT"
 
 step "CMake configure: open-wallpaper-engine"
-# CMAKE_PREFIX_PATH puts $INSTALL_DIR ahead of $CONDA_PREFIX so owe's
-# `find_package(waywallen-bridge REQUIRED)` resolves to the bridge we just
-# installed in step 4.
 cmake -S "$OWE_SRC" -B "$OWE_BUILD" \
     -G Ninja \
     "${CCACHE_ARGS[@]}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER=clang \
     -DCMAKE_CXX_COMPILER=clang++ \
+    -DCMAKE_LINKER_TYPE=LLD \
     -DCMAKE_SYSROOT="$CONDA_BUILD_SYSROOT" \
     -DCMAKE_C_FLAGS_INIT="-pthread" \
     -DCMAKE_CXX_FLAGS_INIT="-pthread" \
-    -DCMAKE_LINKER=lld \
     -DCMAKE_PREFIX_PATH="$INSTALL_DIR;$CONDA_PREFIX" \
     -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
     -DBUILD_WAYWALLEN_HOST=ON \
@@ -196,7 +189,7 @@ cmake --build   "$OWE_BUILD" --parallel
 cmake --install "$OWE_BUILD"
 strip "$INSTALL_DIR/bin/weweb"/*.so
 
-# # ---- 5. Fetch linuxdeploy / appimagetool (cached on first run under build/_tools) ----
+# # ---- Fetch linuxdeploy / appimagetool (cached on first run under build/_tools) ----
 mkdir -p "$TOOLS_DIR"
 LINUXDEPLOY="$TOOLS_DIR/linuxdeploy-x86_64.AppImage"
 LINUXDEPLOY_QT="$TOOLS_DIR/linuxdeploy_plugin_qt"
@@ -219,7 +212,7 @@ download_if_missing \
     "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" \
     "$APPIMAGETOOL"
 
-# ---- 6. Custom AppRun (launches the daemon and points it at the bundled UI / display backend) ----
+# ---- Custom AppRun (launches the daemon and points it at the bundled UI / display backend) ----
 APPRUN_TMP="$(mktemp -t waywallen-AppRun.XXXXXX)"
 trap 'rm -f "$APPRUN_TMP"' EXIT
 cat > "$APPRUN_TMP" <<'APPEOF'
@@ -239,7 +232,7 @@ exec "$HERE/usr/bin/waywallen" "$@"
 APPEOF
 chmod +x "$APPRUN_TMP"
 
-# ---- 7. linuxdeploy stages dependencies into AppDir (no packaging yet, so we can prune in between) ----
+# ---- linuxdeploy stages dependencies into AppDir (no packaging yet, so we can prune in between) ----
 step "linuxdeploy: staging dependencies into AppDir"
 DESKTOP_FILE="$INSTALL_DIR/share/applications/org.waywallen.waywallen.desktop"
 ICON_FILE="$INSTALL_DIR/share/icons/hicolor/scalable/apps/org.waywallen.waywallen.svg"
@@ -274,7 +267,6 @@ cp -v "$CONDA_PREFIX/lib/libstdc++.so.6" "$APPDIR/usr/lib/"
 cp -v "$CONDA_PREFIX/lib/libgcc_s.so.1" "$APPDIR/usr/lib/"
 
 pushd "$APPDIR"
-cp -rv ./usr/lib/qt6/qml/. ./usr/qml/
 rm -rf ./usr/lib/qt6
 rm -rf ./usr/lib/libQt6QuickDialogs*
 rm -rf ./usr/lib/libQt6QuickParticles.so.?
@@ -290,7 +282,7 @@ rm -rf ./usr/lib/libxkbcommon*
 rm -rf ./usr/lib/*.a
 popd
 
-# ---- 8. Drop unused QuickControls2 styles (native libs + QML modules) ----
+# ---- Drop unused QuickControls2 styles (native libs + QML modules) ----
 step "Pruning unused QuickControls2 styles"
 # Each name targets BOTH:
 #   usr/lib/libQt6QuickControls2<Style>*.so*    (style + StyleImpl shared libs)
@@ -305,7 +297,7 @@ for style in "${QUICKCONTROLS2_PRUNE[@]}"; do
     rm -rfv "$APPDIR/usr/qml/QtQuick/Controls/${style}" 2>/dev/null || true
 done
 
-# ---- 9. Pack the AppImage ----
+# ---- Pack the AppImage ----
 step "Packing AppImage"
 rm -f "$APPIMAGE_OUT"
 PATH="$TOOLS_DIR:$PATH" \

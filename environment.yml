@@ -23,6 +23,7 @@ dependencies:
   - clangxx=22
   - clang-tools=22
   - lld=22
+  - llvm-tools=22
   - clang_linux-64=22
   - clangxx_linux-64=22
   - sysroot_linux-64=2.28
