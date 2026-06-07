@@ -11,7 +11,8 @@ export import :query.query;
 namespace waywallen
 {
 
-export class DisplayListQuery : public Query, public QueryExtra<control::v1::Response, DisplayListQuery> {
+export class DisplayListQuery : public Query,
+                                public QueryExtra<control::v1::Response, DisplayListQuery> {
     Q_OBJECT
     QML_ELEMENT
 
@@ -39,8 +40,9 @@ private:
 /// `DisplayChanged` event with the refreshed `effectiveLayout`.
 ///
 /// Clear color is NOT exposed here — it's owned by the renderer.
-export class DisplayLayoutSetQuery : public Query,
-                                     public QueryExtra<control::v1::Response, DisplayLayoutSetQuery> {
+export class DisplayLayoutSetQuery
+    : public Query,
+      public QueryExtra<control::v1::Response, DisplayLayoutSetQuery> {
     Q_OBJECT
     QML_ELEMENT
 
@@ -51,9 +53,11 @@ export class DisplayLayoutSetQuery : public Query,
     Q_PROPERTY(int align READ align WRITE setAlign NOTIFY paramsChanged FINAL)
     Q_PROPERTY(bool rotationSet READ rotationSet WRITE setRotationSet NOTIFY paramsChanged FINAL)
     Q_PROPERTY(int rotation READ rotation WRITE setRotation NOTIFY paramsChanged FINAL)
-    Q_PROPERTY(bool clearFillmode READ clearFillmode WRITE setClearFillmode NOTIFY paramsChanged FINAL)
+    Q_PROPERTY(
+        bool clearFillmode READ clearFillmode WRITE setClearFillmode NOTIFY paramsChanged FINAL)
     Q_PROPERTY(bool clearAlign READ clearAlign WRITE setClearAlign NOTIFY paramsChanged FINAL)
-    Q_PROPERTY(bool clearRotation READ clearRotation WRITE setClearRotation NOTIFY paramsChanged FINAL)
+    Q_PROPERTY(
+        bool clearRotation READ clearRotation WRITE setClearRotation NOTIFY paramsChanged FINAL)
 
 public:
     DisplayLayoutSetQuery(QObject* parent = nullptr);
@@ -84,16 +88,16 @@ public:
     Q_SIGNAL void paramsChanged();
 
 private:
-    QString      m_name;
-    bool         m_fillmode_set { false };
-    int          m_fillmode { 0 };
-    bool         m_align_set { false };
-    int          m_align { 0 };
-    bool         m_rotation_set { false };
-    int          m_rotation { 0 };
-    bool         m_clear_fillmode { false };
-    bool         m_clear_align { false };
-    bool         m_clear_rotation { false };
+    QString m_name;
+    bool    m_fillmode_set { false };
+    int     m_fillmode { 0 };
+    bool    m_align_set { false };
+    int     m_align { 0 };
+    bool    m_rotation_set { false };
+    int     m_rotation { 0 };
+    bool    m_clear_fillmode { false };
+    bool    m_clear_align { false };
+    bool    m_clear_rotation { false };
 };
 
 export class DisplayRenameQuery : public Query,

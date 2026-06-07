@@ -24,8 +24,7 @@ public:
     static Action* create(QQmlEngine*, QJSEngine*);
 
 Q_SIGNALS:
-    void toast(QString text, qint32 duration = 3000, qint32 flags = 0,
-               QObject* action = nullptr);
+    void toast(QString text, qint32 duration = 3000, qint32 flags = 0, QObject* action = nullptr);
 };
 
 } // namespace waywallen

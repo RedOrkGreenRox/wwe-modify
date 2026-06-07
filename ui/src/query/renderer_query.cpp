@@ -187,7 +187,8 @@ void RendererKillQuery::reload() {
         co_await asio::post(asio::bind_executor(self->get_executor(), use_task));
         if (! self) co_return;
 
-        self->inspect_set(result, [](const proto::Response&) {});
+        self->inspect_set(result, [](const proto::Response&) {
+        });
         co_return;
     });
 }

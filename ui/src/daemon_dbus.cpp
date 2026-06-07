@@ -23,13 +23,13 @@ import :daemon_dbus;
 namespace waywallen
 {
 
-namespace {
+namespace
+{
 
-constexpr const char* kBusName     = "org.waywallen.waywallen.Daemon";
-constexpr const char* kObjectPath  = "/org/waywallen/waywallen/Daemon";
-constexpr const char* kInterface   = "org.waywallen.waywallen.Daemon1";
-constexpr const char* kPropsIface  = "org.freedesktop.DBus.Properties";
-
+constexpr const char* kBusName    = "org.waywallen.waywallen.Daemon";
+constexpr const char* kObjectPath = "/org/waywallen/waywallen/Daemon";
+constexpr const char* kInterface  = "org.waywallen.waywallen.Daemon1";
+constexpr const char* kPropsIface = "org.freedesktop.DBus.Properties";
 
 DaemonDBusClient* g_instance { nullptr };
 
@@ -77,9 +77,8 @@ DaemonDBusClient::DaemonDBusClient(QObject* parent)
     setup_subscriptions();
 
     // Initial probe — refreshWsPort drives the full state-machine update.
-    auto iface = m_bus.interface();
-    bool registered =
-        iface && iface->isServiceRegistered(QString::fromLatin1(kBusName)).value();
+    auto iface      = m_bus.interface();
+    bool registered = iface && iface->isServiceRegistered(QString::fromLatin1(kBusName)).value();
     if (registered) {
         refreshWsPort();
     } else {
@@ -96,12 +95,16 @@ DaemonDBusClient::~DaemonDBusClient() {
 void DaemonDBusClient::setup_subscriptions() {
     m_watcher = new QDBusServiceWatcher(QString::fromLatin1(kBusName),
                                         m_bus,
-                                        QDBusServiceWatcher::WatchForRegistration
-                                            | QDBusServiceWatcher::WatchForUnregistration,
+                                        QDBusServiceWatcher::WatchForRegistration |
+                                            QDBusServiceWatcher::WatchForUnregistration,
                                         this);
-    connect(m_watcher, &QDBusServiceWatcher::serviceRegistered, this,
+    connect(m_watcher,
+            &QDBusServiceWatcher::serviceRegistered,
+            this,
             &DaemonDBusClient::on_service_registered);
-    connect(m_watcher, &QDBusServiceWatcher::serviceUnregistered, this,
+    connect(m_watcher,
+            &QDBusServiceWatcher::serviceUnregistered,
+            this,
             &DaemonDBusClient::on_service_unregistered);
 
     bool ok = m_bus.connect(QString::fromLatin1(kBusName),
@@ -137,9 +140,9 @@ void DaemonDBusClient::setup_subscriptions() {
 
 QDBusMessage DaemonDBusClient::call_get(const QString& prop) {
     QDBusMessage msg = QDBusMessage::createMethodCall(QString::fromLatin1(kBusName),
-                                                     QString::fromLatin1(kObjectPath),
-                                                     QString::fromLatin1(kPropsIface),
-                                                     QStringLiteral("Get"));
+                                                      QString::fromLatin1(kObjectPath),
+                                                      QString::fromLatin1(kPropsIface),
+                                                      QStringLiteral("Get"));
     msg << QString::fromLatin1(kInterface) << prop;
     return m_bus.call(msg, QDBus::Block, 2000);
 }
@@ -154,8 +157,7 @@ quint16 DaemonDBusClient::refreshWsPort() {
     // Step 1: WsPort. Failure here means daemon is gone / unreachable.
     QDBusMessage port_reply = call_get(QStringLiteral("WsPort"));
     if (port_reply.type() != QDBusMessage::ReplyMessage) {
-        qDebug("DaemonDBusClient: WsPort read failed: %s",
-               qPrintable(port_reply.errorMessage()));
+        qDebug("DaemonDBusClient: WsPort read failed: %s", qPrintable(port_reply.errorMessage()));
         set_ws_port(0);
         set_status(Disconnected);
         return 0;
@@ -163,7 +165,7 @@ quint16 DaemonDBusClient::refreshWsPort() {
     {
         const auto args = port_reply.arguments();
         if (! args.isEmpty()) {
-            bool ok = false;
+            bool    ok   = false;
             quint16 port = static_cast<quint16>(unwrap_variant(args.front()).toUInt(&ok));
             if (ok) set_ws_port(port);
         }
@@ -192,9 +194,8 @@ quint16 DaemonDBusClient::refreshWsPort() {
             return m_ws_port;
         }
         const QString version = unwrap_variant(args.front()).toString();
-        m_daemon_version = version;
-        set_status(version == QCoreApplication::applicationVersion()
-                       ? Connected : VersionMismatch);
+        m_daemon_version      = version;
+        set_status(version == QCoreApplication::applicationVersion() ? Connected : VersionMismatch);
     }
     return m_ws_port;
 }
@@ -209,12 +210,12 @@ bool DaemonDBusClient::launchDaemon() {
 }
 
 QVariantList DaemonDBusClient::listWaywallenProcesses() {
-    QVariantList out;
-    QDir proc(QStringLiteral("/proc"));
+    QVariantList      out;
+    QDir              proc(QStringLiteral("/proc"));
     const QStringList entries = proc.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
     for (const QString& entry : entries) {
-        bool is_pid = false;
-        const quint32 pid = entry.toUInt(&is_pid);
+        bool          is_pid = false;
+        const quint32 pid    = entry.toUInt(&is_pid);
         if (! is_pid) continue;
 
         QFile comm_file(QStringLiteral("/proc/%1/comm").arg(entry));
@@ -222,7 +223,7 @@ QVariantList DaemonDBusClient::listWaywallenProcesses() {
         QByteArray comm = comm_file.readAll().trimmed();
         if (comm != QByteArrayLiteral("waywallen")) continue;
 
-        QFile cmdline_file(QStringLiteral("/proc/%1/cmdline").arg(entry));
+        QFile   cmdline_file(QStringLiteral("/proc/%1/cmdline").arg(entry));
         QString cmdline;
         if (cmdline_file.open(QIODevice::ReadOnly)) {
             QByteArray raw = cmdline_file.readAll();
@@ -246,7 +247,8 @@ bool DaemonDBusClient::killProcess(quint32 pid) {
     if (pid == 0) return false;
     if (::kill(static_cast<pid_t>(pid), SIGTERM) != 0) {
         qWarning("DaemonDBusClient: kill(%u, SIGTERM) failed: %s",
-                 pid, qPrintable(QString::fromLocal8Bit(strerror(errno))));
+                 pid,
+                 qPrintable(QString::fromLocal8Bit(strerror(errno))));
         return false;
     }
     return true;
@@ -277,13 +279,12 @@ void DaemonDBusClient::on_shutting_down() {
     // Keep m_ws_port until NameOwnerChanged confirms the unregister.
 }
 
-void DaemonDBusClient::on_properties_changed(const QString&     iface,
-                                             const QVariantMap& changed,
+void DaemonDBusClient::on_properties_changed(const QString& iface, const QVariantMap& changed,
                                              const QStringList& /*invalidated*/) {
     if (iface != QString::fromLatin1(kInterface)) return;
     auto it = changed.find(QStringLiteral("WsPort"));
     if (it == changed.end()) return;
-    bool ok = false;
+    bool    ok   = false;
     quint16 port = static_cast<quint16>(unwrap_variant(it.value()).toUInt(&ok));
     if (ok) {
         set_ws_port(port);

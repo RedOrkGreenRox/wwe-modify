@@ -27,7 +27,8 @@ export class RemoteListModel : public QAbstractListModel {
     Q_PROPERTY(int count READ count NOTIFY countChanged FINAL)
 
 public:
-    enum Role {
+    enum Role
+    {
         ItemIdRole = Qt::UserRole + 1,
         TitleRole,
         PreviewUrlRole,
@@ -37,14 +38,14 @@ public:
 
     explicit RemoteListModel(QObject* parent = nullptr);
 
-    int rowCount(const QModelIndex& parent = QModelIndex()) const override;
-    QVariant data(const QModelIndex& index, int role) const override;
+    int                    rowCount(const QModelIndex& parent = QModelIndex()) const override;
+    QVariant               data(const QModelIndex& index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
 
     auto count() const -> int { return static_cast<int>(m_rows.size()); }
 
-    void reset(QList<RemoteRow> rows);
-    void append(const QList<RemoteRow>& rows);
+    void             reset(QList<RemoteRow> rows);
+    void             append(const QList<RemoteRow>& rows);
     Q_INVOKABLE void setInstalled(const QString& id, bool installed);
 
     Q_INVOKABLE QVariantMap get(int row) const;
@@ -55,4 +56,4 @@ private:
     QList<RemoteRow> m_rows;
 };
 
-}
+} // namespace waywallen::model

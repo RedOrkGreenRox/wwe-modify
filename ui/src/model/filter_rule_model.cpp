@@ -38,9 +38,9 @@ int FilterRuleModel::roleForName_(const QByteArray& name) const {
 }
 
 int FilterRuleModel::groupOf_(const QVariant& v) const {
-    const auto metaType = v.metaType();
+    const auto metaType   = v.metaType();
     const auto metaObject = metaType.metaObject();
-    if (!metaObject) return 0;
+    if (! metaObject) return 0;
     const int index = metaObject->indexOfProperty("group");
     if (index < 0) return 0;
     return metaObject->property(index).readOnGadget(v.constData()).toInt();
@@ -48,7 +48,7 @@ int FilterRuleModel::groupOf_(const QVariant& v) const {
 
 auto FilterRuleModel::orderedGroups_() const -> QList<int> {
     QList<int> groups;
-    const int role = roleForName_("group");
+    const int  role = roleForName_("group");
     if (role < 0) return groups;
     for (int i = 0; i < rowCount(); ++i) {
         const int group = data(index(i, 0), role).toInt();
@@ -71,7 +71,7 @@ int FilterRuleModel::rowIndexInGroup(int row) const {
     const int role = roleForName_("group");
     if (role < 0 || row < 0 || row >= rowCount()) return 0;
     const int group = data(index(row, 0), role).toInt();
-    int count = 0;
+    int       count = 0;
     for (int i = 0; i < row; ++i) {
         if (data(index(i, 0), role).toInt() == group) ++count;
     }
@@ -97,12 +97,12 @@ int FilterRuleModel::countInGroup(int group) const {
 int FilterRuleModel::findInsertPosition(int group) const {
     const int role = roleForName_("group");
     if (role < 0) return rowCount();
-    int pos = 0;
+    int  pos  = 0;
     bool seen = false;
     for (int i = 0; i < rowCount(); ++i) {
         const int current = data(index(i, 0), role).toInt();
         if (current <= group) {
-            pos = i + 1;
+            pos  = i + 1;
             seen = true;
         } else if (seen) {
             break;
@@ -120,7 +120,7 @@ int FilterRuleModel::findLogicAt(int sectionIndex) const {
     const auto groups = orderedGroups_();
     if (sectionIndex >= groups.size()) return -1;
     const int previous = groups[sectionIndex - 1];
-    const int current = groups[sectionIndex];
+    const int current  = groups[sectionIndex];
     for (int i = 0; i < m_filter_logics.size(); ++i) {
         const auto& logic = m_filter_logics[i];
         if (logic.groupA() == previous && logic.groupB() == current) return i;
@@ -153,13 +153,13 @@ void FilterRuleModel::setLogicOpAt(int sectionIndex, int op) {
 
 void FilterRuleModel::appendRuleInGroup(int group) {
     const int role = roleForName_("group");
-    const int row = findInsertPosition(group);
-    if (!insertRows(row, 1)) return;
+    const int row  = findInsertPosition(group);
+    if (! insertRows(row, 1)) return;
     if (role < 0) return;
-    QVariant v = item(row);
-    const auto metaType = v.metaType();
+    QVariant   v          = item(row);
+    const auto metaType   = v.metaType();
     const auto metaObject = metaType.metaObject();
-    if (!metaObject) return;
+    if (! metaObject) return;
     const int index = metaObject->indexOfProperty("group");
     if (index < 0) return;
     metaObject->property(index).writeOnGadget(v.data(), group);
@@ -167,8 +167,8 @@ void FilterRuleModel::appendRuleInGroup(int group) {
 }
 
 void FilterRuleModel::appendNewGroup() {
-    const int newId = newGroupId();
-    int previousMax = -1;
+    const int newId       = newGroupId();
+    int       previousMax = -1;
     if (rowCount() > 0) {
         const int role = roleForName_("group");
         if (role >= 0) previousMax = data(index(rowCount() - 1, 0), role).toInt();
@@ -209,9 +209,8 @@ void FilterRuleModel::sortByGroup() {
     fromVariantlist(values);
 }
 
-void FilterRuleModel::replaceState(
-    const QList<control::v1::WallpaperFilterRule>& filters,
-    const QList<control::v1::FilterLogic>& filterLogics) {
+void FilterRuleModel::replaceState(const QList<control::v1::WallpaperFilterRule>& filters,
+                                   const QList<control::v1::FilterLogic>&         filterLogics) {
     QVariantList values;
     values.reserve(filters.size());
     for (const auto& filter : filters) {
@@ -229,12 +228,9 @@ void FilterRuleModel::setDirty(bool v) {
     Q_EMIT dirtyChanged();
 }
 
-void FilterRuleModel::markDirty() {
-    setDirty(true);
-}
+void FilterRuleModel::markDirty() { setDirty(true); }
 
-WallpaperFilterRuleModel::WallpaperFilterRuleModel(QObject* parent)
-    : FilterRuleModel(this, parent) {
+WallpaperFilterRuleModel::WallpaperFilterRuleModel(QObject* parent): FilterRuleModel(this, parent) {
     updateRoleNames(control::v1::WallpaperFilterRule::staticMetaObject, this, {});
 }
 

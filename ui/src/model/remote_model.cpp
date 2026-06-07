@@ -17,8 +17,7 @@ int RemoteListModel::rowCount(const QModelIndex& parent) const {
 }
 
 QVariant RemoteListModel::data(const QModelIndex& index, int role) const {
-    if (! index.isValid() || index.row() < 0 || index.row() >= m_rows.size())
-        return {};
+    if (! index.isValid() || index.row() < 0 || index.row() >= m_rows.size()) return {};
     const auto& r = m_rows.at(index.row());
     switch (role) {
     case ItemIdRole: return r.id;
@@ -32,10 +31,8 @@ QVariant RemoteListModel::data(const QModelIndex& index, int role) const {
 
 QHash<int, QByteArray> RemoteListModel::roleNames() const {
     return {
-        { ItemIdRole, "itemId"_ba },
-        { TitleRole, "title"_ba },
-        { PreviewUrlRole, "previewUrl"_ba },
-        { AuthorRole, "author"_ba },
+        { ItemIdRole, "itemId"_ba },         { TitleRole, "title"_ba },
+        { PreviewUrlRole, "previewUrl"_ba }, { AuthorRole, "author"_ba },
         { InstalledRole, "installed"_ba },
     };
 }
@@ -61,7 +58,7 @@ void RemoteListModel::setInstalled(const QString& id, bool installed) {
         if (m_rows.at(i).id == id) {
             if (m_rows[i].installed != installed) {
                 m_rows[i].installed = installed;
-                const auto idx = index(i, 0);
+                const auto idx      = index(i, 0);
                 Q_EMIT dataChanged(idx, idx);
             }
             return;
@@ -72,15 +69,15 @@ void RemoteListModel::setInstalled(const QString& id, bool installed) {
 QVariantMap RemoteListModel::get(int row) const {
     QVariantMap m;
     if (row < 0 || row >= m_rows.size()) return m;
-    const auto& r = m_rows.at(row);
-    m["itemId"_L1] = r.id;
-    m["title"_L1] = r.title;
+    const auto& r      = m_rows.at(row);
+    m["itemId"_L1]     = r.id;
+    m["title"_L1]      = r.title;
     m["previewUrl"_L1] = r.previewUrl;
-    m["author"_L1] = r.author;
-    m["installed"_L1] = r.installed;
+    m["author"_L1]     = r.author;
+    m["installed"_L1]  = r.installed;
     return m;
 }
 
-}
+} // namespace waywallen::model
 
 #include "waywallen/model/remote_model.moc.cpp"

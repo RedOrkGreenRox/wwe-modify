@@ -11,7 +11,8 @@ export import :query.query;
 namespace waywallen
 {
 
-export class SourceListQuery : public Query, public QueryExtra<control::v1::Response, SourceListQuery> {
+export class SourceListQuery : public Query,
+                               public QueryExtra<control::v1::Response, SourceListQuery> {
     Q_OBJECT
     QML_ELEMENT
 

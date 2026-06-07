@@ -99,7 +99,7 @@ public:
 private:
     void handleEvent(const proto::Event& evt);
 
-    QList<Library*>               m_ordered;  // sorted by id
+    QList<Library*>            m_ordered; // sorted by id
     std::map<qint64, Library*> m_by_id;
 };
 

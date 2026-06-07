@@ -17,16 +17,15 @@ int main(int argc, char** argv) {
     QCommandLineParser parser;
     parser.addHelpOption();
     parser.addVersionOption();
-    parser.addOption({"ws-port",
-                      "Override the WebSocket port (normally discovered via DBus).",
-                      "port"});
+    parser.addOption(
+        { "ws-port", "Override the WebSocket port (normally discovered via DBus).", "port" });
     parser.process(gui_app);
 
     quint16 ws_port = 0;
     if (parser.isSet("ws-port")) {
         bool ok = false;
         ws_port = parser.value("ws-port").toUShort(&ok);
-        if (!ok) {
+        if (! ok) {
             qCritical("invalid --ws-port value: %s", qPrintable(parser.value("ws-port")));
             return 1;
         }

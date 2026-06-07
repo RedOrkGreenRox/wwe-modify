@@ -12,8 +12,9 @@ export import :model.list_models;
 namespace waywallen
 {
 
-export class WallpaperListQuery : public QueryList,
-                                  public ::QueryExtra<model::WallpaperListModel, WallpaperListQuery> {
+export class WallpaperListQuery
+    : public QueryList,
+      public ::QueryExtra<model::WallpaperListModel, WallpaperListQuery> {
     Q_OBJECT
     QML_ELEMENT
 
@@ -22,11 +23,14 @@ export class WallpaperListQuery : public QueryList,
                    setFilters NOTIFY filtersChanged FINAL)
     Q_PROPERTY(QList<waywallen::control::v1::FilterLogic> filterLogics READ filterLogics WRITE
                    setFilterLogics NOTIFY filterLogicsChanged FINAL)
-    Q_PROPERTY(QList<waywallen::control::v1::WallpaperSortRule> sorts READ sorts WRITE
-                   setSorts NOTIFY sortsChanged FINAL)
-    Q_PROPERTY(QString searchText READ searchText WRITE setSearchText NOTIFY searchTextChanged FINAL)
-    Q_PROPERTY(QStringList skipTypes READ skipTypes WRITE setSkipTypes NOTIFY skipTypesChanged FINAL)
-    Q_PROPERTY(QStringList filterTags READ filterTags WRITE setFilterTags NOTIFY filterTagsChanged FINAL)
+    Q_PROPERTY(QList<waywallen::control::v1::WallpaperSortRule> sorts READ sorts WRITE setSorts
+                   NOTIFY sortsChanged FINAL)
+    Q_PROPERTY(
+        QString searchText READ searchText WRITE setSearchText NOTIFY searchTextChanged FINAL)
+    Q_PROPERTY(
+        QStringList skipTypes READ skipTypes WRITE setSkipTypes NOTIFY skipTypesChanged FINAL)
+    Q_PROPERTY(
+        QStringList filterTags READ filterTags WRITE setFilterTags NOTIFY filterTagsChanged FINAL)
     Q_PROPERTY(QStringList skipContentRatings READ skipContentRatings WRITE setSkipContentRatings
                    NOTIFY skipContentRatingsChanged FINAL)
     Q_PROPERTY(bool hasActiveFilters READ hasActiveFilters NOTIFY filtersChanged FINAL)
@@ -41,8 +45,8 @@ public:
     auto filters() const -> const QList<control::v1::WallpaperFilterRule>&;
     void setFilters(const QList<control::v1::WallpaperFilterRule>&);
 
-    auto filterLogics() const -> const QList<control::v1::FilterLogic>&;
-    void setFilterLogics(const QList<control::v1::FilterLogic>&);
+    auto             filterLogics() const -> const QList<control::v1::FilterLogic>&;
+    void             setFilterLogics(const QList<control::v1::FilterLogic>&);
     Q_INVOKABLE bool replaceFilterState(const QList<control::v1::WallpaperFilterRule>&,
                                         const QList<control::v1::FilterLogic>&);
 
@@ -80,18 +84,19 @@ public:
     Q_SIGNAL void totalChanged();
 
 private:
-    QString                                   m_wp_type;
-    QList<control::v1::WallpaperFilterRule>   m_filters;
-    QList<control::v1::FilterLogic>           m_filter_logics;
-    QList<control::v1::WallpaperSortRule>     m_sorts;
-    QString                                   m_search_text;
-    QStringList                               m_skip_types;
-    QStringList                               m_filter_tags;
-    QStringList                               m_skip_content_ratings;
-    qint32                                    m_total { 0 };
+    QString                                 m_wp_type;
+    QList<control::v1::WallpaperFilterRule> m_filters;
+    QList<control::v1::FilterLogic>         m_filter_logics;
+    QList<control::v1::WallpaperSortRule>   m_sorts;
+    QString                                 m_search_text;
+    QStringList                             m_skip_types;
+    QStringList                             m_filter_tags;
+    QStringList                             m_skip_content_ratings;
+    qint32                                  m_total { 0 };
 };
 
-export class WallpaperScanQuery : public Query, public QueryExtra<control::v1::Response, WallpaperScanQuery> {
+export class WallpaperScanQuery : public Query,
+                                  public QueryExtra<control::v1::Response, WallpaperScanQuery> {
     Q_OBJECT
     QML_ELEMENT
 
@@ -110,12 +115,14 @@ private:
     quint32 m_count { 0 };
 };
 
-export class WallpaperGetQuery : public Query, public QueryExtra<control::v1::Response, WallpaperGetQuery> {
+export class WallpaperGetQuery : public Query,
+                                 public QueryExtra<control::v1::Response, WallpaperGetQuery> {
     Q_OBJECT
     QML_ELEMENT
 
     /// Source id; setting this triggers a reload. Empty = no-op.
-    Q_PROPERTY(QString wallpaperId READ wallpaperId WRITE setWallpaperId NOTIFY wallpaperIdChanged FINAL)
+    Q_PROPERTY(
+        QString wallpaperId READ wallpaperId WRITE setWallpaperId NOTIFY wallpaperIdChanged FINAL)
     /// Latest server-side view (entry + DB media-meta + tags). Read-only.
     Q_PROPERTY(waywallen::model::Wallpaper wallpaper READ wallpaper NOTIFY wallpaperChanged FINAL)
 
@@ -144,12 +151,15 @@ export class WallpaperPropertySetQuery
     QML_ELEMENT
 
     /// Wallpaper to edit. Empty disables `reload()`.
-    Q_PROPERTY(QString wallpaperId READ wallpaperId WRITE setWallpaperId NOTIFY wallpaperIdChanged FINAL)
+    Q_PROPERTY(
+        QString wallpaperId READ wallpaperId WRITE setWallpaperId NOTIFY wallpaperIdChanged FINAL)
     /// Property key (matches a key in the schema, e.g. `u_brightness`).
-    Q_PROPERTY(QString propertyKey READ propertyKey WRITE setPropertyKey NOTIFY propertyKeyChanged FINAL)
+    Q_PROPERTY(
+        QString propertyKey READ propertyKey WRITE setPropertyKey NOTIFY propertyKeyChanged FINAL)
     /// Serialized value: color → "r g b" / "r g b a"; slider → number;
     /// bool → "true"/"false"; string → raw. Empty clears the override.
-    Q_PROPERTY(QString propertyValue READ propertyValue WRITE setPropertyValue NOTIFY propertyValueChanged FINAL)
+    Q_PROPERTY(QString propertyValue READ propertyValue WRITE setPropertyValue NOTIFY
+                   propertyValueChanged FINAL)
 
 public:
     WallpaperPropertySetQuery(QObject* parent = nullptr);
@@ -175,16 +185,20 @@ private:
     QString m_property_value;
 };
 
-export class WallpaperApplyQuery : public Query, public QueryExtra<control::v1::Response, WallpaperApplyQuery> {
+export class WallpaperApplyQuery : public Query,
+                                   public QueryExtra<control::v1::Response, WallpaperApplyQuery> {
     Q_OBJECT
     QML_ELEMENT
 
-    Q_PROPERTY(waywallen::model::Wallpaper wallpaper READ wallpaper WRITE setWallpaper NOTIFY wallpaperChanged FINAL)
+    Q_PROPERTY(waywallen::model::Wallpaper wallpaper READ wallpaper WRITE setWallpaper NOTIFY
+                   wallpaperChanged FINAL)
     /// Target display ids. Empty list = "apply to all displays" (legacy default).
-    Q_PROPERTY(QVariantList displayIds READ displayIds WRITE setDisplayIds NOTIFY displayIdsChanged FINAL)
+    Q_PROPERTY(
+        QVariantList displayIds READ displayIds WRITE setDisplayIds NOTIFY displayIdsChanged FINAL)
     /// Optional renderer plugin name. Empty (default) lets the daemon pick
     /// the highest-priority renderer for this wallpaper's type.
-    Q_PROPERTY(QString rendererName READ rendererName WRITE setRendererName NOTIFY rendererNameChanged FINAL)
+    Q_PROPERTY(QString rendererName READ rendererName WRITE setRendererName NOTIFY
+                   rendererNameChanged FINAL)
     Q_PROPERTY(QString rendererId READ rendererId NOTIFY rendererIdChanged FINAL)
 
 public:
@@ -224,7 +238,8 @@ export class WallpaperApplyViaPortalQuery
     Q_OBJECT
     QML_ELEMENT
 
-    Q_PROPERTY(QString wallpaperId READ wallpaperId WRITE setWallpaperId NOTIFY wallpaperIdChanged FINAL)
+    Q_PROPERTY(
+        QString wallpaperId READ wallpaperId WRITE setWallpaperId NOTIFY wallpaperIdChanged FINAL)
     Q_PROPERTY(QString uri READ uri NOTIFY uriChanged FINAL)
 
 public:

@@ -123,7 +123,7 @@ public:
 private:
     void handleEvent(const proto::Event& evt);
 
-    QList<Renderer*>                m_ordered;  // sorted by id
+    QList<Renderer*>             m_ordered; // sorted by id
     std::map<QString, Renderer*> m_by_id;
 };
 

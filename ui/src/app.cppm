@@ -39,13 +39,13 @@ public:
 
     static auto instance() -> App*;
 
-    auto        displayManager() const -> DisplayManager*;
-    auto        rendererManager() const -> RendererManager*;
-    auto        libraryManager() const -> LibraryManager*;
-    auto        gpuManager() const -> GpuManager*;
+    auto displayManager() const -> DisplayManager*;
+    auto rendererManager() const -> RendererManager*;
+    auto libraryManager() const -> LibraryManager*;
+    auto gpuManager() const -> GpuManager*;
 
-    auto        engine() const -> QQmlApplicationEngine*;
-    auto        backend() const -> Backend*;
+    auto engine() const -> QQmlApplicationEngine*;
+    auto backend() const -> Backend*;
 
     Q_SLOT void load_settings();
     Q_SLOT void save_settings();

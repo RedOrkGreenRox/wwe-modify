@@ -51,7 +51,7 @@ auto map_to_autopause(const QVariantMap& m) -> proto::AutopauseSettings {
 }
 
 auto global_to_map(const proto::GlobalSettings& g) -> QVariantMap {
-    QVariantMap m;
+    QVariantMap  m;
     QVariantList wallpaper_filters;
     for (const auto& filter : g.wallpaperFilters()) {
         wallpaper_filters.append(QVariant::fromValue(filter));
@@ -107,7 +107,7 @@ auto plugins_to_map(const proto::SettingsGetResponse::PluginsEntry& src) -> QVar
 }
 
 auto map_to_global(const QVariantMap& m) -> proto::GlobalSettings {
-    proto::GlobalSettings g;
+    proto::GlobalSettings             g;
     QList<proto::WallpaperFilterRule> wallpaper_filters;
     for (const auto& value : m.value(u"wallpaperFilters"_s).toList()) {
         wallpaper_filters.append(value.value<proto::WallpaperFilterRule>());
@@ -165,9 +165,9 @@ auto map_to_global(const QVariantMap& m) -> proto::GlobalSettings {
 auto map_to_plugins(const QVariantMap& m) -> QHash<QString, proto::PluginSettings> {
     QHash<QString, proto::PluginSettings> out;
     for (auto it = m.constBegin(); it != m.constEnd(); ++it) {
-        proto::PluginSettings ps;
+        proto::PluginSettings              ps;
         proto::PluginSettings::ValuesEntry values;
-        const auto inner = it.value().toMap();
+        const auto                         inner = it.value().toMap();
         for (auto vit = inner.constBegin(); vit != inner.constEnd(); ++vit) {
             values.insert(vit.key(), vit.value().toString());
         }
@@ -203,8 +203,8 @@ void SettingsGetQuery::reload() {
 
         self->inspect_set(result, [self](const proto::Response& rsp) {
             const auto& get_rsp = rsp.settingsGet();
-            self->m_global  = global_to_map(get_rsp.global());
-            self->m_plugins = plugins_to_map(get_rsp.plugins());
+            self->m_global      = global_to_map(get_rsp.global());
+            self->m_plugins     = plugins_to_map(get_rsp.plugins());
             Q_EMIT self->globalChanged();
             Q_EMIT self->pluginsChanged();
         });
@@ -250,7 +250,8 @@ void SettingsSetQuery::reload() {
         co_await asio::post(asio::bind_executor(self->get_executor(), use_task));
         if (! self) co_return;
 
-        self->inspect_set(result, [](const proto::Response&) {});
+        self->inspect_set(result, [](const proto::Response&) {
+        });
         co_return;
     });
 }

@@ -93,7 +93,7 @@ auto RendererManager::get(const QString& id) const -> Renderer* {
 
 void RendererManager::replaceAll(const QList<proto::RendererInstance>& list) {
     std::map<QString, Renderer*> next_by_id;
-    QList<Renderer*>                next_ordered;
+    QList<Renderer*>             next_ordered;
     next_ordered.reserve(list.size());
 
     for (const auto& info : list) {
@@ -133,8 +133,8 @@ void RendererManager::upsert(const proto::RendererInstance& info) {
     }
     auto* r     = new Renderer(info, this);
     m_by_id[id] = r;
-    auto pos    = std::upper_bound(
-        m_ordered.begin(), m_ordered.end(), id, [](const QString& v, Renderer* x) {
+    auto pos =
+        std::upper_bound(m_ordered.begin(), m_ordered.end(), id, [](const QString& v, Renderer* x) {
             return v < x->id();
         });
     m_ordered.insert(pos, r);
@@ -152,7 +152,10 @@ void RendererManager::remove(const QString& id) {
 }
 
 void RendererManager::attachTo(Backend* backend) {
-    connect(backend, &Backend::eventReceived, this, &RendererManager::handleEvent,
+    connect(backend,
+            &Backend::eventReceived,
+            this,
+            &RendererManager::handleEvent,
             Qt::QueuedConnection);
 }
 

@@ -23,11 +23,7 @@ export class ThumbnailRequest;
 class ThumbnailJob : public QObject, public QRunnable {
     Q_OBJECT
 public:
-    ThumbnailJob(QString key,
-                 QString cache_path,
-                 bool    is_video,
-                 qint64  src_mtime,
-                 qint64  src_size);
+    ThumbnailJob(QString key, QString cache_path, bool is_video, qint64 src_mtime, qint64 src_size);
 
     void run() override;
 
@@ -36,10 +32,7 @@ Q_SIGNALS:
     /// settle. `state` is a `ThumbnailRequest::State` value (`Ready`
     /// or `Failed`); `cache_path` is filled on success, `error` on
     /// failure.
-    void finished(const QString& key,
-                  int            state,
-                  const QString& cache_path,
-                  const QString& error);
+    void finished(const QString& key, int state, const QString& cache_path, const QString& error);
 
 private:
     QString m_key;
@@ -62,18 +55,14 @@ export class ThumbnailService : public QObject {
     QML_SINGLETON
 
 public:
-    static auto    instance() -> ThumbnailService*;
-    static auto    create(QQmlEngine*, QJSEngine*) -> ThumbnailService*;
+    static auto instance() -> ThumbnailService*;
+    static auto create(QQmlEngine*, QJSEngine*) -> ThumbnailService*;
 
     /// Submit a cache-miss decode job. The Request resolves cache-hit
     /// and file-not-found cases synchronously before reaching here, so
     /// this entry point only handles the actual worker dispatch.
-    void submit(ThumbnailRequest* req,
-                const QString&    job_path,
-                const QString&    cache_path,
-                bool              is_video,
-                qint64            src_mtime,
-                qint64            src_size);
+    void submit(ThumbnailRequest* req, const QString& job_path, const QString& cache_path,
+                bool is_video, qint64 src_mtime, qint64 src_size);
     /// Drop any pending subscription for `req` (e.g. on destruction).
     void cancel(ThumbnailRequest* req);
 
@@ -89,9 +78,7 @@ private:
     QThreadPool             m_pool;
     QHash<QString, Pending> m_pending; // key = absolute job_path
 
-    void onJobFinished(const QString& key,
-                       int            state,
-                       const QString& cache_path,
+    void onJobFinished(const QString& key, int state, const QString& cache_path,
                        const QString& error);
 };
 
@@ -110,15 +97,21 @@ export class ThumbnailRequest : public QObject, public QQmlParserStatus {
     Q_INTERFACES(QQmlParserStatus)
     QML_ELEMENT
 
-    Q_PROPERTY(QString source     READ source    WRITE setSource    NOTIFY sourceChanged    FINAL)
-    Q_PROPERTY(QString resource   READ resource  WRITE setResource  NOTIFY resourceChanged  FINAL)
-    Q_PROPERTY(QString wpType     READ wpType    WRITE setWpType    NOTIFY wpTypeChanged    FINAL)
-    Q_PROPERTY(State   state      READ state                        NOTIFY stateChanged     FINAL)
-    Q_PROPERTY(QUrl    cachePath  READ cachePath                    NOTIFY cachePathChanged FINAL)
-    Q_PROPERTY(QString error      READ error                        NOTIFY errorChanged     FINAL)
+    Q_PROPERTY(QString source READ source WRITE setSource NOTIFY sourceChanged FINAL)
+    Q_PROPERTY(QString resource READ resource WRITE setResource NOTIFY resourceChanged FINAL)
+    Q_PROPERTY(QString wpType READ wpType WRITE setWpType NOTIFY wpTypeChanged FINAL)
+    Q_PROPERTY(State state READ state NOTIFY stateChanged FINAL)
+    Q_PROPERTY(QUrl cachePath READ cachePath NOTIFY cachePathChanged FINAL)
+    Q_PROPERTY(QString error READ error NOTIFY errorChanged FINAL)
 
 public:
-    enum State { Idle, Loading, Ready, Failed };
+    enum State
+    {
+        Idle,
+        Loading,
+        Ready,
+        Failed
+    };
     Q_ENUM(State)
 
     explicit ThumbnailRequest(QObject* parent = nullptr);

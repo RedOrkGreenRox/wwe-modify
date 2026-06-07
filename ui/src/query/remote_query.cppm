@@ -36,9 +36,8 @@ private:
     QString m_content_dir;
 };
 
-export class RemoteSearchQuery
-    : public Query,
-      public QueryExtra<control::v1::Response, RemoteSearchQuery> {
+export class RemoteSearchQuery : public Query,
+                                 public QueryExtra<control::v1::Response, RemoteSearchQuery> {
     Q_OBJECT
     QML_ELEMENT
 
@@ -65,7 +64,7 @@ public:
     auto hasMore() const -> bool;
     auto errorText() const -> const QString&;
 
-    void reload() override;
+    void             reload() override;
     Q_INVOKABLE void loadMore();
 
     Q_SIGNAL void queryChanged();
@@ -76,18 +75,17 @@ public:
 private:
     void fetchPage(quint32 page, bool append);
 
-    QString                    m_query;
-    int                        m_sort { 0 };
-    QStringList                m_tags;
-    model::RemoteListModel*  m_model;
-    bool                       m_has_more { false };
-    QString                    m_error;
-    quint32                    m_page { 1 };
+    QString                 m_query;
+    int                     m_sort { 0 };
+    QStringList             m_tags;
+    model::RemoteListModel* m_model;
+    bool                    m_has_more { false };
+    QString                 m_error;
+    quint32                 m_page { 1 };
 };
 
-export class RemoteDetailsQuery
-    : public Query,
-      public QueryExtra<control::v1::Response, RemoteDetailsQuery> {
+export class RemoteDetailsQuery : public Query,
+                                  public QueryExtra<control::v1::Response, RemoteDetailsQuery> {
     Q_OBJECT
     QML_ELEMENT
 
@@ -117,16 +115,15 @@ private:
     QStringList m_tags;
 };
 
-export class RemoteDownloadQuery
-    : public Query,
-      public QueryExtra<control::v1::Response, RemoteDownloadQuery> {
+export class RemoteDownloadQuery : public Query,
+                                   public QueryExtra<control::v1::Response, RemoteDownloadQuery> {
     Q_OBJECT
     QML_ELEMENT
 
 public:
     RemoteDownloadQuery(QObject* parent = nullptr);
 
-    void reload() override;
+    void             reload() override;
     Q_INVOKABLE void start(const QString& id);
     Q_INVOKABLE void uninstall(const QString& id);
 
@@ -136,4 +133,4 @@ public:
     Q_SIGNAL void uninstallFailed(const QString& id, const QString& error);
 };
 
-}
+} // namespace waywallen

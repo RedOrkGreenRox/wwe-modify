@@ -19,7 +19,8 @@ extern "C" {
  * `negotiate.rs::PathCategory` / `MemSource`.
  * ----------------------------------------------------------------------- */
 
-typedef enum ww_path_category {
+typedef enum ww_path_category
+{
     /* Both peers on the same physical GPU (UUIDs match, or DRM render
      * node major:minor matches when UUIDs are unknown). Use the
      * tile / vendor modifier the daemon picked. Modifier in the
@@ -44,7 +45,8 @@ typedef enum ww_path_category {
     WW_PATH_COMPAT_CPU_READBACK = 3,
 } ww_path_category_t;
 
-typedef enum ww_mem_source {
+typedef enum ww_mem_source
+{
     /* GBM_BO_USE_RENDERING / Vulkan DEVICE_LOCAL exportable. The
      * default for OPTIMIZED paths. */
     WW_MEM_SRC_GPU_NATIVE = 0,
@@ -70,24 +72,25 @@ typedef enum ww_mem_source {
 
 /* Daemon → bridge: full description of the slot pool to allocate. */
 typedef struct ww_pool_directive {
-    uint32_t category;       /* ww_path_category_t */
-    uint32_t mem_source;     /* ww_mem_source_t */
+    uint32_t category;   /* ww_path_category_t */
+    uint32_t mem_source; /* ww_mem_source_t */
     uint32_t fourcc;
     uint64_t modifier;
     uint32_t plane_count;
-    uint32_t sync_mode;      /* exactly one WW_SYNC_* bit */
-    uint32_t color;          /* WW_COLOR_* packed */
-    uint32_t mem_hint;       /* unused by bridge in Iter 1; advisory */
+    uint32_t sync_mode; /* exactly one WW_SYNC_* bit */
+    uint32_t color;     /* WW_COLOR_* packed */
+    uint32_t mem_hint;  /* unused by bridge in Iter 1; advisory */
     uint32_t width;
     uint32_t height;
-    uint32_t count;          /* pool size; >=1 */
+    uint32_t count; /* pool size; >=1 */
 } ww_pool_directive_t;
 
 /* -----------------------------------------------------------------------
  * Backend selection
  * ----------------------------------------------------------------------- */
 
-typedef enum ww_pool_backend {
+typedef enum ww_pool_backend
+{
     WW_POOL_BACKEND_EGL_GBM = 0, /* mpv plugin */
     WW_POOL_BACKEND_VULKAN  = 1, /* image plugin */
 } ww_pool_backend_t;
@@ -102,9 +105,9 @@ typedef enum ww_pool_backend {
  * platform); cast in/out at the call site to keep this header
  * EGL-include-free. */
 typedef struct ww_pool_egl_gbm_init {
-    void *egl_display;                            /* EGLDisplay */
-    int   drm_render_fd;                          /* moved */
-    void *(*get_proc_address)(const char *name);  /* eglGetProcAddress */
+    void* egl_display;                           /* EGLDisplay */
+    int   drm_render_fd;                         /* moved */
+    void* (*get_proc_address)(const char* name); /* eglGetProcAddress */
     /* DRM render major/minor as reported by EGL_DRM_RENDER_NODE_FILE_EXT
      * → stat(); used for the `ready` event sent by the bridge. Pass
      * (0,0) if unknown. */
@@ -125,14 +128,14 @@ typedef struct ww_pool_egl_gbm_init {
  * `VkPhysicalDeviceIDProperties`; bridge ships them in `format_caps`.
  * Pass NULL on either to send 16 zero bytes. */
 typedef struct ww_pool_vulkan_init {
-    void    *instance;
-    void    *physical_device;
-    void    *device;
+    void*    instance;
+    void*    physical_device;
+    void*    device;
     uint32_t queue_family_index;
-    void    *queue;                                /* VkQueue used for transfers */
-    void    *(*get_instance_proc_addr)(void *instance, const char *name);
-    const uint8_t *device_uuid;                    /* NULL or 16 bytes */
-    const uint8_t *driver_uuid;                    /* NULL or 16 bytes */
+    void*    queue; /* VkQueue used for transfers */
+    void* (*get_instance_proc_addr)(void* instance, const char* name);
+    const uint8_t* device_uuid; /* NULL or 16 bytes */
+    const uint8_t* driver_uuid; /* NULL or 16 bytes */
     /* Advisory fallback for the DRM render-node identity advertised
      * to the daemon. Bridge always tries VK_EXT_physical_device_drm
      * on the supplied physical_device first; these fields are used
@@ -147,12 +150,12 @@ typedef struct ww_pool_vulkan_init {
      * Pass an existing fd to make bridge dup it — useful when the
      * producer already keeps the render node open and wants to share
      * its kernel object table with bridge. */
-    int      drm_render_fd;
+    int drm_render_fd;
     /* VkImageUsageFlags for VkImageCreateInfo.usage at slot allocation
      * time. */
     uint32_t image_usage_flags;
     /* VkFormatFeatureFlags the negotiated modifier's
-     * drmFormatModifierTilingFeatures must cover. 
+     * drmFormatModifierTilingFeatures must cover.
      * Pass 0 for the TRANSFER_DST_BIT default. */
     uint32_t format_feature_flags;
 } ww_pool_vulkan_init_t;
@@ -179,14 +182,12 @@ typedef struct ww_pool ww_pool_t;
  * Bridge does NOT take ownership of:
  *   - `egl_display`, `instance`, `physical_device`, `device`, `queue`
  *     (caller's lifetime). */
-int  ww_bridge_pool_create(ww_pool_backend_t backend,
-                           const void       *init_data,
-                           ww_pool_t       **out_pool);
+int ww_bridge_pool_create(ww_pool_backend_t backend, const void* init_data, ww_pool_t** out_pool);
 
 /* Destroy a pool. Tears down all slot resources, closes the drm_fd,
  * destroys the GBM device or Vulkan-side bridge objects, and frees
  * the pool. Safe on NULL. */
-void ww_bridge_pool_destroy(ww_pool_t *pool);
+void ww_bridge_pool_destroy(ww_pool_t* pool);
 
 /* Probe the producer's per-fourcc modifier capabilities, encode them
  * as `format_caps`, and send on `sock`. Sends `ready` first if not
@@ -202,11 +203,8 @@ void ww_bridge_pool_destroy(ww_pool_t *pool);
  * probe finds zero modifier-aware (fourcc, modifier) combinations on
  * the device — that signals the daemon to pick `COMPAT_LINEAR`
  * unconditionally without trying any tile modifiers first. */
-int  ww_bridge_pool_advertise_caps(ww_pool_t *pool,
-                                   int        sock,
-                                   uint32_t   width,
-                                   uint32_t   height,
-                                   uint32_t   mem_hints);
+int ww_bridge_pool_advertise_caps(ww_pool_t* pool, int sock, uint32_t width, uint32_t height,
+                                  uint32_t mem_hints);
 
 /* Apply a directive received via `WW_EVT_IN_NEGOTIATE_BUFFERS`. Internal
  * sequence:
@@ -224,9 +222,7 @@ int  ww_bridge_pool_advertise_caps(ww_pool_t *pool,
  * Returns 0 on success, negative on dry-run failure (bind_failed
  * already sent), positive on protocol/system error (caller should
  * shut down). */
-int  ww_bridge_pool_apply_directive(ww_pool_t                 *pool,
-                                    int                        sock,
-                                    const ww_pool_directive_t *directive);
+int ww_bridge_pool_apply_directive(ww_pool_t* pool, int sock, const ww_pool_directive_t* directive);
 
 /* Per-slot resource view returned from `acquire_slot`. Plugin renders
  * into the backend-specific handle:
@@ -244,8 +240,8 @@ typedef struct ww_pool_slot {
     uint32_t gl_export_texture;
     /* Vulkan backend: render into this image. Both NULL on the
      * EGL/GBM backend. */
-    void    *vk_image;
-    void    *vk_memory;
+    void* vk_image;
+    void* vk_memory;
     /* Layout (informational; same across slots within one directive).
      * Plugin doesn't usually need these — bridge already filled
      * `bind_buffers` — but they're handy when the upload path needs
@@ -264,9 +260,7 @@ typedef struct ww_pool_slot {
  *
  * Returns 0 on success. Returns -EINVAL when the pool has no
  * directive applied yet, or when `slot_index` is out of range. */
-int  ww_bridge_pool_acquire_slot(ww_pool_t      *pool,
-                                 uint32_t        slot_index,
-                                 ww_pool_slot_t *out_slot);
+int ww_bridge_pool_acquire_slot(ww_pool_t* pool, uint32_t slot_index, ww_pool_slot_t* out_slot);
 
 /* Submit a rendered slot. Bridge:
  *   - Takes ownership of `acquire_sync_fd` (closes after sendmsg).
@@ -294,10 +288,7 @@ int  ww_bridge_pool_acquire_slot(ww_pool_t      *pool,
  * fence and the daemon may stall briefly).
  *
  * Returns 0 on success. */
-int  ww_bridge_pool_submit_slot(ww_pool_t *pool,
-                                int        sock,
-                                uint32_t   slot_index,
-                                int        acquire_sync_fd);
+int ww_bridge_pool_submit_slot(ww_pool_t* pool, int sock, uint32_t slot_index, int acquire_sync_fd);
 
 /* Block until the slot's last release_point has been signaled by the
  * daemon's reaper, with a wall-clock timeout. Plugin SHOULD call
@@ -305,9 +296,7 @@ int  ww_bridge_pool_submit_slot(ww_pool_t *pool,
  * signal, negative on timeout/error. Treat non-zero as "consumer is
  * still using the buffer; render anyway" — the plugin is encouraged
  * to proceed (running ahead is preferable to a stuck producer). */
-int  ww_bridge_pool_wait_slot_release(ww_pool_t *pool,
-                                      uint32_t   slot_index,
-                                      uint32_t   timeout_ms);
+int ww_bridge_pool_wait_slot_release(ww_pool_t* pool, uint32_t slot_index, uint32_t timeout_ms);
 
 #ifdef __cplusplus
 } /* extern "C" */

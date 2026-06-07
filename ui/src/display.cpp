@@ -34,7 +34,7 @@ auto Display::linksFromPb(const proto::DisplayInfo& info) -> QVariantList {
 auto Display::effectiveLayoutFromPb(const proto::DisplayInfo& info) -> QVariantMap {
     QVariantMap m;
     if (! info.hasEffectiveLayout()) return m;
-    const auto& l = info.effectiveLayout();
+    const auto& l    = info.effectiveLayout();
     m[u"fillmode"_s] = static_cast<int>(l.fillmode());
     m[u"align"_s]    = static_cast<int>(l.align());
     m[u"rotation"_s] = static_cast<int>(l.rotation());
@@ -44,7 +44,7 @@ auto Display::effectiveLayoutFromPb(const proto::DisplayInfo& info) -> QVariantM
 auto Display::layoutOverrideFromPb(const proto::DisplayInfo& info) -> QVariantMap {
     QVariantMap m;
     if (! info.hasLayoutOverride()) return m;
-    const auto& o = info.layoutOverride();
+    const auto& o       = info.layoutOverride();
     m[u"fillmodeSet"_s] = o.fillmodeSet();
     m[u"fillmode"_s]    = static_cast<int>(o.fillmode());
     m[u"alignSet"_s]    = o.alignSet();
@@ -146,7 +146,7 @@ auto DisplayManager::get(quint64 id) const -> Display* {
 
 void DisplayManager::replaceAll(const QList<proto::DisplayInfo>& list) {
     std::map<quint64, Display*> next_by_id;
-    QList<Display*>                next_ordered;
+    QList<Display*>             next_ordered;
     next_ordered.reserve(list.size());
 
     for (const auto& info : list) {
@@ -158,8 +158,8 @@ void DisplayManager::replaceAll(const QList<proto::DisplayInfo>& list) {
             next_ordered.append(it->second);
             m_by_id.erase(it);
         } else {
-            auto* d         = new Display(info, this);
-            next_by_id[id]  = d;
+            auto* d        = new Display(info, this);
+            next_by_id[id] = d;
             next_ordered.append(d);
         }
     }
@@ -184,12 +184,11 @@ void DisplayManager::upsert(const proto::DisplayInfo& info) {
         it->second->updateFrom(info);
         return;
     }
-    auto* d    = new Display(info, this);
+    auto* d     = new Display(info, this);
     m_by_id[id] = d;
-    auto pos   = std::upper_bound(
-        m_ordered.begin(), m_ordered.end(), id, [](quint64 v, Display* x) {
-            return v < x->id();
-        });
+    auto pos = std::upper_bound(m_ordered.begin(), m_ordered.end(), id, [](quint64 v, Display* x) {
+        return v < x->id();
+    });
     m_ordered.insert(pos, d);
     Q_EMIT displaysChanged();
 }
@@ -205,8 +204,8 @@ void DisplayManager::remove(quint64 id) {
 }
 
 void DisplayManager::attachTo(Backend* backend) {
-    connect(backend, &Backend::eventReceived, this, &DisplayManager::handleEvent,
-            Qt::QueuedConnection);
+    connect(
+        backend, &Backend::eventReceived, this, &DisplayManager::handleEvent, Qt::QueuedConnection);
 }
 
 void DisplayManager::handleEvent(const proto::Event& evt) {

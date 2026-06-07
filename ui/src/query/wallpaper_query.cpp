@@ -66,14 +66,13 @@ void WallpaperListQuery::setFilterLogics(const QList<control::v1::FilterLogic>& 
     Q_EMIT filterStateChanged();
 }
 
-bool WallpaperListQuery::replaceFilterState(
-    const QList<control::v1::WallpaperFilterRule>& filters,
-    const QList<control::v1::FilterLogic>& logics) {
+bool WallpaperListQuery::replaceFilterState(const QList<control::v1::WallpaperFilterRule>& filters,
+                                            const QList<control::v1::FilterLogic>&         logics) {
     const bool filters_changed = m_filters != filters;
-    const bool logics_changed = m_filter_logics != logics;
-    if (!filters_changed && !logics_changed) return false;
+    const bool logics_changed  = m_filter_logics != logics;
+    if (! filters_changed && ! logics_changed) return false;
 
-    m_filters = filters;
+    m_filters       = filters;
     m_filter_logics = logics;
     setOffset(0);
     if (filters_changed) Q_EMIT filtersChanged();
@@ -131,9 +130,7 @@ void WallpaperListQuery::setSkipContentRatings(const QStringList& v) {
     Q_EMIT skipContentRatingsChanged();
 }
 
-auto WallpaperListQuery::hasActiveFilters() const -> bool {
-    return !m_filters.isEmpty();
-}
+auto WallpaperListQuery::hasActiveFilters() const -> bool { return ! m_filters.isEmpty(); }
 
 auto WallpaperListQuery::total() const -> qint32 { return m_total; }
 

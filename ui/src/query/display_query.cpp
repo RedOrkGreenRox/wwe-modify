@@ -75,12 +75,12 @@ void DisplayListQuery::reload() {
 
 DisplayLayoutSetQuery::DisplayLayoutSetQuery(QObject* parent): Query(parent) {}
 
-#define WW_SET(field, val)                                  \
-    do {                                                    \
-        if (this->field != val) {                           \
-            this->field = val;                              \
-            Q_EMIT paramsChanged();                         \
-        }                                                   \
+#define WW_SET(field, val)          \
+    do {                            \
+        if (this->field != val) {   \
+            this->field = val;      \
+            Q_EMIT paramsChanged(); \
+        }                           \
     } while (0)
 
 void DisplayLayoutSetQuery::setName(const QString& v) { WW_SET(m_name, v); }
@@ -135,12 +135,12 @@ void DisplayLayoutSetQuery::reload() {
 
 DisplayRenameQuery::DisplayRenameQuery(QObject* parent): Query(parent) {}
 
-#define WW_SET(field, val)                                  \
-    do {                                                    \
-        if (this->field != val) {                           \
-            this->field = val;                              \
-            Q_EMIT paramsChanged();                         \
-        }                                                   \
+#define WW_SET(field, val)          \
+    do {                            \
+        if (this->field != val) {   \
+            this->field = val;      \
+            Q_EMIT paramsChanged(); \
+        }                           \
     } while (0)
 
 void DisplayRenameQuery::setName(const QString& v) { WW_SET(m_name, v); }

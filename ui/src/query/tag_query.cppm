@@ -12,8 +12,7 @@ namespace waywallen
 {
 
 // All distinct tag names in the library DB. Feeds the tag-filter picker.
-export class TagListQuery : public Query,
-                            public QueryExtra<control::v1::Response, TagListQuery> {
+export class TagListQuery : public Query, public QueryExtra<control::v1::Response, TagListQuery> {
     Q_OBJECT
     QML_ELEMENT
 
@@ -34,8 +33,9 @@ private:
 
 // All distinct content-rating values in the library DB. Feeds the
 // content-rating filter picker / quick toggles.
-export class ContentRatingListQuery : public Query,
-                                      public QueryExtra<control::v1::Response, ContentRatingListQuery> {
+export class ContentRatingListQuery
+    : public Query,
+      public QueryExtra<control::v1::Response, ContentRatingListQuery> {
     Q_OBJECT
     QML_ELEMENT
 

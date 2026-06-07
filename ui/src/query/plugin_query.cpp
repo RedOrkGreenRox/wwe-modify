@@ -122,7 +122,7 @@ void PluginInstallQuery::reload() {
         if (! self) co_return;
 
         self->inspect_set(result, [self](const proto::Response& rsp) {
-            const auto& r       = rsp.pluginInstall();
+            const auto& r         = rsp.pluginInstall();
             self->m_plugin_id     = r.pluginId();
             self->m_needs_restart = r.needsRestart();
             Q_EMIT self->resultChanged();

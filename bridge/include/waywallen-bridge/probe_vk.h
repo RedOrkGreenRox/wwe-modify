@@ -23,13 +23,13 @@ extern "C" {
  * mean the entry point wasn't resolvable on the supplied
  * instance/device; helpers check before invoking. */
 typedef struct ww_bridge_vk_dt {
-    PFN_vkGetInstanceProcAddr                  vkGetInstanceProcAddr;
+    PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr;
     /* Physical-device queries. Resolved against the live instance. */
-    PFN_vkEnumeratePhysicalDevices             vkEnumeratePhysicalDevices;
-    PFN_vkEnumerateDeviceExtensionProperties   vkEnumerateDeviceExtensionProperties;
-    PFN_vkGetPhysicalDeviceProperties          vkGetPhysicalDeviceProperties;
-    PFN_vkGetPhysicalDeviceProperties2         vkGetPhysicalDeviceProperties2;
-    PFN_vkGetPhysicalDeviceFormatProperties2   vkGetPhysicalDeviceFormatProperties2;
+    PFN_vkEnumeratePhysicalDevices           vkEnumeratePhysicalDevices;
+    PFN_vkEnumerateDeviceExtensionProperties vkEnumerateDeviceExtensionProperties;
+    PFN_vkGetPhysicalDeviceProperties        vkGetPhysicalDeviceProperties;
+    PFN_vkGetPhysicalDeviceProperties2       vkGetPhysicalDeviceProperties2;
+    PFN_vkGetPhysicalDeviceFormatProperties2 vkGetPhysicalDeviceFormatProperties2;
 } ww_bridge_vk_dt_t;
 
 /* Resolve every dispatch entry by calling `get_instance_proc_addr`
@@ -41,8 +41,7 @@ typedef struct ww_bridge_vk_dt {
  * Returns 0 on success, -EINVAL if `dt` or `get_instance_proc_addr`
  * is NULL. Members stay NULL where the entry point isn't
  * resolvable. */
-int ww_bridge_vk_dt_load(ww_bridge_vk_dt_t *dt,
-                         PFN_vkGetInstanceProcAddr get_instance_proc_addr,
+int ww_bridge_vk_dt_load(ww_bridge_vk_dt_t* dt, PFN_vkGetInstanceProcAddr get_instance_proc_addr,
                          VkInstance instance);
 
 /* Print a "GPU info" diagnostic block to stderr for the picked
@@ -57,8 +56,7 @@ int ww_bridge_vk_dt_load(ww_bridge_vk_dt_t *dt,
  * when available; falls back to `vkGetPhysicalDeviceProperties` for
  * the bare-minimum device name + api version. No-op when both are
  * NULL or `phys` is VK_NULL_HANDLE. */
-void ww_bridge_vk_log_gpu_info(const char *prefix,
-                               const ww_bridge_vk_dt_t *dt,
+void ww_bridge_vk_log_gpu_info(const char* prefix, const ww_bridge_vk_dt_t* dt,
                                VkPhysicalDevice phys);
 
 /* Resolve a "/dev/dri/renderD*" path to the matching VkPhysicalDevice's
@@ -85,10 +83,8 @@ void ww_bridge_vk_log_gpu_info(const char *prefix,
  *  -ENOENT      no physical device matched the render major:minor.
  *  -errno       negative errno from stat(render_node_path) on failure.
  */
-int ww_bridge_vk_resolve_render_node(const ww_bridge_vk_dt_t *dt,
-                                     VkInstance instance,
-                                     const char *render_node_path,
-                                     uint8_t out_uuid[16]);
+int ww_bridge_vk_resolve_render_node(const ww_bridge_vk_dt_t* dt, VkInstance instance,
+                                     const char* render_node_path, uint8_t out_uuid[16]);
 
 /* Query VK_EXT_physical_device_drm for `phys` and write the render-node
  * (major, minor) out. Plugins call this to fill
@@ -111,10 +107,8 @@ int ww_bridge_vk_resolve_render_node(const ww_bridge_vk_dt_t *dt,
  *
  * On any non-zero return `*out_major` and `*out_minor` are written to 0.
  */
-int ww_bridge_vk_query_render_node(const ww_bridge_vk_dt_t *dt,
-                                   VkPhysicalDevice phys,
-                                   uint32_t *out_major,
-                                   uint32_t *out_minor);
+int ww_bridge_vk_query_render_node(const ww_bridge_vk_dt_t* dt, VkPhysicalDevice phys,
+                                   uint32_t* out_major, uint32_t* out_minor);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -49,9 +49,7 @@ static auto lm_instance(LibraryManager* in = nullptr) -> LibraryManager* {
     return instance;
 }
 
-LibraryManager::LibraryManager(QObject* parent): QObject(parent) {
-    lm_instance(this);
-}
+LibraryManager::LibraryManager(QObject* parent): QObject(parent) { lm_instance(this); }
 
 LibraryManager::~LibraryManager() {
     if (lm_instance() == this) {
@@ -59,9 +57,7 @@ LibraryManager::~LibraryManager() {
     }
 }
 
-auto LibraryManager::instance() -> LibraryManager* {
-    return lm_instance();
-}
+auto LibraryManager::instance() -> LibraryManager* { return lm_instance(); }
 
 auto LibraryManager::libraries() const -> QVariantList {
     QVariantList out;
@@ -77,7 +73,7 @@ auto LibraryManager::get(qint64 id) const -> Library* {
 
 void LibraryManager::replaceAll(const QList<proto::LibraryInstance>& list) {
     std::map<qint64, Library*> next_by_id;
-    QList<Library*>               next_ordered;
+    QList<Library*>            next_ordered;
     next_ordered.reserve(list.size());
 
     for (const auto& info : list) {
@@ -117,10 +113,9 @@ void LibraryManager::upsert(const proto::LibraryInstance& info) {
     }
     auto* r     = new Library(info, this);
     m_by_id[id] = r;
-    auto pos    = std::upper_bound(
-        m_ordered.begin(), m_ordered.end(), id, [](qint64 v, Library* x) {
-            return v < x->id();
-        });
+    auto pos = std::upper_bound(m_ordered.begin(), m_ordered.end(), id, [](qint64 v, Library* x) {
+        return v < x->id();
+    });
     m_ordered.insert(pos, r);
     Q_EMIT librariesChanged();
 }
@@ -136,8 +131,8 @@ void LibraryManager::remove(qint64 id) {
 }
 
 void LibraryManager::attachTo(Backend* backend) {
-    connect(backend, &Backend::eventReceived, this, &LibraryManager::handleEvent,
-            Qt::QueuedConnection);
+    connect(
+        backend, &Backend::eventReceived, this, &LibraryManager::handleEvent, Qt::QueuedConnection);
 }
 
 void LibraryManager::handleEvent(const proto::Event& evt) {

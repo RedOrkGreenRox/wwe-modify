@@ -142,7 +142,7 @@ public:
 private:
     void handleEvent(const proto::Event& evt);
 
-    QList<Display*>               m_ordered;  // sorted by id
+    QList<Display*>             m_ordered; // sorted by id
     std::map<quint64, Display*> m_by_id;
 };
 

@@ -36,10 +36,10 @@ public:
     Backend(quint16 port);
     ~Backend();
 
-    void connectTo();
-    void setPort(quint16 port);
+    void    connectTo();
+    void    setPort(quint16 port);
     quint16 port() const { return m_port; }
-    void disconnect();
+    void    disconnect();
 
     auto send(proto::Request&& req) -> task<Result<proto::Response, QString>>;
 
@@ -64,8 +64,7 @@ private:
     Box<ncrequest::WebSocketClient> m_client;
     Box<QProtobufSerializer>        m_serializer;
 
-    std::map<quint64, std::move_only_function<void(asio::error_code, proto::Response)>>
-        m_handlers;
+    std::map<quint64, std::move_only_function<void(asio::error_code, proto::Response)>> m_handlers;
 
     Atomic<quint64>      m_serial;
     quint16              m_port;

@@ -7,32 +7,27 @@ import :model.user_property;
 namespace waywallen::model
 {
 
-namespace {
+namespace
+{
 
 bool isSupported(const QString& type, bool has_options) {
     return type == QLatin1String("color") || type == QLatin1String("slider") ||
-           type == QLatin1String("bool") ||
-           (type == QLatin1String("combo") && has_options);
+           type == QLatin1String("bool") || (type == QLatin1String("combo") && has_options);
 }
 
 QString jsonValueToWireString(const QJsonValue& v) {
     switch (v.type()) {
-    case QJsonValue::Bool:
-        return v.toBool() ? QStringLiteral("true") : QStringLiteral("false");
-    case QJsonValue::Double:
-        return QString::number(v.toDouble());
-    case QJsonValue::String:
-        return v.toString();
+    case QJsonValue::Bool: return v.toBool() ? QStringLiteral("true") : QStringLiteral("false");
+    case QJsonValue::Double: return QString::number(v.toDouble());
+    case QJsonValue::String: return v.toString();
     case QJsonValue::Array: {
         QStringList parts;
-        const auto a = v.toArray();
+        const auto  a = v.toArray();
         parts.reserve(a.size());
-        for (const auto& e : a)
-            parts << QString::number(e.toDouble(), 'f', 4);
+        for (const auto& e : a) parts << QString::number(e.toDouble(), 'f', 4);
         return parts.join(QLatin1Char(' '));
     }
-    default:
-        return {};
+    default: return {};
     }
 }
 
@@ -42,27 +37,23 @@ QString coerceDefaultWireString(const QJsonValue& def, const QString& type) {
     if (type == QLatin1String("color")) {
         if (def.isArray()) {
             QStringList parts;
-            const auto a = def.toArray();
+            const auto  a = def.toArray();
             parts.reserve(a.size());
-            for (const auto& e : a)
-                parts << QString::number(e.toDouble(), 'f', 4);
+            for (const auto& e : a) parts << QString::number(e.toDouble(), 'f', 4);
             return parts.join(QLatin1Char(' '));
         }
         if (def.isString()) return def.toString();
     }
     if (type == QLatin1String("bool"))
         return def.toBool() ? QStringLiteral("true") : QStringLiteral("false");
-    if (type == QLatin1String("slider"))
-        return QString::number(def.toDouble());
-    if (type == QLatin1String("combo"))
-        return jsonValueToWireString(def);
+    if (type == QLatin1String("slider")) return QString::number(def.toDouble());
+    if (type == QLatin1String("combo")) return jsonValueToWireString(def);
     return jsonValueToWireString(def);
 }
 
 } // namespace
 
-UserPropertyListModel::UserPropertyListModel(QObject* parent)
-    : QAbstractListModel(parent) {}
+UserPropertyListModel::UserPropertyListModel(QObject* parent): QAbstractListModel(parent) {}
 
 UserPropertyListModel::~UserPropertyListModel() = default;
 
@@ -73,16 +64,16 @@ int UserPropertyListModel::rowCount(const QModelIndex& parent) const {
 
 QHash<int, QByteArray> UserPropertyListModel::roleNames() const {
     return {
-        { KeyRole,          "key" },
-        { LabelRole,        "label" },
-        { TypeRole,         "type" },
-        { SupportedRole,    "supported" },
-        { MinValRole,       "minVal" },
-        { MaxValRole,       "maxVal" },
+        { KeyRole, "key" },
+        { LabelRole, "label" },
+        { TypeRole, "type" },
+        { SupportedRole, "supported" },
+        { MinValRole, "minVal" },
+        { MaxValRole, "maxVal" },
         { CurrentValueRole, "currentValue" },
-        { HasAlphaRole,     "hasAlpha" },
-        { OptionLabelsRole,  "optionLabels" },
-        { OptionValuesRole,  "optionValues" },
+        { HasAlphaRole, "hasAlpha" },
+        { OptionLabelsRole, "optionLabels" },
+        { OptionValuesRole, "optionValues" },
     };
 }
 
@@ -92,17 +83,17 @@ QVariant UserPropertyListModel::data(const QModelIndex& index, int role) const {
     if (row < 0 || row >= m_entries.size()) return {};
     const auto& e = m_entries.at(row);
     switch (role) {
-    case KeyRole:          return e.key;
-    case LabelRole:        return e.label;
-    case TypeRole:         return e.type;
-    case SupportedRole:    return e.supported;
-    case MinValRole:       return e.min_val;
-    case MaxValRole:       return e.max_val;
+    case KeyRole: return e.key;
+    case LabelRole: return e.label;
+    case TypeRole: return e.type;
+    case SupportedRole: return e.supported;
+    case MinValRole: return e.min_val;
+    case MaxValRole: return e.max_val;
     case CurrentValueRole: return currentValueFor_(row);
-    case OptionLabelsRole:  return e.option_labels;
-    case OptionValuesRole:  return e.option_values;
+    case OptionLabelsRole: return e.option_labels;
+    case OptionValuesRole: return e.option_values;
     case HasAlphaRole: {
-        const QString cv = currentValueFor_(row);
+        const QString                   cv = currentValueFor_(row);
         static const QRegularExpression reSpaces(QStringLiteral("\\s+"));
         return cv.trimmed().split(reSpaces, Qt::SkipEmptyParts).size() >= 4;
     }
@@ -111,7 +102,7 @@ QVariant UserPropertyListModel::data(const QModelIndex& index, int role) const {
 }
 
 QString UserPropertyListModel::currentValueFor_(qsizetype row) const {
-    const auto& e = m_entries.at(row);
+    const auto& e  = m_entries.at(row);
     const auto  it = m_overrides.constFind(e.key);
     if (it != m_overrides.constEnd() && ! it.value().isEmpty()) return it.value();
     return e.default_wire;
@@ -132,18 +123,18 @@ void UserPropertyListModel::setOverridesJson(const QString& v) {
     m_overrides.clear();
     if (! m_overrides_json.isEmpty()) {
         QJsonParseError err {};
-        const auto doc = QJsonDocument::fromJson(m_overrides_json.toUtf8(), &err);
+        const auto      doc = QJsonDocument::fromJson(m_overrides_json.toUtf8(), &err);
         if (err.error == QJsonParseError::NoError && doc.isObject()) {
             const auto obj = doc.object();
             for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
-                if (it.value().isString())
-                    m_overrides.insert(it.key(), it.value().toString());
+                if (it.value().isString()) m_overrides.insert(it.key(), it.value().toString());
             }
         }
     }
     // Every row's CurrentValue derivation depends on m_overrides.
     if (! m_entries.isEmpty()) {
-        Q_EMIT dataChanged(index(0), index(static_cast<int>(m_entries.size()) - 1),
+        Q_EMIT dataChanged(index(0),
+                           index(static_cast<int>(m_entries.size()) - 1),
                            { CurrentValueRole, HasAlphaRole });
     }
 }
@@ -153,40 +144,40 @@ void UserPropertyListModel::rebuildEntries_() {
     m_entries.clear();
     if (! m_schema_json.isEmpty()) {
         QJsonParseError err {};
-        const auto doc = QJsonDocument::fromJson(m_schema_json.toUtf8(), &err);
+        const auto      doc = QJsonDocument::fromJson(m_schema_json.toUtf8(), &err);
         if (err.error == QJsonParseError::NoError && doc.isObject()) {
             const auto obj = doc.object();
             m_entries.reserve(obj.size());
             for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
                 const auto v = it.value().toObject();
-                Entry e;
+                Entry      e;
                 e.key   = it.key();
                 e.label = v.value(QStringLiteral("text")).toString();
                 if (e.label.isEmpty()) e.label = e.key;
-                e.type  = v.value(QStringLiteral("type")).toString().toLower();
+                e.type = v.value(QStringLiteral("type")).toString().toLower();
                 if (v.value(QStringLiteral("options")).isArray()) {
                     const auto opts = v.value(QStringLiteral("options")).toArray();
                     e.option_labels.reserve(opts.size());
                     e.option_values.reserve(opts.size());
                     for (const auto& opt_value : opts) {
                         const auto opt = opt_value.toObject();
-                        QString value = jsonValueToWireString(opt.value(QStringLiteral("value")));
-                        QString label = opt.value(QStringLiteral("label")).toString();
+                        QString value  = jsonValueToWireString(opt.value(QStringLiteral("value")));
+                        QString label  = opt.value(QStringLiteral("label")).toString();
                         if (label.isEmpty()) label = value;
                         e.option_values.append(std::move(value));
                         e.option_labels.append(std::move(label));
                     }
                 }
-                e.supported = isSupported(e.type, ! e.option_values.isEmpty());
-                e.min_val   = v.value(QStringLiteral("min")).toDouble(0.0);
-                e.max_val   = v.value(QStringLiteral("max")).toDouble(1.0);
-                e.default_wire =
-                    coerceDefaultWireString(v.value(QStringLiteral("value")), e.type);
-                e.order = v.value(QStringLiteral("order")).toDouble(0.0);
+                e.supported    = isSupported(e.type, ! e.option_values.isEmpty());
+                e.min_val      = v.value(QStringLiteral("min")).toDouble(0.0);
+                e.max_val      = v.value(QStringLiteral("max")).toDouble(1.0);
+                e.default_wire = coerceDefaultWireString(v.value(QStringLiteral("value")), e.type);
+                e.order        = v.value(QStringLiteral("order")).toDouble(0.0);
                 m_entries.append(std::move(e));
             }
-            std::sort(m_entries.begin(), m_entries.end(),
-                      [](const Entry& a, const Entry& b) { return a.order < b.order; });
+            std::sort(m_entries.begin(), m_entries.end(), [](const Entry& a, const Entry& b) {
+                return a.order < b.order;
+            });
         }
     }
     endResetModel();

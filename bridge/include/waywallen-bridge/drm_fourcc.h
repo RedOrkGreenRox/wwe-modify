@@ -33,13 +33,13 @@ extern "C" {
  * <drm/drm_fourcc.h>; some gbm.h pulls it in transitively, others
  * don't, so guard. */
 #ifndef DRM_FORMAT_MOD_LINEAR
-#define DRM_FORMAT_MOD_LINEAR 0ULL
+#    define DRM_FORMAT_MOD_LINEAR 0ULL
 #endif
 
 /* Return a static, NUL-terminated short name for the supported
  * fourccs above. Unknown values yield "?". Useful for log messages
  * shared across renderers. */
-const char *ww_fourcc_name(uint32_t fourcc);
+const char* ww_fourcc_name(uint32_t fourcc);
 
 #ifdef __cplusplus
 } /* extern "C" */

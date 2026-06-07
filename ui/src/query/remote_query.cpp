@@ -34,7 +34,7 @@ void RemoteAvailabilityQuery::reload() {
         if (! self) co_return;
 
         self->inspect_set(result, [self](const proto::Response& rsp) {
-            const auto& av    = rsp.remoteAvailability();
+            const auto& av      = rsp.remoteAvailability();
             self->m_owned       = av.owned();
             self->m_content_dir = av.contentDir();
             Q_EMIT self->ownedChanged();
@@ -107,7 +107,7 @@ void RemoteSearchQuery::fetchPage(quint32 page, bool append) {
         if (! self) co_return;
 
         self->inspect_set(result, [self, page, append](const proto::Response& rsp) {
-            const auto& sr = rsp.remoteSearch();
+            const auto&             sr = rsp.remoteSearch();
             QList<model::RemoteRow> rows;
             rows.reserve(sr.items().size());
             for (const auto& it : sr.items()) {
@@ -168,12 +168,11 @@ void RemoteDetailsQuery::reload() {
         if (! self) co_return;
 
         self->inspect_set(result, [self](const proto::Response& rsp) {
-            const auto& dr = rsp.remoteDetails();
+            const auto& dr      = rsp.remoteDetails();
             self->m_description = dr.description();
             self->m_size        = dr.size();
             self->m_tags.clear();
-            for (const auto& t : dr.tags())
-                self->m_tags.push_back(t);
+            for (const auto& t : dr.tags()) self->m_tags.push_back(t);
             Q_EMIT self->loaded();
         });
         co_return;
@@ -240,6 +239,6 @@ void RemoteDownloadQuery::uninstall(const QString& id) {
     });
 }
 
-}
+} // namespace waywallen
 
 #include "waywallen/query/remote_query.moc.cpp"

@@ -31,8 +31,8 @@ Util::Desktop Util::desktop() const {
     static const Desktop result = []() {
         const QByteArray xdg = qgetenv("XDG_CURRENT_DESKTOP");
         if (xdg.isEmpty()) return Desktop::Unknown;
-        const QString lower = QString::fromLocal8Bit(xdg).toLower();
-        const auto tokens = lower.split(QLatin1Char(':'), Qt::SkipEmptyParts);
+        const QString lower  = QString::fromLocal8Bit(xdg).toLower();
+        const auto    tokens = lower.split(QLatin1Char(':'), Qt::SkipEmptyParts);
         for (const auto& t : tokens) {
             const auto v = t.trimmed();
             if (v == QLatin1String("kde")) return Desktop::Kde;
@@ -47,12 +47,10 @@ Util::Desktop Util::desktop() const {
 
 bool Util::supportsDisplayRename() const {
     switch (desktop()) {
-        case Desktop::Hyprland:
-        case Desktop::Sway:
-        case Desktop::Niri:
-            return true;
-        default:
-            return false;
+    case Desktop::Hyprland:
+    case Desktop::Sway:
+    case Desktop::Niri: return true;
+    default: return false;
     }
 }
 
@@ -62,7 +60,8 @@ bool Util::supportsDisplayRename() const {
 // `DotMatchesEverythingOption` lets `.*?` span newlines (Steam authors
 // freely mix `\n` inside BBCode blocks).
 
-namespace {
+namespace
+{
 
 QString escapeHtml(QString s) {
     s.replace(QLatin1Char('&'), QLatin1StringView("&amp;"));
@@ -72,24 +71,23 @@ QString escapeHtml(QString s) {
 }
 
 const QRegularExpression& reNoparse() {
-    static const QRegularExpression re(
-        QStringLiteral("\\[noparse\\](.*?)\\[/noparse\\]"),
-        QRegularExpression::CaseInsensitiveOption |
-            QRegularExpression::DotMatchesEverythingOption);
+    static const QRegularExpression re(QStringLiteral("\\[noparse\\](.*?)\\[/noparse\\]"),
+                                       QRegularExpression::CaseInsensitiveOption |
+                                           QRegularExpression::DotMatchesEverythingOption);
     return re;
 }
 
 // Replace every `[tag]...[/tag]` occurrence with `open<capture>close`.
-QString replaceTag(const QString& in, const QString& tag,
-                   const QString& openHtml, const QString& closeHtml) {
+QString replaceTag(const QString& in, const QString& tag, const QString& openHtml,
+                   const QString& closeHtml) {
     static QHash<QString, QRegularExpression*> cache;
-    QString key = tag.toLower();
-    auto it = cache.find(key);
+    QString                                    key = tag.toLower();
+    auto                                       it  = cache.find(key);
     if (it == cache.end()) {
         auto* re = new QRegularExpression(
             QStringLiteral("\\[%1\\](.*?)\\[/%1\\]").arg(QRegularExpression::escape(tag)),
             QRegularExpression::CaseInsensitiveOption |
-            QRegularExpression::DotMatchesEverythingOption);
+                QRegularExpression::DotMatchesEverythingOption);
         it = cache.insert(key, re);
     }
     return QString(in).replace(*it.value(), openHtml + QStringLiteral("\\1") + closeHtml);
@@ -103,9 +101,9 @@ QString Util::bbcodeToHtml(const QString& src) const {
     // Hoist [noparse] payloads behind opaque sentinels so the rest of the
     // pipeline doesn't touch their content. Restored after escaping.
     QStringList noparseStash;
-    QString stage = src;
+    QString     stage = src;
     {
-        auto it = reNoparse().globalMatch(stage);
+        auto    it = reNoparse().globalMatch(stage);
         QString out;
         out.reserve(stage.size());
         int cursor = 0;
@@ -125,19 +123,16 @@ QString Util::bbcodeToHtml(const QString& src) const {
     stage = escapeHtml(stage);
 
     // Inline marks.
-    stage = replaceTag(stage, QStringLiteral("b"),
-                       QStringLiteral("<b>"),  QStringLiteral("</b>"));
-    stage = replaceTag(stage, QStringLiteral("i"),
-                       QStringLiteral("<i>"),  QStringLiteral("</i>"));
-    stage = replaceTag(stage, QStringLiteral("u"),
-                       QStringLiteral("<u>"),  QStringLiteral("</u>"));
-    stage = replaceTag(stage, QStringLiteral("s"),
-                       QStringLiteral("<s>"),  QStringLiteral("</s>"));
-    stage = replaceTag(stage, QStringLiteral("strike"),
-                       QStringLiteral("<s>"),  QStringLiteral("</s>"));
-    stage = replaceTag(stage, QStringLiteral("code"),
-                       QStringLiteral("<tt>"), QStringLiteral("</tt>"));
-    stage = replaceTag(stage, QStringLiteral("spoiler"),
+    stage = replaceTag(stage, QStringLiteral("b"), QStringLiteral("<b>"), QStringLiteral("</b>"));
+    stage = replaceTag(stage, QStringLiteral("i"), QStringLiteral("<i>"), QStringLiteral("</i>"));
+    stage = replaceTag(stage, QStringLiteral("u"), QStringLiteral("<u>"), QStringLiteral("</u>"));
+    stage = replaceTag(stage, QStringLiteral("s"), QStringLiteral("<s>"), QStringLiteral("</s>"));
+    stage =
+        replaceTag(stage, QStringLiteral("strike"), QStringLiteral("<s>"), QStringLiteral("</s>"));
+    stage =
+        replaceTag(stage, QStringLiteral("code"), QStringLiteral("<tt>"), QStringLiteral("</tt>"));
+    stage = replaceTag(stage,
+                       QStringLiteral("spoiler"),
                        QStringLiteral("<font color=\"#888888\">"),
                        QStringLiteral("</font>"));
 
@@ -147,17 +142,17 @@ QString Util::bbcodeToHtml(const QString& src) const {
         static const QRegularExpression re(
             QStringLiteral("\\[quote(?:=[^\\]]*)?\\](.*?)\\[/quote\\]"),
             QRegularExpression::CaseInsensitiveOption |
-            QRegularExpression::DotMatchesEverythingOption);
+                QRegularExpression::DotMatchesEverythingOption);
         stage.replace(re, QStringLiteral("<i>“\\1”</i>"));
     }
 
     // Headings — drop a tier so Workshop's [h1] doesn't dwarf the panel.
-    stage = replaceTag(stage, QStringLiteral("h1"),
-                       QStringLiteral("<h2>"), QStringLiteral("</h2>"));
-    stage = replaceTag(stage, QStringLiteral("h2"),
-                       QStringLiteral("<h3>"), QStringLiteral("</h3>"));
-    stage = replaceTag(stage, QStringLiteral("h3"),
-                       QStringLiteral("<h4>"), QStringLiteral("</h4>"));
+    stage =
+        replaceTag(stage, QStringLiteral("h1"), QStringLiteral("<h2>"), QStringLiteral("</h2>"));
+    stage =
+        replaceTag(stage, QStringLiteral("h2"), QStringLiteral("<h3>"), QStringLiteral("</h3>"));
+    stage =
+        replaceTag(stage, QStringLiteral("h3"), QStringLiteral("<h4>"), QStringLiteral("</h4>"));
 
     // Rules + lists. [*] terminator is implicit; emit <li> openers and let
     // the surrounding <ul>…</ul> auto-close items at </ul>.
@@ -182,19 +177,17 @@ QString Util::bbcodeToHtml(const QString& src) const {
         static const QRegularExpression reUrlEq(
             QStringLiteral("\\[url=([\"']?)([^\\]\"']+)\\1\\](.*?)\\[/url\\]"),
             QRegularExpression::CaseInsensitiveOption |
-            QRegularExpression::DotMatchesEverythingOption);
+                QRegularExpression::DotMatchesEverythingOption);
         stage.replace(reUrlEq, QStringLiteral("<a href=\"\\2\">\\3</a>"));
 
-        static const QRegularExpression reUrl(
-            QStringLiteral("\\[url\\](.*?)\\[/url\\]"),
-            QRegularExpression::CaseInsensitiveOption |
-            QRegularExpression::DotMatchesEverythingOption);
+        static const QRegularExpression reUrl(QStringLiteral("\\[url\\](.*?)\\[/url\\]"),
+                                              QRegularExpression::CaseInsensitiveOption |
+                                                  QRegularExpression::DotMatchesEverythingOption);
         stage.replace(reUrl, QStringLiteral("<a href=\"\\1\">\\1</a>"));
 
-        static const QRegularExpression reImg(
-            QStringLiteral("\\[img\\](.*?)\\[/img\\]"),
-            QRegularExpression::CaseInsensitiveOption |
-            QRegularExpression::DotMatchesEverythingOption);
+        static const QRegularExpression reImg(QStringLiteral("\\[img\\](.*?)\\[/img\\]"),
+                                              QRegularExpression::CaseInsensitiveOption |
+                                                  QRegularExpression::DotMatchesEverythingOption);
         stage.replace(reImg, QStringLiteral("<img src=\"\\1\">"));
     }
 
@@ -205,8 +198,8 @@ QString Util::bbcodeToHtml(const QString& src) const {
             QStringLiteral("(href=\")|(https?://[^\\s<\\[\\]]+)"));
         QString out;
         out.reserve(stage.size());
-        int cursor = 0;
-        auto it = reAuto.globalMatch(stage);
+        int  cursor = 0;
+        auto it     = reAuto.globalMatch(stage);
         while (it.hasNext()) {
             auto m = it.next();
             out.append(stage.mid(cursor, m.capturedStart() - cursor));
@@ -231,10 +224,10 @@ QString Util::bbcodeToHtml(const QString& src) const {
     // Restore [noparse] payloads as escaped, untouched text.
     {
         static const QRegularExpression reNp(QStringLiteral("\x01NP(\\d+)\x01"));
-        QString out;
+        QString                         out;
         out.reserve(stage.size());
-        int cursor = 0;
-        auto it = reNp.globalMatch(stage);
+        int  cursor = 0;
+        auto it     = reNp.globalMatch(stage);
         while (it.hasNext()) {
             auto m = it.next();
             out.append(stage.mid(cursor, m.capturedStart() - cursor));
@@ -253,16 +246,17 @@ QString Util::bbcodeToHtml(const QString& src) const {
 
 // --- WE wire color round-trip --------------------------------------------
 
-namespace {
+namespace
+{
 
 QList<double> parseWireColor(const QString& s) {
-    QList<double> out;
+    QList<double>                   out;
     static const QRegularExpression reSpaces(QStringLiteral("\\s+"));
-    const auto parts = s.trimmed().split(reSpaces, Qt::SkipEmptyParts);
+    const auto                      parts = s.trimmed().split(reSpaces, Qt::SkipEmptyParts);
     out.reserve(parts.size());
     for (const auto& p : parts) {
-        bool ok = false;
-        const double v = p.toDouble(&ok);
+        bool         ok = false;
+        const double v  = p.toDouble(&ok);
         if (! ok) return {};
         out.append(v);
     }
@@ -288,17 +282,15 @@ QColor Util::colorFromWire(const QString& s) const {
 }
 
 QString Util::colorToWire(const QColor& c, bool includeAlpha) const {
-    const QString r = QString::number(c.redF(),   'f', 4);
+    const QString r = QString::number(c.redF(), 'f', 4);
     const QString g = QString::number(c.greenF(), 'f', 4);
-    const QString b = QString::number(c.blueF(),  'f', 4);
+    const QString b = QString::number(c.blueF(), 'f', 4);
     if (! includeAlpha) return r + QLatin1Char(' ') + g + QLatin1Char(' ') + b;
     const QString a = QString::number(c.alphaF(), 'f', 4);
     return r + QLatin1Char(' ') + g + QLatin1Char(' ') + b + QLatin1Char(' ') + a;
 }
 
-bool Util::colorHasAlpha(const QString& s) const {
-    return parseWireColor(s).size() >= 4;
-}
+bool Util::colorHasAlpha(const QString& s) const { return parseWireColor(s).size() >= 4; }
 
 } // namespace waywallen
 

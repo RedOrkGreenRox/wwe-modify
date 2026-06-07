@@ -28,9 +28,8 @@ public:
     AppPrivate(App* self, quint16 port)
         : m_p(self),
           m_pool(4),
-          m_gui_context(Box<QtExecutionContext>::make(
-              QThread::currentThread(),
-              (QEvent::Type)QEvent::registerEventType())),
+          m_gui_context(Box<QtExecutionContext>::make(QThread::currentThread(),
+                                                      (QEvent::Type)QEvent::registerEventType())),
           m_main_win(nullptr),
           m_qml_engine(Box<QQmlApplicationEngine>::make()),
           m_backend(Box<Backend>::make(port)),
@@ -53,7 +52,7 @@ public:
 
     void save_settings() {}
 
-    App*                       m_p;
+    App* m_p;
     // Declared first so they outlive every manager below; asio strands held
     // by manager-owned queries must release while the pool is still alive.
     asio::thread_pool          m_pool;
@@ -80,14 +79,11 @@ App* App::create(QQmlEngine*, QJSEngine*) {
 
 App* App::instance() { return app_instance(); }
 
-App::App(quint16 port, rstd::empty)
-    : QObject(nullptr), d_ptr(new AppPrivate(this, port)) {
+App::App(quint16 port, rstd::empty): QObject(nullptr), d_ptr(new AppPrivate(this, port)) {
     app_instance(this);
 }
 
-App::~App() {
-    QAsyncResult::dropEx();
-}
+App::~App() { QAsyncResult::dropEx(); }
 
 void App::init() {
     Q_D(App);
@@ -101,7 +97,8 @@ void App::init() {
         });
     }
 
-    connect(engine, &QQmlApplicationEngine::quit, QGuiApplication::instance(), &QGuiApplication::quit);
+    connect(
+        engine, &QQmlApplicationEngine::quit, QGuiApplication::instance(), &QGuiApplication::quit);
 
     // Resolve ws port. Priority: explicit --ws-port override > DBus-discovered.
     auto* dbus = DaemonDBusClient::instance();

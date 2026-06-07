@@ -15,8 +15,9 @@
 extern "C" {
 #endif
 
-typedef enum ww_resolution {
-    WW_RESOLUTION_ORIGIN = 0,  /* no cap — use renderer's native size */
+typedef enum ww_resolution
+{
+    WW_RESOLUTION_ORIGIN = 0, /* no cap — use renderer's native size */
     WW_RESOLUTION_720P   = 1,
     WW_RESOLUTION_1080P  = 2,
     WW_RESOLUTION_1440P  = 3,
@@ -28,21 +29,21 @@ typedef enum ww_resolution {
  * waste bandwidth blowing up small sources. Renderers without a fixed
  * native (wescene — every scene is designed to scale) pass
  * `ALLOW_UPSCALE` so the user's choice is honoured exactly. */
-typedef enum ww_resolution_cap_option {
-    WW_RESOLUTION_CAP_DEFAULT       = 0,  /* downscale only; below cap is left as-is */
-    WW_RESOLUTION_CAP_ALLOW_UPSCALE = 1,  /* always scale to match the cap */
+typedef enum ww_resolution_cap_option
+{
+    WW_RESOLUTION_CAP_DEFAULT       = 0, /* downscale only; below cap is left as-is */
+    WW_RESOLUTION_CAP_ALLOW_UPSCALE = 1, /* always scale to match the cap */
 } ww_resolution_cap_option_t;
 
 /* Short-edge cap (in pixels) implied by the enum.
  * `WW_RESOLUTION_ORIGIN` and out-of-range values return 0 (= no cap). */
-static inline uint32_t ww_resolution_short_edge(uint32_t r)
-{
+static inline uint32_t ww_resolution_short_edge(uint32_t r) {
     switch (r) {
-    case WW_RESOLUTION_720P:  return 720u;
+    case WW_RESOLUTION_720P: return 720u;
     case WW_RESOLUTION_1080P: return 1080u;
     case WW_RESOLUTION_1440P: return 1440u;
     case WW_RESOLUTION_2160P: return 2160u;
-    default:                  return 0u;
+    default: return 0u;
     }
 }
 
@@ -57,16 +58,13 @@ static inline uint32_t ww_resolution_short_edge(uint32_t r)
  *   short edge matches the cap exactly — upward when the input is
  *   smaller, downward when larger. Use for renderers whose content
  *   has no fixed native (wescene). */
-static inline void ww_resolution_apply_cap(uint32_t resolution,
-                                           uint32_t option,
-                                           uint32_t *w, uint32_t *h)
-{
+static inline void ww_resolution_apply_cap(uint32_t resolution, uint32_t option, uint32_t* w,
+                                           uint32_t* h) {
     uint32_t cap = ww_resolution_short_edge(resolution);
     if (cap == 0 || w == 0 || h == 0 || *w == 0 || *h == 0) return;
     uint32_t short_edge = (*w < *h) ? *w : *h;
     if (short_edge == cap) return;
-    if (short_edge < cap
-        && option != (uint32_t)WW_RESOLUTION_CAP_ALLOW_UPSCALE) {
+    if (short_edge < cap && option != (uint32_t)WW_RESOLUTION_CAP_ALLOW_UPSCALE) {
         return;
     }
     if (*w < *h) {
@@ -84,8 +82,7 @@ static inline void ww_resolution_apply_cap(uint32_t resolution,
  * `[ORIGIN .. 2160P]` falls back to `WW_RESOLUTION_1080P`. ORIGIN
  * stays ORIGIN — callers that disallow it (web, no native size) must
  * filter it themselves. */
-static inline uint32_t ww_resolution_sanitize(uint32_t raw)
-{
+static inline uint32_t ww_resolution_sanitize(uint32_t raw) {
     if (raw > (uint32_t)WW_RESOLUTION_2160P) return (uint32_t)WW_RESOLUTION_1080P;
     return raw;
 }

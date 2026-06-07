@@ -30,7 +30,8 @@ public:
     /// Mirror of `pb::DaemonPhase`. UI gates the startup dialog and
     /// initial query fan-out on this; default is `Starting` so the
     /// dialog wins until the first authoritative `StatusSync` arrives.
-    enum class DaemonPhase {
+    enum class DaemonPhase
+    {
         Starting = 0,
         Ready    = 1,
     };
@@ -95,10 +96,8 @@ Q_SIGNALS:
     /// Daemon's display endpoint rejected an external display client at
     /// handshake (version mismatch / bad protocol name). Window.qml
     /// turns this into a toast.
-    void displayConnectionFailed(const QString& clientName,
-                                 quint32        clientProtocolVersion,
-                                 quint32        errorCode,
-                                 const QString& reason);
+    void displayConnectionFailed(const QString& clientName, quint32 clientProtocolVersion,
+                                 quint32 errorCode, const QString& reason);
     void remoteDownloadProgress(const QString& id, int state, const QString& error);
     void playlistChanged();
 

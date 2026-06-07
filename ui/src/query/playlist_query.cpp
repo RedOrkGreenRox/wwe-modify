@@ -39,8 +39,7 @@ void PlaylistListQuery::reload() {
                 m[u"intervalSecs"_s] = p.intervalSecs();
                 m[u"itemCount"_s]    = p.itemCount();
                 QStringList eids;
-                for (const auto& e : p.entryIds())
-                    eids.append(e);
+                for (const auto& e : p.entryIds()) eids.append(e);
                 m[u"entryIds"_s] = eids;
                 out.append(m);
             }
@@ -68,17 +67,17 @@ void PlaylistStatusQuery::reload() {
             QVariantList out;
             for (const auto& d : rsp.playlistStatus().displays()) {
                 QVariantMap m;
-                m[u"displayId"_s]    = static_cast<qulonglong>(d.displayId());
-                m[u"activeId"_s]     = static_cast<qint64>(d.activeId());
-                m[u"mode"_s]         = static_cast<int>(d.mode());
-                m[u"intervalSecs"_s] = d.intervalSecs();
-                m[u"currentId"_s]    = d.currentId();
-                m[u"position"_s]     = d.position();
-                m[u"count"_s]        = d.count();
+                m[u"displayId"_s]     = static_cast<qulonglong>(d.displayId());
+                m[u"activeId"_s]      = static_cast<qint64>(d.activeId());
+                m[u"mode"_s]          = static_cast<int>(d.mode());
+                m[u"intervalSecs"_s]  = d.intervalSecs();
+                m[u"currentId"_s]     = d.currentId();
+                m[u"position"_s]      = d.position();
+                m[u"count"_s]         = d.count();
                 m[u"remainingSecs"_s] = d.remainingSecs();
                 out.append(m);
             }
-            self->m_displays = std::move(out);
+            self->m_displays     = std::move(out);
             self->m_autoAttachId = static_cast<qint64>(rsp.playlistStatus().autoAttachId());
             Q_EMIT self->displaysChanged();
         });
@@ -120,7 +119,8 @@ void PlaylistMutationQuery::send(proto::Request req, bool captureCreate) {
     });
 }
 
-void PlaylistMutationQuery::create(const QString& name, int mode, int intervalSecs, const QVariantList& itemIds) {
+void PlaylistMutationQuery::create(const QString& name, int mode, int intervalSecs,
+                                   const QVariantList& itemIds) {
     proto::PlaylistCreateRequest r;
     r.setName(name);
     r.setMode(static_cast<proto::PlaylistMode>(mode));
@@ -247,6 +247,6 @@ void PlaylistMutationQuery::importPlaylist(const QString& path, qint64 intoId) {
     });
 }
 
-}
+} // namespace waywallen
 
 #include "waywallen/query/playlist_query.moc.cpp"

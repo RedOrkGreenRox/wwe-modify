@@ -27,7 +27,8 @@ public:
     /// Single source of truth for the daemon's reachability + compatibility.
     /// All UI bindings read this; per-flag bool variables are deliberately
     /// avoided so the state machine has one anchor.
-    enum Status {
+    enum Status
+    {
         Disconnected,    ///< Service not on bus, or DBus call failed.
         VersionMissing,  ///< Daemon online but lacks Version property (old build).
         VersionMismatch, ///< Daemon's Version differs from kRequiredDaemonVersion.
@@ -35,11 +36,11 @@ public:
     };
     Q_ENUM(Status)
 
-    Q_PROPERTY(Status   status         READ status         NOTIFY statusChanged FINAL)
-    Q_PROPERTY(quint16  wsPort         READ wsPort         NOTIFY wsPortChanged FINAL)
-    Q_PROPERTY(QString  daemonVersion  READ daemonVersion  NOTIFY statusChanged FINAL)
+    Q_PROPERTY(Status status READ status NOTIFY statusChanged FINAL)
+    Q_PROPERTY(quint16 wsPort READ wsPort NOTIFY wsPortChanged FINAL)
+    Q_PROPERTY(QString daemonVersion READ daemonVersion NOTIFY statusChanged FINAL)
     /// Convenience derived from `status == Connected`.
-    Q_PROPERTY(bool     daemonAvailable READ daemonAvailable NOTIFY statusChanged FINAL)
+    Q_PROPERTY(bool daemonAvailable READ daemonAvailable NOTIFY statusChanged FINAL)
 
     explicit DaemonDBusClient(QObject* parent = nullptr);
     ~DaemonDBusClient() override;
@@ -47,10 +48,10 @@ public:
     static DaemonDBusClient* create(QQmlEngine*, QJSEngine*);
     static DaemonDBusClient* instance();
 
-    Status        status() const          { return m_status; }
-    quint16       wsPort() const          { return m_ws_port; }
-    const QString& daemonVersion() const  { return m_daemon_version; }
-    bool          daemonAvailable() const { return m_status == Connected; }
+    Status         status() const { return m_status; }
+    quint16        wsPort() const { return m_ws_port; }
+    const QString& daemonVersion() const { return m_daemon_version; }
+    bool           daemonAvailable() const { return m_status == Connected; }
 
     /// Synchronous round-trip: read WsPort, then probe Version. Updates
     /// `status` to one of {Disconnected, VersionMissing, VersionMismatch,
@@ -76,8 +77,7 @@ private:
     Q_SLOT void on_service_unregistered(const QString& service);
     Q_SLOT void on_ready();
     Q_SLOT void on_shutting_down();
-    Q_SLOT void on_properties_changed(const QString&     iface,
-                                      const QVariantMap& changed,
+    Q_SLOT void on_properties_changed(const QString& iface, const QVariantMap& changed,
                                       const QStringList& invalidated);
 
     void setup_subscriptions();

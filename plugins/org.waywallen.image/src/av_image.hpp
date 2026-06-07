@@ -4,7 +4,8 @@
 #include <string>
 #include <vector>
 
-namespace ww_image {
+namespace ww_image
+{
 
 // Tightly-packed RGBA8 (R,G,B,A in memory order).
 struct RgbaBuf {
@@ -26,8 +27,6 @@ struct DecodeError {
 // downscale (never upscale a smaller source). The returned
 // `width`/`height` reflect the final scaled size. Populates
 // `err->message` and returns an empty buffer on failure.
-RgbaBuf decode_to_rgba(const std::string& path,
-                       uint32_t           resolution,
-                       DecodeError*       err);
+RgbaBuf decode_to_rgba(const std::string& path, uint32_t resolution, DecodeError* err);
 
 } // namespace ww_image

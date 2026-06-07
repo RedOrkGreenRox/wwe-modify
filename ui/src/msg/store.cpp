@@ -15,11 +15,9 @@ auto store_instance() -> AppStore* {
 }
 } // namespace
 
-AppStore::AppStore(QObject* parent): QObject(parent), wallpapers() {
-}
+AppStore::AppStore(QObject* parent): QObject(parent), wallpapers() {}
 
-AppStore::~AppStore() {
-}
+AppStore::~AppStore() {}
 
 auto AppStore::instance() -> AppStore* { return store_instance(); }
 

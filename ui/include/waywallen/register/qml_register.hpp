@@ -13,4 +13,4 @@ class QmlRegisterHelper : public QObject {
     Q_OBJECT
     QML_ELEMENT
 };
-} // namespace qcm
+} // namespace waywallen

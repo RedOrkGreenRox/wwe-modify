@@ -31,11 +31,11 @@ int ww_drm_open_render_node_by_minor(uint32_t minor);
  * timeline value 0. Use as both binary and timeline (the kernel
  * doesn't distinguish — points are just u64s, with 0 reserved as
  * "binary unsignaled"). */
-int ww_drm_syncobj_create(int drm_fd, uint32_t *out_handle);
+int ww_drm_syncobj_create(int drm_fd, uint32_t* out_handle);
 
 /* OPAQUE_FD export. Caller owns the returned fd and must close() it
  * (the kernel dup'd it). */
-int ww_drm_syncobj_export_fd(int drm_fd, uint32_t handle, int *out_fd);
+int ww_drm_syncobj_export_fd(int drm_fd, uint32_t handle, int* out_fd);
 
 /* DESTROY. Idempotent on (handle == 0). */
 void ww_drm_syncobj_destroy(int drm_fd, uint32_t handle);
@@ -43,8 +43,7 @@ void ww_drm_syncobj_destroy(int drm_fd, uint32_t handle);
 /* TIMELINE_WAIT on a single (handle, point) with WAIT_FOR_SUBMIT.
  * `timeout_ms` is wall-clock from now; passing 0 polls. Returns 0 on
  * signal, -ETIME on timeout, other negated errno on ioctl failure. */
-int ww_drm_syncobj_timeline_wait(int drm_fd, uint32_t handle, uint64_t point,
-                                 uint32_t timeout_ms);
+int ww_drm_syncobj_timeline_wait(int drm_fd, uint32_t handle, uint64_t point, uint32_t timeout_ms);
 
 #ifdef __cplusplus
 } /* extern "C" */

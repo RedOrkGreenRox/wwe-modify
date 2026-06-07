@@ -12,9 +12,11 @@ extern "C" {
 
 #include <memory>
 
-namespace ww_image {
+namespace ww_image
+{
 
-namespace {
+namespace
+{
 
 struct FmtCtxDeleter {
     void operator()(AVFormatContext* p) const noexcept {
@@ -61,14 +63,11 @@ std::string av_err_str(int rc) {
 
 } // namespace
 
-RgbaBuf decode_to_rgba(const std::string& path,
-                       uint32_t           resolution,
-                       DecodeError*       err) {
+RgbaBuf decode_to_rgba(const std::string& path, uint32_t resolution, DecodeError* err) {
     RgbaBuf out;
 
     AVFormatContext* raw_fmt = nullptr;
-    if (int rc = avformat_open_input(&raw_fmt, path.c_str(), nullptr, nullptr);
-        rc < 0) {
+    if (int rc = avformat_open_input(&raw_fmt, path.c_str(), nullptr, nullptr); rc < 0) {
         fail(err, "avformat_open_input: " + av_err_str(rc));
         return out;
     }
@@ -91,17 +90,16 @@ RgbaBuf decode_to_rgba(const std::string& path,
         return out;
     }
 
-    AVStream*            st  = fmt->streams[video_idx];
-    AVCodecParameters*   par = st->codecpar;
-    const AVCodec*       dec = avcodec_find_decoder(par->codec_id);
-    if (!dec) {
-        fail(err, std::string("no decoder for codec ")
-                      + avcodec_get_name(par->codec_id));
+    AVStream*          st  = fmt->streams[video_idx];
+    AVCodecParameters* par = st->codecpar;
+    const AVCodec*     dec = avcodec_find_decoder(par->codec_id);
+    if (! dec) {
+        fail(err, std::string("no decoder for codec ") + avcodec_get_name(par->codec_id));
         return out;
     }
 
     CodecCtxPtr cctx(avcodec_alloc_context3(dec));
-    if (!cctx) {
+    if (! cctx) {
         fail(err, "avcodec_alloc_context3 failed");
         return out;
     }
@@ -116,7 +114,7 @@ RgbaBuf decode_to_rgba(const std::string& path,
 
     PacketPtr pkt(av_packet_alloc());
     FramePtr  src_frame(av_frame_alloc());
-    if (!pkt || !src_frame) {
+    if (! pkt || ! src_frame) {
         fail(err, "av_packet_alloc / av_frame_alloc failed");
         return out;
     }
@@ -125,7 +123,7 @@ RgbaBuf decode_to_rgba(const std::string& path,
     // for stills; for multi-frame inputs this is frame 0, which is what M1
     // promises — animation pacing lands in M5).
     bool got_frame = false;
-    while (!got_frame) {
+    while (! got_frame) {
         int rc = av_read_frame(fmt.get(), pkt.get());
         if (rc == AVERROR_EOF) {
             // Flush the decoder.
@@ -173,17 +171,20 @@ RgbaBuf decode_to_rgba(const std::string& path,
      * user picked a numeric preset (never upscales for image). */
     uint32_t target_w = static_cast<uint32_t>(src_w);
     uint32_t target_h = static_cast<uint32_t>(src_h);
-    ww_resolution_apply_cap(resolution, WW_RESOLUTION_CAP_DEFAULT,
-                            &target_w, &target_h);
+    ww_resolution_apply_cap(resolution, WW_RESOLUTION_CAP_DEFAULT, &target_w, &target_h);
 
-    SwsPtr sws(sws_getContext(src_w, src_h, src_fmt,
+    SwsPtr sws(sws_getContext(src_w,
+                              src_h,
+                              src_fmt,
                               static_cast<int>(target_w),
                               static_cast<int>(target_h),
                               AV_PIX_FMT_RGBA,
-                              SWS_BICUBIC, nullptr, nullptr, nullptr));
-    if (!sws) {
-        fail(err, std::string("sws_getContext failed (src=")
-                      + av_get_pix_fmt_name(src_fmt) + ")");
+                              SWS_BICUBIC,
+                              nullptr,
+                              nullptr,
+                              nullptr));
+    if (! sws) {
+        fail(err, std::string("sws_getContext failed (src=") + av_get_pix_fmt_name(src_fmt) + ")");
         return out;
     }
 
@@ -193,10 +194,8 @@ RgbaBuf decode_to_rgba(const std::string& path,
     uint8_t* dst_planes[4]  = { out.data.data(), nullptr, nullptr, nullptr };
     int      dst_strides[4] = { static_cast<int>(stride), 0, 0, 0 };
 
-    int scaled = sws_scale(sws.get(),
-                           src_frame->data, src_frame->linesize,
-                           0, src_h,
-                           dst_planes, dst_strides);
+    int scaled = sws_scale(
+        sws.get(), src_frame->data, src_frame->linesize, 0, src_h, dst_planes, dst_strides);
     if (scaled <= 0) {
         fail(err, "sws_scale produced no rows");
         out.data.clear();

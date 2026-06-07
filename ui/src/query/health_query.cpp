@@ -7,7 +7,7 @@ module waywallen;
 import :query.health;
 import :app;
 
-using namespace qextra::prelude; 
+using namespace qextra::prelude;
 namespace proto = waywallen::control::v1;
 
 namespace waywallen

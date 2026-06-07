@@ -27,12 +27,14 @@ class UserPropertyListModel : public QAbstractListModel {
     Q_OBJECT
     QML_ELEMENT
 
-    Q_PROPERTY(QString schemaJson    READ schemaJson    WRITE setSchemaJson    NOTIFY schemaJsonChanged)
-    Q_PROPERTY(QString overridesJson READ overridesJson WRITE setOverridesJson NOTIFY overridesJsonChanged)
-    Q_PROPERTY(int     count         READ rowCount                             NOTIFY countChanged)
+    Q_PROPERTY(QString schemaJson READ schemaJson WRITE setSchemaJson NOTIFY schemaJsonChanged)
+    Q_PROPERTY(
+        QString overridesJson READ overridesJson WRITE setOverridesJson NOTIFY overridesJsonChanged)
+    Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
 
 public:
-    enum Roles {
+    enum Roles
+    {
         KeyRole = Qt::UserRole + 1,
         LabelRole,
         TypeRole,
@@ -49,16 +51,16 @@ public:
     explicit UserPropertyListModel(QObject* parent = nullptr);
     ~UserPropertyListModel() override;
 
-    int      rowCount(const QModelIndex& parent = {}) const override;
-    QVariant data(const QModelIndex& index, int role) const override;
+    int                    rowCount(const QModelIndex& parent = {}) const override;
+    QVariant               data(const QModelIndex& index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
 
-    auto schemaJson() const -> const QString& { return m_schema_json; }
-    void setSchemaJson(const QString& v);
+    auto          schemaJson() const -> const QString& { return m_schema_json; }
+    void          setSchemaJson(const QString& v);
     Q_SIGNAL void schemaJsonChanged();
 
-    auto overridesJson() const -> const QString& { return m_overrides_json; }
-    void setOverridesJson(const QString& v);
+    auto          overridesJson() const -> const QString& { return m_overrides_json; }
+    void          setOverridesJson(const QString& v);
     Q_SIGNAL void overridesJsonChanged();
 
     Q_SIGNAL void countChanged();
@@ -82,19 +84,19 @@ public:
 
 private:
     struct Entry {
-        QString key;
-        QString label;
-        QString type;
-        bool    supported { false };
-        double  min_val { 0.0 };
-        double  max_val { 1.0 };
-        QString default_wire;
+        QString     key;
+        QString     label;
+        QString     type;
+        bool        supported { false };
+        double      min_val { 0.0 };
+        double      max_val { 1.0 };
+        QString     default_wire;
         QStringList option_labels;
         QStringList option_values;
-        double  order { 0.0 };
+        double      order { 0.0 };
     };
 
-    void rebuildEntries_();
+    void    rebuildEntries_();
     QString currentValueFor_(qsizetype row) const;
     void    notifyCurrentChanged_(const QString& key);
 

@@ -9,7 +9,7 @@
  * compile flag in just for the timing helper. Must precede any
  * system header. */
 #ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200809L
+#    define _POSIX_C_SOURCE 200809L
 #endif
 
 #include <waywallen-bridge/bridge.h>
@@ -41,16 +41,16 @@
  * ----------------------------------------------------------------------- */
 
 static ww_bridge_log_callback_t s_log_cb = NULL;
-static void *s_log_ud = NULL;
+static void*                    s_log_ud = NULL;
 
-void ww_bridge_set_log_callback(ww_bridge_log_callback_t cb, void *user_data) {
+void ww_bridge_set_log_callback(ww_bridge_log_callback_t cb, void* user_data) {
     s_log_cb = cb;
     s_log_ud = user_data;
 }
 
-__attribute__((format(printf, 2, 3), visibility("hidden")))
-void ww_bridge_logf(ww_bridge_log_level_t level, const char *fmt, ...) {
-    char buf[1024];
+__attribute__((format(printf, 2, 3), visibility("hidden"))) void
+ww_bridge_logf(ww_bridge_log_level_t level, const char* fmt, ...) {
+    char    buf[1024];
     va_list ap;
     va_start(ap, fmt);
     int n = vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -60,18 +60,17 @@ void ww_bridge_logf(ww_bridge_log_level_t level, const char *fmt, ...) {
         s_log_cb(level, buf, s_log_ud);
         return;
     }
-    static const char *tags[] = { "DEBUG", "INFO", "WARN", "ERROR" };
-    unsigned idx = (unsigned)level <= 3u ? (unsigned)level : 3u;
+    static const char* tags[] = { "DEBUG", "INFO", "WARN", "ERROR" };
+    unsigned           idx    = (unsigned)level <= 3u ? (unsigned)level : 3u;
     fprintf(stderr, "waywallen-bridge [%s] %s\n", tags[idx], buf);
 }
-
 
 /* -----------------------------------------------------------------------
  * Connection
  * ----------------------------------------------------------------------- */
 
-int ww_bridge_connect(const char *socket_path) {
-    if (!socket_path) return -EINVAL;
+int ww_bridge_connect(const char* socket_path) {
+    if (! socket_path) return -EINVAL;
 
     int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0) return -errno;
@@ -79,14 +78,14 @@ int ww_bridge_connect(const char *socket_path) {
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    size_t plen = strlen(socket_path);
+    size_t plen     = strlen(socket_path);
     if (plen >= sizeof(addr.sun_path)) {
         close(fd);
         return -ENAMETOOLONG;
     }
     memcpy(addr.sun_path, socket_path, plen + 1);
 
-    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         int err = -errno;
         close(fd);
         return err;
@@ -98,13 +97,12 @@ void ww_bridge_close(int sock) {
     if (sock >= 0) close(sock);
 }
 
-
 /* -----------------------------------------------------------------------
  * Low-level framing
  * ----------------------------------------------------------------------- */
 
-static int write_all(int fd, const void *buf, size_t len) {
-    const uint8_t *p = (const uint8_t *)buf;
+static int write_all(int fd, const void* buf, size_t len) {
+    const uint8_t* p = (const uint8_t*)buf;
     while (len > 0) {
         ssize_t n = write(fd, p, len);
         if (n < 0) {
@@ -118,8 +116,8 @@ static int write_all(int fd, const void *buf, size_t len) {
     return 0;
 }
 
-static int read_all(int fd, void *buf, size_t len) {
-    uint8_t *p = (uint8_t *)buf;
+static int read_all(int fd, void* buf, size_t len) {
+    uint8_t* p = (uint8_t*)buf;
     while (len > 0) {
         ssize_t n = read(fd, p, len);
         if (n < 0) {
@@ -133,52 +131,48 @@ static int read_all(int fd, void *buf, size_t len) {
     return 0;
 }
 
-int ww_bridge_send_frame(int sock,
-                         uint16_t opcode,
-                         const uint8_t *body,
-                         size_t body_len,
-                         const int *fds,
-                         size_t n_fds) {
+int ww_bridge_send_frame(int sock, uint16_t opcode, const uint8_t* body, size_t body_len,
+                         const int* fds, size_t n_fds) {
     if (body_len > WW_BRIDGE_MAX_BODY) return -EMSGSIZE;
     if (n_fds > WW_BRIDGE_MAX_FDS) return -E2BIG;
 
-    uint8_t header[4];
+    uint8_t  header[4];
     uint16_t total = (uint16_t)(body_len + 4);
-    header[0] = (uint8_t)(opcode & 0xff);
-    header[1] = (uint8_t)((opcode >> 8) & 0xff);
-    header[2] = (uint8_t)(total & 0xff);
-    header[3] = (uint8_t)((total >> 8) & 0xff);
+    header[0]      = (uint8_t)(opcode & 0xff);
+    header[1]      = (uint8_t)((opcode >> 8) & 0xff);
+    header[2]      = (uint8_t)(total & 0xff);
+    header[3]      = (uint8_t)((total >> 8) & 0xff);
 
     /* Single sendmsg so SCM_RIGHTS attaches atomically to the header.
      * We pack header+body into two iovecs to avoid copying. */
     struct iovec iov[2];
     iov[0].iov_base = header;
-    iov[0].iov_len = 4;
-    int iov_count = 1;
+    iov[0].iov_len  = 4;
+    int iov_count   = 1;
     if (body_len > 0) {
-        iov[1].iov_base = (void *)body;
-        iov[1].iov_len = body_len;
-        iov_count = 2;
+        iov[1].iov_base = (void*)body;
+        iov[1].iov_len  = body_len;
+        iov_count       = 2;
     }
 
     /* Control message space for SCM_RIGHTS fds. */
     union {
-        char buf[CMSG_SPACE(sizeof(int) * WW_BRIDGE_MAX_FDS)];
+        char           buf[CMSG_SPACE(sizeof(int) * WW_BRIDGE_MAX_FDS)];
         struct cmsghdr align;
     } cmsg_storage;
 
     struct msghdr msg;
     memset(&msg, 0, sizeof(msg));
-    msg.msg_iov = iov;
+    msg.msg_iov    = iov;
     msg.msg_iovlen = iov_count;
 
     if (n_fds > 0) {
-        msg.msg_control = cmsg_storage.buf;
-        msg.msg_controllen = CMSG_SPACE(sizeof(int) * n_fds);
-        struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
-        cmsg->cmsg_level = SOL_SOCKET;
-        cmsg->cmsg_type = SCM_RIGHTS;
-        cmsg->cmsg_len = CMSG_LEN(sizeof(int) * n_fds);
+        msg.msg_control      = cmsg_storage.buf;
+        msg.msg_controllen   = CMSG_SPACE(sizeof(int) * n_fds);
+        struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
+        cmsg->cmsg_level     = SOL_SOCKET;
+        cmsg->cmsg_type      = SCM_RIGHTS;
+        cmsg->cmsg_len       = CMSG_LEN(sizeof(int) * n_fds);
         memcpy(CMSG_DATA(cmsg), fds, sizeof(int) * n_fds);
     }
 
@@ -195,7 +189,7 @@ int ww_bridge_send_frame(int sock,
         }
         if ((size_t)n == expected) return 0;
         /* Short write: finish with plain write() on the remainder. */
-        size_t done = (size_t)n;
+        size_t done      = (size_t)n;
         size_t head_left = done < 4 ? 4 - done : 0;
         size_t body_done = done < 4 ? 0 : done - 4;
         if (head_left > 0) {
@@ -210,39 +204,34 @@ int ww_bridge_send_frame(int sock,
     }
 }
 
-int ww_bridge_recv_frame(int sock,
-                         uint16_t *opcode_out,
-                         uint8_t **body_out,
-                         size_t *body_len_out,
-                         int *fds_out,
-                         size_t fds_cap,
-                         size_t *n_fds_out) {
-    if (!opcode_out || !body_out || !body_len_out || !n_fds_out) return -EINVAL;
+int ww_bridge_recv_frame(int sock, uint16_t* opcode_out, uint8_t** body_out, size_t* body_len_out,
+                         int* fds_out, size_t fds_cap, size_t* n_fds_out) {
+    if (! opcode_out || ! body_out || ! body_len_out || ! n_fds_out) return -EINVAL;
 
-    *body_out = NULL;
+    *body_out     = NULL;
     *body_len_out = 0;
-    *n_fds_out = 0;
+    *n_fds_out    = 0;
 
     /* Phase 1: read the 4-byte header via recvmsg to harvest any cmsg
      * fds that attach to the first byte of the frame. The while loop
      * handles short reads without losing ancillary data. */
     uint8_t header[4];
-    size_t filled = 0;
+    size_t  filled = 0;
     while (filled < 4) {
         struct iovec iov;
         iov.iov_base = header + filled;
-        iov.iov_len = 4 - filled;
+        iov.iov_len  = 4 - filled;
 
         union {
-            char buf[CMSG_SPACE(sizeof(int) * WW_BRIDGE_MAX_FDS)];
+            char           buf[CMSG_SPACE(sizeof(int) * WW_BRIDGE_MAX_FDS)];
             struct cmsghdr align;
         } cmsg_storage;
 
         struct msghdr msg;
         memset(&msg, 0, sizeof(msg));
-        msg.msg_iov = &iov;
-        msg.msg_iovlen = 1;
-        msg.msg_control = cmsg_storage.buf;
+        msg.msg_iov        = &iov;
+        msg.msg_iovlen     = 1;
+        msg.msg_control    = cmsg_storage.buf;
         msg.msg_controllen = sizeof(cmsg_storage.buf);
 
         ssize_t n;
@@ -253,12 +242,11 @@ int ww_bridge_recv_frame(int sock,
         if (n < 0) return -errno;
         if (n == 0) return -ENOTCONN;
 
-        for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg); cmsg;
-             cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+        for (struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
             if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
-                size_t payload = cmsg->cmsg_len - CMSG_LEN(0);
-                size_t got = payload / sizeof(int);
-                const int *in_fds = (const int *)CMSG_DATA(cmsg);
+                size_t     payload = cmsg->cmsg_len - CMSG_LEN(0);
+                size_t     got     = payload / sizeof(int);
+                const int* in_fds  = (const int*)CMSG_DATA(cmsg);
                 for (size_t i = 0; i < got; i++) {
                     if (*n_fds_out >= fds_cap) {
                         /* Buffer overflow: close the rest and all our held
@@ -287,10 +275,10 @@ int ww_bridge_recv_frame(int sock,
 
     /* Phase 2: read exactly body_len bytes. SCM_RIGHTS only attaches
      * to the first byte of a frame, so plain read() is safe here. */
-    uint8_t *body = NULL;
+    uint8_t* body = NULL;
     if (body_len > 0) {
-        body = (uint8_t *)malloc(body_len);
-        if (!body) {
+        body = (uint8_t*)malloc(body_len);
+        if (! body) {
             for (size_t i = 0; i < *n_fds_out; i++) close(fds_out[i]);
             *n_fds_out = 0;
             return WW_ERR_NOMEM;
@@ -304,77 +292,65 @@ int ww_bridge_recv_frame(int sock,
         }
     }
 
-    *opcode_out = opcode;
-    *body_out = body;
+    *opcode_out   = opcode;
+    *body_out     = body;
     *body_len_out = body_len;
     return 0;
 }
-
 
 /* -----------------------------------------------------------------------
  * High-level event senders
  * ----------------------------------------------------------------------- */
 
 /* Helper: encode + frame + send. */
-#define WW_SEND_EVENT(sock, op_enum, encode_fn, msg_ptr, fds_ptr, n_fds) \
-    do {                                                                 \
-        ww_buf_t buf;                                                    \
-        ww_buf_init(&buf);                                               \
-        int rc = encode_fn((msg_ptr), &buf);                             \
-        if (rc != WW_OK) {                                               \
-            ww_buf_free(&buf);                                           \
-            return rc;                                                   \
-        }                                                                \
-        rc = ww_bridge_send_frame((sock), (op_enum), buf.data, buf.len,  \
-                                  (fds_ptr), (n_fds));                   \
-        ww_buf_free(&buf);                                               \
-        return rc;                                                       \
+#define WW_SEND_EVENT(sock, op_enum, encode_fn, msg_ptr, fds_ptr, n_fds)                     \
+    do {                                                                                     \
+        ww_buf_t buf;                                                                        \
+        ww_buf_init(&buf);                                                                   \
+        int rc = encode_fn((msg_ptr), &buf);                                                 \
+        if (rc != WW_OK) {                                                                   \
+            ww_buf_free(&buf);                                                               \
+            return rc;                                                                       \
+        }                                                                                    \
+        rc = ww_bridge_send_frame((sock), (op_enum), buf.data, buf.len, (fds_ptr), (n_fds)); \
+        ww_buf_free(&buf);                                                                   \
+        return rc;                                                                           \
     } while (0)
 
-int ww_bridge_send_ready(int sock,
-                         uint32_t drm_render_major,
-                         uint32_t drm_render_minor) {
-    ww_evt_ready_t m = { 0 };
+int ww_bridge_send_ready(int sock, uint32_t drm_render_major, uint32_t drm_render_minor) {
+    ww_evt_ready_t m   = { 0 };
     m.drm_render_major = drm_render_major;
     m.drm_render_minor = drm_render_minor;
     WW_SEND_EVENT(sock, WW_EVT_READY, ww_evt_ready_encode, &m, NULL, 0);
 }
 
-int ww_bridge_send_bind_buffers(int sock,
-                                const ww_evt_bind_buffers_t *m,
-                                const int *fds) {
-    if (!m || !fds) return -EINVAL;
+int ww_bridge_send_bind_buffers(int sock, const ww_evt_bind_buffers_t* m, const int* fds) {
+    if (! m || ! fds) return -EINVAL;
     uint32_t n_fds = ww_evt_bind_buffers_expected_fds(m);
     if (n_fds > WW_BRIDGE_MAX_FDS) return -E2BIG;
-    WW_SEND_EVENT(sock, WW_EVT_BIND_BUFFERS, ww_evt_bind_buffers_encode,
-                  m, fds, n_fds);
+    WW_SEND_EVENT(sock, WW_EVT_BIND_BUFFERS, ww_evt_bind_buffers_encode, m, fds, n_fds);
 }
 
-int ww_bridge_send_frame_ready(int sock,
-                               const ww_evt_frame_ready_t *m,
-                               int sync_fd) {
-    if (!m || sync_fd < 0) return -EINVAL;
-    WW_SEND_EVENT(sock, WW_EVT_FRAME_READY, ww_evt_frame_ready_encode,
-                  m, &sync_fd, 1);
+int ww_bridge_send_frame_ready(int sock, const ww_evt_frame_ready_t* m, int sync_fd) {
+    if (! m || sync_fd < 0) return -EINVAL;
+    WW_SEND_EVENT(sock, WW_EVT_FRAME_READY, ww_evt_frame_ready_encode, m, &sync_fd, 1);
 }
 
 int ww_bridge_send_release_syncobj(int sock, int release_syncobj_fd) {
     if (release_syncobj_fd < 0) return -EINVAL;
     ww_evt_release_syncobj_t m;
     memset(&m, 0, sizeof(m));
-    WW_SEND_EVENT(sock, WW_EVT_RELEASE_SYNCOBJ,
-                  ww_evt_release_syncobj_encode, &m, &release_syncobj_fd, 1);
+    WW_SEND_EVENT(
+        sock, WW_EVT_RELEASE_SYNCOBJ, ww_evt_release_syncobj_encode, &m, &release_syncobj_fd, 1);
 }
 
-int ww_bridge_send_format_caps(int sock, const ww_evt_format_caps_t *m) {
-    if (!m) return -EINVAL;
-    WW_SEND_EVENT(sock, WW_EVT_FORMAT_CAPS, ww_evt_format_caps_encode,
-                  m, NULL, 0);
+int ww_bridge_send_format_caps(int sock, const ww_evt_format_caps_t* m) {
+    if (! m) return -EINVAL;
+    WW_SEND_EVENT(sock, WW_EVT_FORMAT_CAPS, ww_evt_format_caps_encode, m, NULL, 0);
 }
 
-int ww_bridge_send_format_caps_v2(int sock,
-                                  const ww_format_caps_caller_t *m) {
-    if (!m) return -EINVAL;
+int ww_bridge_send_format_caps_v2(int sock, const ww_format_caps_caller_t* m) {
+    if (! m) return -EINVAL;
 
     /* Pack the two 16-byte UUIDs as 4 LE u32s each. memcpy preserves
      * byte order so on little-endian Linux the wire bytes are
@@ -386,51 +362,49 @@ int ww_bridge_send_format_caps_v2(int sock,
 
     ww_evt_format_caps_t e;
     memset(&e, 0, sizeof(e));
-    e.fourccs.count       = m->fourccs_count;
-    e.fourccs.data        = (uint32_t *)m->fourccs;
-    e.mod_counts.count    = m->mod_counts_count;
-    e.mod_counts.data     = (uint32_t *)m->mod_counts;
-    e.modifiers.count     = m->modifiers_count;
-    e.modifiers.data      = (uint64_t *)m->modifiers;
-    e.plane_counts.count  = m->plane_counts_count;
-    e.plane_counts.data   = (uint32_t *)m->plane_counts;
-    e.device_uuid.count   = 4;
-    e.device_uuid.data    = dev_uuid_w;
-    e.driver_uuid.count   = 4;
-    e.driver_uuid.data    = drv_uuid_w;
-    e.drm_render_major    = m->drm_render_major;
-    e.drm_render_minor    = m->drm_render_minor;
-    e.mem_hints           = m->mem_hints;
-    e.sync_caps           = m->sync_caps;
-    e.color_caps          = m->color_caps;
-    e.extent_max_w        = m->extent_max_w;
-    e.extent_max_h        = m->extent_max_h;
+    e.fourccs.count      = m->fourccs_count;
+    e.fourccs.data       = (uint32_t*)m->fourccs;
+    e.mod_counts.count   = m->mod_counts_count;
+    e.mod_counts.data    = (uint32_t*)m->mod_counts;
+    e.modifiers.count    = m->modifiers_count;
+    e.modifiers.data     = (uint64_t*)m->modifiers;
+    e.plane_counts.count = m->plane_counts_count;
+    e.plane_counts.data  = (uint32_t*)m->plane_counts;
+    e.device_uuid.count  = 4;
+    e.device_uuid.data   = dev_uuid_w;
+    e.driver_uuid.count  = 4;
+    e.driver_uuid.data   = drv_uuid_w;
+    e.drm_render_major   = m->drm_render_major;
+    e.drm_render_minor   = m->drm_render_minor;
+    e.mem_hints          = m->mem_hints;
+    e.sync_caps          = m->sync_caps;
+    e.color_caps         = m->color_caps;
+    e.extent_max_w       = m->extent_max_w;
+    e.extent_max_h       = m->extent_max_h;
     return ww_bridge_send_format_caps(sock, &e);
 }
 
-int ww_bridge_send_bind_failed(int sock, uint32_t fourcc, uint64_t modifier,
-                               uint32_t reason, const char *message) {
+int ww_bridge_send_bind_failed(int sock, uint32_t fourcc, uint64_t modifier, uint32_t reason,
+                               const char* message) {
     ww_evt_bind_failed_t m;
     memset(&m, 0, sizeof(m));
-    m.fourcc = fourcc;
+    m.fourcc   = fourcc;
     m.modifier = modifier;
-    m.reason = reason;
-    m.message = (char *)(message ? message : "");
-    WW_SEND_EVENT(sock, WW_EVT_BIND_FAILED, ww_evt_bind_failed_encode,
-                  &m, NULL, 0);
+    m.reason   = reason;
+    m.message  = (char*)(message ? message : "");
+    WW_SEND_EVENT(sock, WW_EVT_BIND_FAILED, ww_evt_bind_failed_encode, &m, NULL, 0);
 }
 
-int ww_bridge_send_error(int sock, const char *msg) {
-    if (!msg) return -EINVAL;
+int ww_bridge_send_error(int sock, const char* msg) {
+    if (! msg) return -EINVAL;
     ww_evt_error_t m;
-    m.msg = (char *)msg; /* encoder doesn't mutate */
+    m.msg = (char*)msg; /* encoder doesn't mutate */
     WW_SEND_EVENT(sock, WW_EVT_ERROR, ww_evt_error_encode, &m, NULL, 0);
 }
 
-int ww_bridge_send_report_state(int sock, const ww_evt_report_state_t *m) {
-    if (!m) return -EINVAL;
-    WW_SEND_EVENT(sock, WW_EVT_REPORT_STATE, ww_evt_report_state_encode,
-                  m, NULL, 0);
+int ww_bridge_send_report_state(int sock, const ww_evt_report_state_t* m) {
+    if (! m) return -EINVAL;
+    WW_SEND_EVENT(sock, WW_EVT_REPORT_STATE, ww_evt_report_state_encode, m, NULL, 0);
 }
 
 static float clamp01_(float v) {
@@ -439,15 +413,19 @@ static float clamp01_(float v) {
     return v;
 }
 
-int ww_bridge_send_report_state_clear_color(int sock,
-                                            float r, float g, float b, float a) {
+int ww_bridge_send_report_state_clear_color(int sock, float r, float g, float b, float a) {
     char value[96];
-    int n = snprintf(value, sizeof(value), "%.6f,%.6f,%.6f,%.6f",
-                     clamp01_(r), clamp01_(g), clamp01_(b), clamp01_(a));
+    int  n = snprintf(value,
+                      sizeof(value),
+                      "%.6f,%.6f,%.6f,%.6f",
+                      clamp01_(r),
+                      clamp01_(g),
+                      clamp01_(b),
+                      clamp01_(a));
     if (n < 0 || (size_t)n >= sizeof(value)) return -EINVAL;
 
     ww_kv_t kv = {
-        .key   = (char *)"clear_color",
+        .key   = (char*)"clear_color",
         .value = value,
     };
     ww_evt_report_state_t m = {
@@ -456,21 +434,19 @@ int ww_bridge_send_report_state_clear_color(int sock,
     return ww_bridge_send_report_state(sock, &m);
 }
 
-
 /* -----------------------------------------------------------------------
  * Diagnostics
  * ----------------------------------------------------------------------- */
 
-void ww_bridge_log_gpu_info(const char *prefix,
-                            const ww_gpu_info_field_t *fields,
+void ww_bridge_log_gpu_info(const char* prefix, const ww_gpu_info_field_t* fields,
                             size_t n_fields) {
-    if (!fields || n_fields == 0) return;
+    if (! fields || n_fields == 0) return;
 
     /* Pass 1: widest label. */
     size_t max_label = 0;
     for (size_t i = 0; i < n_fields; i++) {
-        const char *l = fields[i].label ? fields[i].label : "";
-        size_t len = strlen(l);
+        const char* l   = fields[i].label ? fields[i].label : "";
+        size_t      len = strlen(l);
         if (len > max_label) max_label = len;
     }
 
@@ -478,30 +454,28 @@ void ww_bridge_log_gpu_info(const char *prefix,
     /* Format: 2-space indent, label, colon, padding so values align,
      * then the value. NULL value renders as "(null)". */
     for (size_t i = 0; i < n_fields; i++) {
-        const char *lbl = fields[i].label ? fields[i].label : "";
-        const char *val = fields[i].value ? fields[i].value : "(null)";
-        int pad = (int)(max_label - strlen(lbl)) + 1;
+        const char* lbl = fields[i].label ? fields[i].label : "";
+        const char* val = fields[i].value ? fields[i].value : "(null)";
+        int         pad = (int)(max_label - strlen(lbl)) + 1;
         ww_bridge_logf(WW_BRIDGE_LOG_INFO, "  %s:%*s%s", lbl, pad, "", val);
     }
 }
-
 
 /* -----------------------------------------------------------------------
  * High-level control receive
  * ----------------------------------------------------------------------- */
 
-int ww_bridge_recv_control(int sock, ww_bridge_control_t *out) {
-    if (!out) return -EINVAL;
+int ww_bridge_recv_control(int sock, ww_bridge_control_t* out) {
+    if (! out) return -EINVAL;
     memset(out, 0, sizeof(*out));
 
     uint16_t opcode;
-    uint8_t *body = NULL;
-    size_t body_len = 0;
-    int fds[WW_BRIDGE_MAX_FDS];
-    size_t n_fds = 0;
+    uint8_t* body     = NULL;
+    size_t   body_len = 0;
+    int      fds[WW_BRIDGE_MAX_FDS];
+    size_t   n_fds = 0;
 
-    int rc = ww_bridge_recv_frame(sock, &opcode, &body, &body_len,
-                                  fds, WW_BRIDGE_MAX_FDS, &n_fds);
+    int rc = ww_bridge_recv_frame(sock, &opcode, &body, &body_len, fds, WW_BRIDGE_MAX_FDS, &n_fds);
     if (rc != 0) return rc;
 
     /* Control requests carry no fds. If any arrive, close them and
@@ -514,66 +488,47 @@ int ww_bridge_recv_control(int sock, ww_bridge_control_t *out) {
 
     out->op = (ww_event_in_op_t)opcode;
     switch (out->op) {
-    case WW_EVT_IN_INIT:
-        rc = ww_evt_in_init_decode(body, body_len, &out->u.init);
-        break;
+    case WW_EVT_IN_INIT: rc = ww_evt_in_init_decode(body, body_len, &out->u.init); break;
     case WW_EVT_IN_SETTING_CHANGED:
-        rc = ww_evt_in_setting_changed_decode(body, body_len,
-                                              &out->u.setting_changed);
+        rc = ww_evt_in_setting_changed_decode(body, body_len, &out->u.setting_changed);
         break;
-    case WW_EVT_IN_PLAY:
-        rc = ww_evt_in_play_decode(body, body_len, &out->u.play);
-        break;
-    case WW_EVT_IN_PAUSE:
-        rc = ww_evt_in_pause_decode(body, body_len, &out->u.pause);
-        break;
+    case WW_EVT_IN_PLAY: rc = ww_evt_in_play_decode(body, body_len, &out->u.play); break;
+    case WW_EVT_IN_PAUSE: rc = ww_evt_in_pause_decode(body, body_len, &out->u.pause); break;
     case WW_EVT_IN_POINTER_MOTION:
-        rc = ww_evt_in_pointer_motion_decode(body, body_len,
-                                             &out->u.pointer_motion);
+        rc = ww_evt_in_pointer_motion_decode(body, body_len, &out->u.pointer_motion);
         break;
     case WW_EVT_IN_POINTER_BUTTON:
-        rc = ww_evt_in_pointer_button_decode(body, body_len,
-                                             &out->u.pointer_button);
+        rc = ww_evt_in_pointer_button_decode(body, body_len, &out->u.pointer_button);
         break;
     case WW_EVT_IN_POINTER_AXIS:
-        rc = ww_evt_in_pointer_axis_decode(body, body_len,
-                                           &out->u.pointer_axis);
+        rc = ww_evt_in_pointer_axis_decode(body, body_len, &out->u.pointer_axis);
         break;
-    case WW_EVT_IN_SET_FPS:
-        rc = ww_evt_in_set_fps_decode(body, body_len, &out->u.set_fps);
-        break;
+    case WW_EVT_IN_SET_FPS: rc = ww_evt_in_set_fps_decode(body, body_len, &out->u.set_fps); break;
     case WW_EVT_IN_SHUTDOWN:
         rc = ww_evt_in_shutdown_decode(body, body_len, &out->u.shutdown);
         break;
     case WW_EVT_IN_NEGOTIATE_BUFFERS:
-        rc = ww_evt_in_negotiate_buffers_decode(body, body_len,
-                                                &out->u.negotiate_buffers);
+        rc = ww_evt_in_negotiate_buffers_decode(body, body_len, &out->u.negotiate_buffers);
         break;
-    default:
-        rc = WW_ERR_UNKNOWN_OPCODE;
-        break;
+    default: rc = WW_ERR_UNKNOWN_OPCODE; break;
     }
 
     free(body);
     return rc;
 }
 
-void ww_bridge_control_free(ww_bridge_control_t *msg) {
-    if (!msg) return;
+void ww_bridge_control_free(ww_bridge_control_t* msg) {
+    if (! msg) return;
     switch (msg->op) {
-    case WW_EVT_IN_INIT:    ww_evt_in_init_free(&msg->u.init); break;
-    case WW_EVT_IN_SETTING_CHANGED:
-        ww_evt_in_setting_changed_free(&msg->u.setting_changed); break;
-    case WW_EVT_IN_PLAY:    ww_evt_in_play_free(&msg->u.play); break;
-    case WW_EVT_IN_PAUSE:   ww_evt_in_pause_free(&msg->u.pause); break;
-    case WW_EVT_IN_POINTER_MOTION:
-        ww_evt_in_pointer_motion_free(&msg->u.pointer_motion); break;
-    case WW_EVT_IN_POINTER_BUTTON:
-        ww_evt_in_pointer_button_free(&msg->u.pointer_button); break;
-    case WW_EVT_IN_POINTER_AXIS:
-        ww_evt_in_pointer_axis_free(&msg->u.pointer_axis); break;
+    case WW_EVT_IN_INIT: ww_evt_in_init_free(&msg->u.init); break;
+    case WW_EVT_IN_SETTING_CHANGED: ww_evt_in_setting_changed_free(&msg->u.setting_changed); break;
+    case WW_EVT_IN_PLAY: ww_evt_in_play_free(&msg->u.play); break;
+    case WW_EVT_IN_PAUSE: ww_evt_in_pause_free(&msg->u.pause); break;
+    case WW_EVT_IN_POINTER_MOTION: ww_evt_in_pointer_motion_free(&msg->u.pointer_motion); break;
+    case WW_EVT_IN_POINTER_BUTTON: ww_evt_in_pointer_button_free(&msg->u.pointer_button); break;
+    case WW_EVT_IN_POINTER_AXIS: ww_evt_in_pointer_axis_free(&msg->u.pointer_axis); break;
     case WW_EVT_IN_SET_FPS: ww_evt_in_set_fps_free(&msg->u.set_fps); break;
-    case WW_EVT_IN_SHUTDOWN:ww_evt_in_shutdown_free(&msg->u.shutdown); break;
+    case WW_EVT_IN_SHUTDOWN: ww_evt_in_shutdown_free(&msg->u.shutdown); break;
     case WW_EVT_IN_NEGOTIATE_BUFFERS:
         ww_evt_in_negotiate_buffers_free(&msg->u.negotiate_buffers);
         break;
@@ -588,39 +543,35 @@ uint64_t ww_bridge_now_ns(void) {
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
-int ww_bridge_negotiation_contains(const ww_negotiation_state_t *neg,
-                                   uint32_t                      fourcc,
-                                   uint64_t                      modifier) {
-    if (!neg || !neg->advertised) return 0;
+int ww_bridge_negotiation_contains(const ww_negotiation_state_t* neg, uint32_t fourcc,
+                                   uint64_t modifier) {
+    if (! neg || ! neg->advertised) return 0;
     for (size_t i = 0; i < neg->advertised_count; ++i) {
-        const ww_format_entry_t *e = &neg->advertised[i];
+        const ww_format_entry_t* e = &neg->advertised[i];
         if (e->fourcc == fourcc && e->modifier == modifier) return 1;
     }
     return 0;
 }
 
-void ww_bridge_negotiation_fill_format_caps(
-    const ww_negotiation_state_t *neg,
-    uint32_t                     *scratch_fourccs,
-    uint32_t                     *scratch_mod_counts,
-    uint64_t                     *scratch_modifiers,
-    uint32_t                     *scratch_plane_counts,
-    ww_format_caps_caller_t      *out) {
-    if (!neg || !out) return;
+void ww_bridge_negotiation_fill_format_caps(const ww_negotiation_state_t* neg,
+                                            uint32_t* scratch_fourccs, uint32_t* scratch_mod_counts,
+                                            uint64_t*                scratch_modifiers,
+                                            uint32_t*                scratch_plane_counts,
+                                            ww_format_caps_caller_t* out) {
+    if (! neg || ! out) return;
 
-    const uint32_t n = (uint32_t)neg->advertised_count;
-    uint32_t fourcc_count = 0;
+    const uint32_t n            = (uint32_t)neg->advertised_count;
+    uint32_t       fourcc_count = 0;
 
     /* Walk advertised, collapsing contiguous same-fourcc runs into
      * (fourccs[], mod_counts[]) and copying flat parallel arrays
      * for modifiers/plane_counts. */
     for (uint32_t i = 0; i < n; ++i) {
-        const ww_format_entry_t *e = &neg->advertised[i];
-        scratch_modifiers[i]    = e->modifier;
-        scratch_plane_counts[i] = e->plane_count;
+        const ww_format_entry_t* e = &neg->advertised[i];
+        scratch_modifiers[i]       = e->modifier;
+        scratch_plane_counts[i]    = e->plane_count;
 
-        if (fourcc_count == 0
-            || scratch_fourccs[fourcc_count - 1] != e->fourcc) {
+        if (fourcc_count == 0 || scratch_fourccs[fourcc_count - 1] != e->fourcc) {
             scratch_fourccs[fourcc_count]    = e->fourcc;
             scratch_mod_counts[fourcc_count] = 1;
             ++fourcc_count;
@@ -639,17 +590,16 @@ void ww_bridge_negotiation_fill_format_caps(
     out->plane_counts_count = n;
 }
 
-
 /* -----------------------------------------------------------------------
  * Init handshake (v4)
  * ----------------------------------------------------------------------- */
 
-int ww_bridge_recv_init(int sock, ww_bridge_init_t *out) {
-    if (!out) return -EINVAL;
+int ww_bridge_recv_init(int sock, ww_bridge_init_t* out) {
+    if (! out) return -EINVAL;
     memset(out, 0, sizeof(*out));
 
     ww_bridge_control_t ctl;
-    int rc = ww_bridge_recv_control(sock, &ctl);
+    int                 rc = ww_bridge_recv_control(sock, &ctl);
     if (rc != 0) return rc;
 
     if (ctl.op != WW_EVT_IN_INIT) {
@@ -661,9 +611,9 @@ int ww_bridge_recv_init(int sock, ww_bridge_init_t *out) {
      * `ww_evt_in_init_t` into the caller-facing `ww_bridge_init_t`.
      * After this point the union is logically empty so calling
      * `ww_bridge_control_free` on it would double-free; we skip it. */
-    out->spawn_version    = ctl.u.init.spawn_version;
-    out->settings         = ctl.u.init.settings;
-    out->user_properties  = ctl.u.init.user_properties;
+    out->spawn_version   = ctl.u.init.spawn_version;
+    out->settings        = ctl.u.init.settings;
+    out->user_properties = ctl.u.init.user_properties;
 
     /* Zero the union members we just stole so `ww_bridge_control_free`
      * is safe even if a future refactor calls it. */
@@ -675,8 +625,8 @@ int ww_bridge_recv_init(int sock, ww_bridge_init_t *out) {
     return 0;
 }
 
-void ww_bridge_init_free(ww_bridge_init_t *out) {
-    if (!out) return;
+void ww_bridge_init_free(ww_bridge_init_t* out) {
+    if (! out) return;
     /* `ww_kv_list_t` cleanup mirrors what the auto-generated
      * `free_kv_list` does in ipc_v1.c — but that helper is `static`
      * inside the generated TU. Replicate the freeing pattern locally
@@ -692,42 +642,37 @@ void ww_bridge_init_free(ww_bridge_init_t *out) {
     memset(out, 0, sizeof(*out));
 }
 
-int ww_bridge_send_init_nack(int sock,
-                             uint32_t received_spawn_version,
-                             uint32_t supported_spawn_version,
-                             const char *reason) {
+int ww_bridge_send_init_nack(int sock, uint32_t received_spawn_version,
+                             uint32_t supported_spawn_version, const char* reason) {
     ww_evt_init_nack_t m;
     memset(&m, 0, sizeof(m));
-    m.received_spawn_version = received_spawn_version;
+    m.received_spawn_version  = received_spawn_version;
     m.supported_spawn_version = supported_spawn_version;
     /* Encoder doesn't mutate `reason`; cast away const-ness to fit
      * the generated struct layout. NULL → empty string. */
-    m.reason = (char *)(reason ? reason : "");
-    WW_SEND_EVENT(sock, WW_EVT_INIT_NACK, ww_evt_init_nack_encode,
-                  &m, NULL, 0);
+    m.reason = (char*)(reason ? reason : "");
+    WW_SEND_EVENT(sock, WW_EVT_INIT_NACK, ww_evt_init_nack_encode, &m, NULL, 0);
 }
-
 
 /* -----------------------------------------------------------------------
  * setting_changed (hot-reload kv push)
  * ----------------------------------------------------------------------- */
 
-int ww_bridge_setting_changed_from_control(ww_bridge_control_t *ctrl,
-                                           ww_bridge_setting_changed_t *out) {
-    if (!ctrl || !out) return -EINVAL;
+int ww_bridge_setting_changed_from_control(ww_bridge_control_t*         ctrl,
+                                           ww_bridge_setting_changed_t* out) {
+    if (! ctrl || ! out) return -EINVAL;
     if (ctrl->op != WW_EVT_IN_SETTING_CHANGED) return -EINVAL;
     memset(out, 0, sizeof(*out));
     /* Transfer ownership of the heap kv list. After this point
      * `ctrl->u.setting_changed.settings` is empty so
      * `ww_bridge_control_free(ctrl)` is a no-op for that arm. */
     out->settings = ctrl->u.setting_changed.settings;
-    memset(&ctrl->u.setting_changed.settings, 0,
-           sizeof(ctrl->u.setting_changed.settings));
+    memset(&ctrl->u.setting_changed.settings, 0, sizeof(ctrl->u.setting_changed.settings));
     return 0;
 }
 
-void ww_bridge_setting_changed_free(ww_bridge_setting_changed_t *out) {
-    if (!out) return;
+void ww_bridge_setting_changed_free(ww_bridge_setting_changed_t* out) {
+    if (! out) return;
     if (out->settings.data) {
         for (uint32_t i = 0; i < out->settings.count; ++i) {
             free(out->settings.data[i].key);
@@ -738,14 +683,13 @@ void ww_bridge_setting_changed_free(ww_bridge_setting_changed_t *out) {
     memset(out, 0, sizeof(*out));
 }
 
-
 /* -----------------------------------------------------------------------
  * Pointer events
  * ----------------------------------------------------------------------- */
 
-int ww_bridge_pointer_motion_from_control(ww_bridge_control_t *ctrl,
-                                          ww_bridge_pointer_motion_t *out) {
-    if (!ctrl || !out) return -EINVAL;
+int ww_bridge_pointer_motion_from_control(ww_bridge_control_t*        ctrl,
+                                          ww_bridge_pointer_motion_t* out) {
+    if (! ctrl || ! out) return -EINVAL;
     if (ctrl->op != WW_EVT_IN_POINTER_MOTION) return -EINVAL;
     out->x            = ctrl->u.pointer_motion.x;
     out->y            = ctrl->u.pointer_motion.y;
@@ -754,9 +698,9 @@ int ww_bridge_pointer_motion_from_control(ww_bridge_control_t *ctrl,
     return 0;
 }
 
-int ww_bridge_pointer_button_from_control(ww_bridge_control_t *ctrl,
-                                          ww_bridge_pointer_button_t *out) {
-    if (!ctrl || !out) return -EINVAL;
+int ww_bridge_pointer_button_from_control(ww_bridge_control_t*        ctrl,
+                                          ww_bridge_pointer_button_t* out) {
+    if (! ctrl || ! out) return -EINVAL;
     if (ctrl->op != WW_EVT_IN_POINTER_BUTTON) return -EINVAL;
     out->x            = ctrl->u.pointer_button.x;
     out->y            = ctrl->u.pointer_button.y;
@@ -767,9 +711,8 @@ int ww_bridge_pointer_button_from_control(ww_bridge_control_t *ctrl,
     return 0;
 }
 
-int ww_bridge_pointer_axis_from_control(ww_bridge_control_t *ctrl,
-                                        ww_bridge_pointer_axis_t *out) {
-    if (!ctrl || !out) return -EINVAL;
+int ww_bridge_pointer_axis_from_control(ww_bridge_control_t* ctrl, ww_bridge_pointer_axis_t* out) {
+    if (! ctrl || ! out) return -EINVAL;
     if (ctrl->op != WW_EVT_IN_POINTER_AXIS) return -EINVAL;
     out->x            = ctrl->u.pointer_axis.x;
     out->y            = ctrl->u.pointer_axis.y;

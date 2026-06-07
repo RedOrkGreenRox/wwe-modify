@@ -16,7 +16,8 @@ namespace waywallen
 /// `plugins` is keyed by plugin name with each value a
 /// `{key: stringValue}` QVariantMap. Plugin values are wire-string
 /// typed — the QML form coerces per the matching `SettingSchema.type`.
-export class SettingsGetQuery : public Query, public QueryExtra<control::v1::Response, SettingsGetQuery> {
+export class SettingsGetQuery : public Query,
+                                public QueryExtra<control::v1::Response, SettingsGetQuery> {
     Q_OBJECT
     QML_ELEMENT
 
@@ -45,7 +46,8 @@ private:
 /// daemon validates against the manifest schema (range, enum) and
 /// returns INVALID_ARGUMENT on rejection — surfaced via the standard
 /// Query `error` property.
-export class SettingsSetQuery : public Query, public QueryExtra<control::v1::Response, SettingsSetQuery> {
+export class SettingsSetQuery : public Query,
+                                public QueryExtra<control::v1::Response, SettingsSetQuery> {
     Q_OBJECT
     QML_ELEMENT
 

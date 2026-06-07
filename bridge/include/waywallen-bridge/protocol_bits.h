@@ -23,31 +23,31 @@ extern "C" {
  * same-device prefers DEVICE_LOCAL when both peers have it.
  * LINEAR_ONLY is reserved/legacy — bridges may stop setting it,
  * daemon ignores. Bit value preserved for wire compatibility. */
-#define WW_MEM_HINT_DEVICE_LOCAL  (1u << 0)
-#define WW_MEM_HINT_HOST_VISIBLE  (1u << 1)
-#define WW_MEM_HINT_SCANOUT       (1u << 2)
-#define WW_MEM_HINT_PROTECTED     (1u << 3)
-#define WW_MEM_HINT_LINEAR_ONLY   (1u << 4)  /* legacy; not consumed */
+#define WW_MEM_HINT_DEVICE_LOCAL (1u << 0)
+#define WW_MEM_HINT_HOST_VISIBLE (1u << 1)
+#define WW_MEM_HINT_SCANOUT      (1u << 2)
+#define WW_MEM_HINT_PROTECTED    (1u << 3)
+#define WW_MEM_HINT_LINEAR_ONLY  (1u << 4) /* legacy; not consumed */
 
 /* `sync_caps`: which fence flavours the peer supports. The picker
  * lands on the highest tier both sides advertise. */
-#define WW_SYNC_DMABUF_IMPLICIT   (1u << 0)
-#define WW_SYNC_SYNCOBJ_BINARY    (1u << 1)
-#define WW_SYNC_SYNCOBJ_TIMELINE  (1u << 2)
+#define WW_SYNC_DMABUF_IMPLICIT  (1u << 0)
+#define WW_SYNC_SYNCOBJ_BINARY   (1u << 1)
+#define WW_SYNC_SYNCOBJ_TIMELINE (1u << 2)
 
 /* `color_caps`: per-axis intersection (encoding | range | alpha). */
-#define WW_COLOR_ENC_SRGB         (1u << 0)
-#define WW_COLOR_ENC_BT709        (1u << 1)
-#define WW_COLOR_ENC_BT2020       (1u << 2)
-#define WW_COLOR_RANGE_FULL       (1u << 5)
-#define WW_COLOR_RANGE_LIMITED    (1u << 6)
-#define WW_COLOR_ALPHA_PREMUL     (1u << 7)
-#define WW_COLOR_ALPHA_STRAIGHT   (1u << 8)
+#define WW_COLOR_ENC_SRGB       (1u << 0)
+#define WW_COLOR_ENC_BT709      (1u << 1)
+#define WW_COLOR_ENC_BT2020     (1u << 2)
+#define WW_COLOR_RANGE_FULL     (1u << 5)
+#define WW_COLOR_RANGE_LIMITED  (1u << 6)
+#define WW_COLOR_ALPHA_PREMUL   (1u << 7)
+#define WW_COLOR_ALPHA_STRAIGHT (1u << 8)
 
 /* `flags` on `ww_evt_bind_buffers_t` / `ConfigureBuffers`. Bit 0
  * tells the consumer the dmabuf is backed by HOST_VISIBLE memory
  * (GTT) so a foreign GPU can PRIME-import it. */
-#define WW_BUF_HOST_VISIBLE       (1u << 0)
+#define WW_BUF_HOST_VISIBLE (1u << 0)
 
 #ifdef __cplusplus
 } /* extern "C" */

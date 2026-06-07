@@ -28,12 +28,11 @@ public:
     Q_SIGNAL void apply();
     Q_SIGNAL void reset();
 
-    Q_INVOKABLE void    replaceState(
-           const QList<waywallen::control::v1::WallpaperFilterRule>& filters,
-           const QList<waywallen::control::v1::FilterLogic>& filterLogics);
+    Q_INVOKABLE void replaceState(const QList<waywallen::control::v1::WallpaperFilterRule>& filters,
+                                  const QList<waywallen::control::v1::FilterLogic>& filterLogics);
 
-    auto dirty() const noexcept -> bool { return m_dirty; }
-    void setDirty(bool v);
+    auto          dirty() const noexcept -> bool { return m_dirty; }
+    void          setDirty(bool v);
     Q_SIGNAL void dirtyChanged();
 
     auto filterLogics() const noexcept -> const QList<control::v1::FilterLogic>& {
@@ -66,7 +65,7 @@ private:
 
     Q_SLOT void markDirty();
 
-    bool                           m_dirty { false };
+    bool                            m_dirty { false };
     QList<control::v1::FilterLogic> m_filter_logics;
 };
 
