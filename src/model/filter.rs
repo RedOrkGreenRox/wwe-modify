@@ -224,18 +224,31 @@ fn name_condition_to_condition(filter: &pb::WallpaperStringFilter) -> Option<Con
         pb::StringCondition::Contains | pb::StringCondition::ContainsNot => {
             let fts_query = build_fts_match_query(&filter.value)?;
             let quoted = sqlite_quote(&fts_query);
-            let sql = match cond {
+            let esc = filter.value.replace('\'', "''");
+            let tag_exists = format!(
+                "EXISTS (SELECT 1 FROM item_tag JOIN tag ON tag.id = item_tag.tag_id \
+                 WHERE item_tag.item_id = item.id AND tag.name LIKE '%{esc}%' COLLATE NOCASE)"
+            );
+            let out = match cond {
                 pb::StringCondition::Contains => {
-                    format!("item.id IN (SELECT rowid FROM item_fts WHERE item_fts MATCH {quoted})")
+                    let fts = format!(
+                        "item.id IN (SELECT rowid FROM item_fts WHERE item_fts MATCH {quoted})"
+                    );
+                    Condition::any()
+                        .add(Expr::cust(fts))
+                        .add(Expr::cust(tag_exists))
                 }
                 pb::StringCondition::ContainsNot => {
-                    format!(
+                    let fts = format!(
                         "item.id NOT IN (SELECT rowid FROM item_fts WHERE item_fts MATCH {quoted})"
-                    )
+                    );
+                    Condition::all()
+                        .add(Expr::cust(fts))
+                        .add(Expr::cust(format!("NOT {tag_exists}")))
                 }
                 _ => unreachable!(),
             };
-            Some(Condition::all().add(Expr::cust(sql)))
+            Some(out)
         }
         _ => string_condition_to_condition(
             || Expr::col((item::Entity, item::Column::DisplayName)),

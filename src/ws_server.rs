@@ -634,6 +634,9 @@ fn global_event_to_pb(e: &GlobalEvent, state: &Arc<AppState>) -> Option<pb::Even
                 })),
             })
         }
+        GlobalEvent::PlaylistChanged => Some(pb::Event {
+            payload: Some(pb::event::Payload::PlaylistChanged(pb::PlaylistChanged {})),
+        }),
         GlobalEvent::SourcesReady
         | GlobalEvent::DisplayReady
         | GlobalEvent::DaemonReady
@@ -1269,6 +1272,7 @@ async fn dispatch_inner(
                 Err(_) => None,
             };
             let entry = entry.ok_or_else(|| Error::WallpaperNotFound(r.wallpaper_id.clone()))?;
+            let _ = crate::playlist::engine::Engine::deactivate(&state, &r.display_ids).await;
             if state.router.display_count().await == 0 {
                 return Err(Error::NoDisplayRegistered);
             }
@@ -1747,33 +1751,243 @@ async fn dispatch_inner(
         }
 
         // ---- queue status (user-saved playlists removed) -----------------
-        Req::PlaylistList(_)
-        | Req::PlaylistCreate(_)
-        | Req::PlaylistDelete(_)
-        | Req::PlaylistRename(_)
-        | Req::PlaylistSetItems(_)
-        | Req::PlaylistSetMode(_)
-        | Req::PlaylistSetInterval(_)
-        | Req::PlaylistActivate(_)
-        | Req::PlaylistDeactivate(_) => {
-            return Err(Error::FailedPrecondition(
-                "user-saved playlists removed; queue plays from settings.wallpaper_filter".into(),
-            ));
+        Req::PlaylistList(_) => {
+            let items = crate::playlist::repo::list(&state.db).await?;
+            let mut playlists = Vec::with_capacity(items.len());
+            for s in items {
+                let entry_ids = crate::playlist::repo::entry_ids(&state.db, s.id)
+                    .await?
+                    .into_iter()
+                    .map(|e| e.to_string())
+                    .collect();
+                playlists.push(pb::PlaylistSummary {
+                    id: s.id,
+                    name: s.name,
+                    source_kind: "curated".into(),
+                    mode: queue_mode_to_pb_playlist(s.mode),
+                    interval_secs: s.interval_secs,
+                    item_count: s.item_count,
+                    entry_ids,
+                });
+            }
+            Res::PlaylistList(pb::PlaylistListResponse { playlists })
+        }
+
+        Req::PlaylistCreate(r) => {
+            let mode = pb_playlist_mode_to_queue(r.mode);
+            let id = crate::playlist::repo::create(
+                &state.db,
+                &r.name,
+                mode,
+                r.interval_secs,
+                tasks::now_ms(),
+                &parse_entry_ids(&r.entry_ids),
+            )
+            .await?;
+            state.events.publish(GlobalEvent::PlaylistChanged);
+            Res::PlaylistCreate(pb::PlaylistCreateResponse { id })
+        }
+
+        Req::PlaylistDelete(r) => {
+            crate::playlist::engine::Engine::deactivate_for_playlist(&state, r.id).await;
+            crate::playlist::repo::delete(&state.db, r.id).await?;
+            state.events.publish(GlobalEvent::PlaylistChanged);
+            Res::PlaylistDelete(pb::Empty {})
+        }
+
+        Req::PlaylistRename(r) => {
+            crate::playlist::repo::rename(&state.db, r.id, &r.name, tasks::now_ms()).await?;
+            state.events.publish(GlobalEvent::PlaylistChanged);
+            Res::PlaylistRename(pb::Empty {})
+        }
+
+        Req::PlaylistSetItems(r) => {
+            crate::playlist::repo::set_items(
+                &state.db,
+                r.id,
+                &parse_entry_ids(&r.entry_ids),
+                tasks::now_ms(),
+            )
+            .await?;
+            crate::playlist::engine::Engine::rebuild_for_playlist(&state, r.id).await;
+            state.events.publish(GlobalEvent::PlaylistChanged);
+            Res::PlaylistSetItems(pb::Empty {})
+        }
+
+        Req::PlaylistSetMode(r) => {
+            let mode = pb_playlist_mode_to_queue(r.mode);
+            crate::playlist::repo::set_mode(&state.db, r.id, mode, tasks::now_ms()).await?;
+            crate::playlist::engine::Engine::rebuild_for_playlist(&state, r.id).await;
+            state.events.publish(GlobalEvent::PlaylistChanged);
+            Res::PlaylistSetMode(pb::Empty {})
+        }
+
+        Req::PlaylistSetInterval(r) => {
+            crate::playlist::repo::set_interval(&state.db, r.id, r.interval_secs, tasks::now_ms())
+                .await?;
+            crate::playlist::engine::Engine::set_interval_for_playlist(
+                &state,
+                r.id,
+                r.interval_secs,
+            )
+            .await;
+            state.events.publish(GlobalEvent::PlaylistChanged);
+            Res::PlaylistSetInterval(pb::Empty {})
+        }
+
+        Req::PlaylistActivate(r) => {
+            crate::playlist::engine::Engine::activate(&state, &r.display_ids, r.id).await?;
+            if r.auto_attach {
+                let id = r.id;
+                state.settings.update(|s| {
+                    s.global.auto_attach_playlist_id = Some(id);
+                });
+                state.settings.flush_now().await;
+            }
+            Res::PlaylistActivate(pb::Empty {})
+        }
+
+        Req::PlaylistDeactivate(r) => {
+            crate::playlist::engine::Engine::deactivate(&state, &r.display_ids).await?;
+            if r.clear_auto_attach > 0 {
+                let id = r.clear_auto_attach;
+                state.settings.update(|s| {
+                    if s.global.auto_attach_playlist_id == Some(id) {
+                        s.global.auto_attach_playlist_id = None;
+                    }
+                });
+                state.settings.flush_now().await;
+            }
+            Res::PlaylistDeactivate(pb::Empty {})
         }
 
         Req::PlaylistStatus(_) => {
-            let s = control::queue_status(&state).await;
+            let st = state.playlists.status().await;
+            let auto_attach_id = state.settings.global().auto_attach_playlist_id.unwrap_or(0);
             Res::PlaylistStatus(pb::PlaylistStatusResponse {
-                active_id: s.active_id.unwrap_or(0),
-                mode: mode_str_to_pb(&s.mode) as i32,
-                interval_secs: s.interval_secs,
-                current_id: s.current.unwrap_or_default(),
-                position: s.position.unwrap_or(0),
-                count: s.count,
-                is_smart: s.is_smart,
+                auto_attach_id,
+                displays: st
+                    .into_iter()
+                    .map(|d| pb::PlaylistDisplayStatus {
+                        display_id: d.display_id,
+                        active_id: d.active_id,
+                        mode: queue_mode_to_pb_playlist(d.mode),
+                        interval_secs: d.interval_secs,
+                        current_id: d.current_id.unwrap_or_default(),
+                        position: d.position,
+                        count: d.count,
+                        remaining_secs: d.remaining_secs,
+                    })
+                    .collect(),
             })
         }
+
+        Req::PlaylistExport(r) => {
+            let pl = crate::playlist::repo::get(&state.db, r.id)
+                .await?
+                .ok_or_else(|| crate::error::Error::PlaylistNotFound(r.id.to_string()))?;
+            let local_ids = crate::playlist::repo::entry_ids(&state.db, r.id).await?;
+            let mut entry_ids = Vec::with_capacity(local_ids.len());
+            for id in &local_ids {
+                let portable = crate::model::repo::get_entry(&state.db, *id)
+                    .await?
+                    .and_then(|e| e.external_id)
+                    .unwrap_or_else(|| id.to_string());
+                entry_ids.push(portable);
+            }
+            let mode: crate::queue::Mode = pl.mode.into();
+            let doc = PlaylistExportDoc {
+                name: pl.name,
+                mode: mode.as_str().to_owned(),
+                interval_secs: pl.interval_secs as u32,
+                entry_ids,
+            };
+            let json = serde_json::to_string_pretty(&doc)?;
+            std::fs::write(&r.path, json)?;
+            Res::PlaylistExport(pb::PlaylistExportResponse {})
+        }
+
+        Req::PlaylistImport(r) => {
+            let data = std::fs::read_to_string(&r.path)?;
+            let doc: PlaylistExportDoc = serde_json::from_str(&data)?;
+            let mode = crate::queue::Mode::from_str(&doc.mode).unwrap_or_default();
+            let now = tasks::now_ms();
+            let mut local_ids = Vec::with_capacity(doc.entry_ids.len());
+            let mut missing_count = 0u32;
+            for stored in &doc.entry_ids {
+                if let Some(iid) =
+                    crate::model::repo::find_item_id_by_external_id(&state.db, stored).await?
+                {
+                    local_ids.push(iid);
+                } else if let Ok(iid) = stored.parse::<i64>() {
+                    if crate::model::repo::get_entry(&state.db, iid)
+                        .await?
+                        .is_some()
+                    {
+                        local_ids.push(iid);
+                    } else {
+                        missing_count += 1;
+                    }
+                } else {
+                    missing_count += 1;
+                }
+            }
+            let id = if r.into_id > 0 {
+                crate::playlist::repo::rename(&state.db, r.into_id, &doc.name, now).await?;
+                crate::playlist::repo::set_mode(&state.db, r.into_id, mode, now).await?;
+                crate::playlist::repo::set_interval(&state.db, r.into_id, doc.interval_secs, now)
+                    .await?;
+                crate::playlist::repo::set_items(&state.db, r.into_id, &local_ids, now).await?;
+                crate::playlist::engine::Engine::rebuild_for_playlist(&state, r.into_id).await;
+                r.into_id
+            } else {
+                crate::playlist::repo::create(
+                    &state.db,
+                    &doc.name,
+                    mode,
+                    doc.interval_secs,
+                    now,
+                    &local_ids,
+                )
+                .await?
+            };
+            state.events.publish(GlobalEvent::PlaylistChanged);
+            Res::PlaylistImport(pb::PlaylistImportResponse { id, missing_count })
+        }
+
+        Req::PlaylistJumpTo(r) => {
+            crate::playlist::engine::Engine::jump_to(&state, r.id, &r.entry_id).await?;
+            Res::PlaylistJumpTo(pb::Empty {})
+        }
     })
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PlaylistExportDoc {
+    name: String,
+    mode: String,
+    interval_secs: u32,
+    entry_ids: Vec<String>,
+}
+
+fn parse_entry_ids(v: &[String]) -> Vec<i64> {
+    v.iter().filter_map(|s| s.parse::<i64>().ok()).collect()
+}
+
+fn pb_playlist_mode_to_queue(m: i32) -> crate::queue::Mode {
+    match m {
+        2 => crate::queue::Mode::Shuffle,
+        3 => crate::queue::Mode::Random,
+        _ => crate::queue::Mode::Sequential,
+    }
+}
+
+fn queue_mode_to_pb_playlist(m: crate::queue::Mode) -> i32 {
+    match m {
+        crate::queue::Mode::Sequential => 1,
+        crate::queue::Mode::Shuffle => 2,
+        crate::queue::Mode::Random => 3,
+    }
 }
 
 /// Decode the proto enum integer into the internal `queue::Mode`.
