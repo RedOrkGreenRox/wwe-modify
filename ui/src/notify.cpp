@@ -85,6 +85,8 @@ Notify::Notify(QObject* parent): QObject(parent) {
                     Q_EMIT remoteDownloadProgress(p.id_proto(),
                                                     static_cast<int>(p.state()),
                                                     p.error());
+                } else if (evt.hasPlaylistChanged()) {
+                    Q_EMIT playlistChanged();
                 }
             },
             Qt::QueuedConnection);

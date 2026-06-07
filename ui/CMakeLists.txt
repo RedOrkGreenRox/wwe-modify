@@ -82,6 +82,7 @@ set(SOURCES_NO_MOC
   src/query/library_query.cpp
   src/query/settings_query.cpp
   src/query/remote_query.cpp
+  src/query/playlist_query.cpp
   src/thumb/service.cpp
 )
 
@@ -117,6 +118,7 @@ set(MOC_SOURCE_FILES
   src/query/library_query.cppm
   src/query/settings_query.cppm
   src/query/remote_query.cppm
+  src/query/playlist_query.cppm
   src/thumb/service.cppm
 )
 set(MODULES
@@ -151,6 +153,10 @@ set(QML_FILES
   qml/dialog/WallpaperFilterDialog.qml
   qml/dialog/RemoteFilterDialog.qml
   qml/page/WallpaperPage.qml
+  qml/page/PlaylistPage.qml
+  qml/page/PlaylistWallpaperPicker.qml
+  qml/page/PlaylistMembersView.qml
+  qml/page/WallpaperDetailPanel.qml
   qml/page/WallpaperCard.qml
   qml/page/DiscoverPage.qml
   qml/page/RemoteCard.qml
@@ -190,6 +196,7 @@ qt_add_qml_module(
   QtQuick
   QtQuick.Shapes
   QtQuick.Dialogs
+  QtQml.Models
   Qcm.Material
   waywallen.control
   OUTPUT_TARGETS

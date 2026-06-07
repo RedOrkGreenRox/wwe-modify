@@ -100,6 +100,7 @@ Q_SIGNALS:
                                  quint32        errorCode,
                                  const QString& reason);
     void remoteDownloadProgress(const QString& id, int state, const QString& error);
+    void playlistChanged();
 
 private:
     bool        m_scan_in_progress { false };
