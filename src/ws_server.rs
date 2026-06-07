@@ -1239,7 +1239,7 @@ async fn dispatch_inner(
         }
 
         Req::RemoteAvailability(_) => Res::RemoteAvailability(pb::RemoteAvailabilityResponse {
-            owned: false,
+            owned: true,
             content_dir: String::new(),
         }),
 

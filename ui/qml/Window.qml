@@ -40,37 +40,25 @@ MD.ApplicationWindow {
         target: W.Notify
         function onDaemonReady() {
             healthQuery.reload();
-            remoteAvail.reload();
         }
-    }
-
-    W.RemoteAvailabilityQuery {
-        id: remoteAvail
     }
 
     property int currentPage: 0
 
     readonly property bool isCompact: MD.MProp.size.isCompact
 
-    readonly property var basePageModel: [
+    readonly property var pageModel: [
         { icon: MD.Token.icon.wallpaper, name: "Wallpapers" },
         { icon: MD.Token.icon.queue_music, name: "Playlists" },
         { icon: MD.Token.icon.monitor, name: "Displays" },
+        { icon: MD.Token.icon.search, name: "Discover" },
         { icon: MD.Token.icon.monitor_heart, name: "Status" }
     ]
-    readonly property var discoverPageEntry: ({ icon: MD.Token.icon.search, name: "Discover" })
-    readonly property var pageModel: remoteAvail.owned
-        ? basePageModel.slice(0, 3).concat([discoverPageEntry], basePageModel.slice(3))
-        : basePageModel
 
-    readonly property var basePageComponents: ["qrc:/waywallen/ui/qml/page/WallpaperPage.qml", "qrc:/waywallen/ui/qml/page/PlaylistPage.qml", "qrc:/waywallen/ui/qml/page/DisplaysPage.qml", "qrc:/waywallen/ui/qml/page/StatusPage.qml"]
-    readonly property var pageComponents: remoteAvail.owned
-        ? basePageComponents.slice(0, 3).concat(["qrc:/waywallen/ui/qml/page/DiscoverPage.qml"], basePageComponents.slice(3))
-        : basePageComponents
 
-    readonly property var pageCacheable: remoteAvail.owned
-        ? [true, false, false, true, false]
-        : [true, false, false, false]
+    readonly property var pageComponents: ["qrc:/waywallen/ui/qml/page/WallpaperPage.qml","qrc:/waywallen/ui/qml/page/PlaylistPage.qml", "qrc:/waywallen/ui/qml/page/DisplaysPage.qml", "qrc:/waywallen/ui/qml/page/DiscoverPage.qml", "qrc:/waywallen/ui/qml/page/StatusPage.qml"]
+
+    readonly property var pageCacheable: [true, false, false, true, false]
 
     onCurrentPageChanged: {
         m_content.switchTo(pageComponents[currentPage], {}, pageCacheable[currentPage]);
@@ -84,7 +72,6 @@ MD.ApplicationWindow {
         // — `daemonReady` is edge-triggered and won't fire then.
         if (W.Notify.daemonPhase === W.Notify.DaemonPhase.Ready) {
             healthQuery.reload();
-            remoteAvail.reload();
         }
     }
 
