@@ -63,11 +63,9 @@ pub struct SpawnRequest {
     /// user-chosen non-default renderer isn't transparently swapped
     /// for the priority winner on reuse or fresh spawn.
     pub renderer_name: Option<String>,
-    /// Raw JSON dump of the DB row's `user_property_overrides` column
-    /// (an object mapping project.json property keys to user-edited
-    /// values). Forwarded verbatim through `Init.user_properties`; the
-    /// renderer parses it once on startup. `None` / empty string when
-    /// the wallpaper has no per-item overrides.
+    /// Renderer-owned subset of the DB row's `user_property_overrides`
+    /// column. Daemon-owned keys, such as per-wallpaper display layout
+    /// overrides, are consumed before spawn and are not forwarded.
     pub user_properties_json: Option<String>,
 }
 

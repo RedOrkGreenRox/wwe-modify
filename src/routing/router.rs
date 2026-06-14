@@ -40,13 +40,12 @@ const IDLE_SCAN_INTERVAL: Duration = Duration::from_secs(60);
 /// case orphans are reaped synchronously to free GPU memory promptly.
 const ORPHAN_REAP_TIMEOUT: Duration = Duration::from_secs(5);
 
-use crate::display::layout::{self, FillMode, LayoutInput};
+use crate::display::layout::{FillMode, LayoutInput};
 use crate::ipc::proto::{ControlMsg, EventMsg};
-use crate::renderer_manager::{
-    DrmNode, RendererHandle, RendererId, RendererManager, BUF_HOST_VISIBLE,
-};
+use crate::renderer_manager::{DrmNode, RendererHandle, RendererId, RendererManager};
 use crate::scheduler::{DisplayId, DisplayInfo, ProjectedConfig};
 use crate::settings::{ResolvedAutopause, ResolvedLayout, SettingsStore};
+use crate::wallpaper_properties::WallpaperLayoutOverride;
 
 use super::autopause;
 use super::table::{Link, LinkDstRect, LinkId, LinkSrcRect, RoutingTable};
@@ -217,6 +216,7 @@ pub struct DisplaySnapshot {
     pub links: Vec<DisplayLinkSnapshot>,
     pub drm_render_major: u32,
     pub drm_render_minor: u32,
+    pub effective_layout: ResolvedLayout,
 }
 
 struct DisplayState {
@@ -285,6 +285,7 @@ struct Inner {
     /// have no entry — keeping it sparse avoids leaks across normal
     /// link reshuffles.
     unbind_acks_pending: HashMap<RendererId, HashSet<(DisplayId, u64)>>,
+    wallpaper_layout_overrides: HashMap<RendererId, WallpaperLayoutOverride>,
     next_display_id: u64,
     next_config_generation: u64,
 }
@@ -330,6 +331,7 @@ impl Router {
                 paused_since: HashMap::new(),
                 orphan_timers: HashMap::new(),
                 unbind_acks_pending: HashMap::new(),
+                wallpaper_layout_overrides: HashMap::new(),
                 next_display_id: 0,
                 next_config_generation: 0,
                 session_locked: false,
@@ -377,7 +379,7 @@ impl Router {
         let Some(s) = self.settings.get() else {
             return ResolvedLayout {
                 fillmode: FillMode::default(),
-                align: Default::default(),
+                location: Default::default(),
                 rotation: Default::default(),
             };
         };
@@ -390,6 +392,20 @@ impl Router {
             // one-shot migration in `register_display` runs.
         }
         s.resolved_layout(&info.name)
+    }
+
+    fn resolved_layout_for_renderer(
+        &self,
+        info: &DisplayInfo,
+        renderer_id: &str,
+        inner: &Inner,
+    ) -> ResolvedLayout {
+        inner
+            .wallpaper_layout_overrides
+            .get(renderer_id)
+            .copied()
+            .unwrap_or_default()
+            .apply_to(self.resolved_layout(info))
     }
 
     /// Settings TOML key used for this display's persistent prefs.
@@ -429,6 +445,7 @@ impl Router {
         display_id: Option<DisplayId>,
         display_name: String,
         new_fillmode: Option<crate::display::layout::FillMode>,
+        new_location: Option<crate::display::layout::Location>,
         new_align: Option<crate::display::layout::Align>,
         new_rotation: Option<crate::display::layout::Rotation>,
         clear_fillmode: bool,
@@ -456,10 +473,18 @@ impl Router {
                 entry.fillmode = Some(v);
             }
             if clear_align {
+                entry.location = None;
+                entry.align = None;
+            }
+            if let Some(v) = new_location {
+                entry.location = Some(v);
                 entry.align = None;
             }
             if let Some(v) = new_align {
-                entry.align = Some(v);
+                if new_location.is_none() {
+                    entry.align = Some(v);
+                    entry.location = None;
+                }
             }
             if clear_rotation {
                 entry.rotation = None;
@@ -544,7 +569,7 @@ impl Router {
         inner.next_config_generation += 1;
         let cfg_gen = inner.next_config_generation;
         let info = inner.displays.get(&display_id).unwrap().info.clone();
-        let layout = self.resolved_layout(&info);
+        let layout = self.resolved_layout_for_renderer(&info, &link.renderer_id, &inner);
         let cfg = project_link(&link, &renderer, &info, cfg_gen, &layout);
         if let Some(state) = inner.displays.get(&display_id) {
             let _ = state.tx.send(DisplayOutEvent::SetConfig(cfg));
@@ -696,6 +721,7 @@ impl Router {
         let affected: Vec<DisplayId> = {
             let mut inner = self.inner.lock().await;
             let removed = inner.table.remove_renderer(id);
+            inner.wallpaper_layout_overrides.remove(id);
             if let Some(task) = inner.renderer_tasks.remove(id) {
                 task.abort();
             }
@@ -716,6 +742,41 @@ impl Router {
             let all = self.snapshot_displays().await;
             self.emit(RouterEvent::DisplaysReplace(all));
         }
+    }
+
+    pub async fn set_renderer_wallpaper_layout_override(
+        self: &Arc<Self>,
+        renderer_id: &str,
+        layout: WallpaperLayoutOverride,
+    ) -> bool {
+        let display_ids: Vec<DisplayId> = {
+            let mut inner = self.inner.lock().await;
+            if inner.table.get_renderer(renderer_id).is_none() {
+                return false;
+            }
+            if layout.is_empty() {
+                inner.wallpaper_layout_overrides.remove(renderer_id);
+            } else {
+                inner
+                    .wallpaper_layout_overrides
+                    .insert(renderer_id.to_string(), layout);
+            }
+            inner
+                .table
+                .links_for_renderer(renderer_id)
+                .into_iter()
+                .filter(|l| l.enabled)
+                .map(|l| l.display_id)
+                .collect()
+        };
+        for did in &display_ids {
+            self.resync_display_set_config(*did).await;
+        }
+        if !display_ids.is_empty() {
+            let all = self.snapshot_displays().await;
+            self.emit(RouterEvent::DisplaysReplace(all));
+        }
+        true
     }
 
     /// Arm `unbind_done` ack tracking for `renderer_id`. MUST be called
@@ -1378,11 +1439,18 @@ impl Router {
     pub async fn snapshot_display(self: &Arc<Self>, id: DisplayId) -> Option<DisplaySnapshot> {
         let inner = self.inner.lock().await;
         let s = inner.displays.get(&id)?;
-        let links = inner
+        let link_rows: Vec<Link> = inner
             .table
             .links_for_display(id)
             .into_iter()
             .filter(|l| l.enabled)
+            .collect();
+        let effective_layout = link_rows
+            .first()
+            .map(|l| self.resolved_layout_for_renderer(&s.info, &l.renderer_id, &inner))
+            .unwrap_or_else(|| self.resolved_layout(&s.info));
+        let links = link_rows
+            .into_iter()
             .map(|l| DisplayLinkSnapshot {
                 renderer_id: l.renderer_id,
                 z_order: l.z_order,
@@ -1398,6 +1466,7 @@ impl Router {
             links,
             drm_render_major: s.gpu.major,
             drm_render_minor: s.gpu.minor,
+            effective_layout,
         })
     }
 
@@ -1466,11 +1535,18 @@ impl Router {
         ids.into_iter()
             .filter_map(|id| {
                 let s = inner.displays.get(&id)?;
-                let links = inner
+                let link_rows: Vec<Link> = inner
                     .table
                     .links_for_display(id)
                     .into_iter()
                     .filter(|l| l.enabled)
+                    .collect();
+                let effective_layout = link_rows
+                    .first()
+                    .map(|l| self.resolved_layout_for_renderer(&s.info, &l.renderer_id, &inner))
+                    .unwrap_or_else(|| self.resolved_layout(&s.info));
+                let links = link_rows
+                    .into_iter()
                     .map(|l| DisplayLinkSnapshot {
                         renderer_id: l.renderer_id,
                         z_order: l.z_order,
@@ -1486,6 +1562,7 @@ impl Router {
                     links,
                     drm_render_major: s.gpu.major,
                     drm_render_minor: s.gpu.minor,
+                    effective_layout,
                 })
             })
             .collect()
@@ -1721,7 +1798,7 @@ impl Router {
             }
             inner.next_config_generation += 1;
             let cfg_gen = inner.next_config_generation;
-            let layout = self.resolved_layout(&info);
+            let layout = self.resolved_layout_for_renderer(&info, &link.renderer_id, &inner);
             let cfg = project_link(&link, &renderer, &info, cfg_gen, &layout);
             Some((link.display_id, cfg))
         };
@@ -2137,7 +2214,7 @@ impl Router {
         if let Some((link, renderer, new_g)) = target {
             inner.next_config_generation += 1;
             let cfg_gen = inner.next_config_generation;
-            let layout = self.resolved_layout(&info);
+            let layout = self.resolved_layout_for_renderer(&info, &link.renderer_id, &inner);
             let cfg = project_link(&link, &renderer, &info, cfg_gen, &layout);
             let new_r = link.renderer_id.clone();
             let s = inner.displays.get_mut(&display_id).unwrap();
@@ -2203,7 +2280,7 @@ fn project_link(
             disp_w: eff_disp_w,
             disp_h: eff_disp_h,
             fillmode: layout.fillmode,
-            align: layout.align,
+            location: layout.location,
             clear_rgba: link.clear_rgba,
         });
         return ProjectedConfig {
@@ -2392,6 +2469,7 @@ mod tests {
                 Some(h2.id),
                 "KDE Screen".into(),
                 Some(FillMode::PreserveAspectFit),
+                None,
                 None,
                 None,
                 false,
@@ -2989,7 +3067,7 @@ mod tests {
         let layout = ResolvedLayout {
             // Even with PreserveAspectFit, explicit geometry must win.
             fillmode: FillMode::PreserveAspectFit,
-            align: Default::default(),
+            location: Default::default(),
             rotation: Default::default(),
         };
         let cfg = project_link(&link, &renderer, &info, 1, &layout);

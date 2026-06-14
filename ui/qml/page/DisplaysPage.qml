@@ -15,8 +15,8 @@ MD.Page {
 
     property var selectedId: null
 
-    // FillMode/Align/Rotation enum values mirror proto::FillMode /
-    // proto::Align / proto::Rotation (control.proto). Keep the *_VALUES
+    // FillMode/Rotation enum values mirror proto::FillMode /
+    // proto::Rotation (control.proto). Keep the *_VALUES
     // arrays in lockstep with the enum order; *_LABELS is what the UI
     // shows.
     readonly property var kFillModeValues: [1 // STRETCHED
@@ -30,13 +30,6 @@ MD.Page {
         return i < 0 ? 0 : i;
     }
 
-    // 3×3 align grid; index = row * 3 + col, values match proto::Align.
-    readonly property var kAlignValues: [1, 2, 3 // top-left, top, top-right
-        , 4, 5, 6 // left, center, right
-        , 7, 8, 9  // bottom-left, bottom, bottom-right
-    ]
-    readonly property var kAlignTooltips: ["Top-left", "Top", "Top-right", "Left", "Center", "Right", "Bottom-left", "Bottom", "Bottom-right"]
-
     // Rotation segmented values, mirror proto::Rotation:
     //   1=NORMAL, 2=CW_90, 3=CW_180, 4=CW_270
     readonly property var kRotationValues: [1, 2, 3, 4]
@@ -44,6 +37,28 @@ MD.Page {
     function rotationIndex(value) {
         const i = root.kRotationValues.indexOf(value);
         return i < 0 ? 0 : i;
+    }
+
+    function clampPercent(value) {
+        return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+    }
+
+    function applyLocation(x, y) {
+        if (!root.selected)
+            return;
+        layoutSetQuery.name = root.selected.name;
+        layoutSetQuery.displayId = root.selected.id;
+        layoutSetQuery.fillmodeSet = false;
+        layoutSetQuery.locationSet = true;
+        layoutSetQuery.locationX = root.clampPercent(x);
+        layoutSetQuery.locationY = root.clampPercent(y);
+        layoutSetQuery.alignSet = false;
+        layoutSetQuery.rotationSet = false;
+        layoutSetQuery.clearFillmode = false;
+        layoutSetQuery.clearLocation = false;
+        layoutSetQuery.clearAlign = false;
+        layoutSetQuery.clearRotation = false;
+        layoutSetQuery.reload();
     }
 
     W.DisplayLayoutSetQuery {
@@ -468,7 +483,7 @@ MD.Page {
                     }
                 }
 
-                // ---- Layout (fillmode + align) ----
+                // ---- Layout (fillmode + location) ----
                 MD.Divider {
                     Layout.fillWidth: true
                     Layout.topMargin: 8
@@ -497,7 +512,7 @@ MD.Page {
                                 if (!root.selected)
                                     return false;
                                 const ovr = root.selected.layoutOverride || ({});
-                                return ovr.fillmodeSet === true || ovr.alignSet === true;
+                                return ovr.fillmodeSet === true || ovr.locationSet === true || ovr.alignSet === true;
                             }
                             icon.name: MD.Token.icon.refresh
                             MD.ToolTip {
@@ -510,9 +525,12 @@ MD.Page {
                                 layoutSetQuery.name = root.selected.name;
                                 layoutSetQuery.displayId = root.selected.id;
                                 layoutSetQuery.fillmodeSet = false;
+                                layoutSetQuery.locationSet = false;
                                 layoutSetQuery.alignSet = false;
                                 layoutSetQuery.clearFillmode = true;
+                                layoutSetQuery.clearLocation = true;
                                 layoutSetQuery.clearAlign = true;
+                                layoutSetQuery.clearRotation = false;
                                 layoutSetQuery.reload();
                             }
                         }
@@ -525,6 +543,7 @@ MD.Page {
                     spacing: 12
 
                     ColumnLayout {
+                        id: locationGroup
                         Layout.fillWidth: true
                         spacing: 4
 
@@ -551,9 +570,11 @@ MD.Page {
                                 layoutSetQuery.displayId = root.selected.id;
                                 layoutSetQuery.fillmodeSet = true;
                                 layoutSetQuery.fillmode = root.kFillModeValues[idx];
+                                layoutSetQuery.locationSet = false;
                                 layoutSetQuery.alignSet = false;
                                 layoutSetQuery.rotationSet = false;
                                 layoutSetQuery.clearFillmode = false;
+                                layoutSetQuery.clearLocation = false;
                                 layoutSetQuery.clearAlign = false;
                                 layoutSetQuery.clearRotation = false;
                                 layoutSetQuery.reload();
@@ -562,82 +583,78 @@ MD.Page {
                     }
 
                     ColumnLayout {
+                        Layout.fillWidth: true
                         spacing: 4
 
-                        MD.Text {
-                            text: "Align"
-                            typescale: MD.Token.typescale.label_medium
-                            color: MD.Token.color.on_surface_variant
+                        readonly property var effective: root.selected ? (root.selected.effectiveLayout || ({})) : ({})
+                        readonly property int currentX: root.clampPercent(effective.locationX ?? 50)
+                        readonly property int currentY: root.clampPercent(effective.locationY ?? 50)
+
+                        enabled: {
+                            if (!root.selected)
+                                return false;
+                            const eff = root.selected.effectiveLayout || ({});
+                            return (eff.fillmode || 0) !== 1;
+                        }
+                        opacity: enabled ? 1.0 : 0.4
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            MD.Text {
+                                Layout.preferredWidth: 72
+                                text: "Horizontal"
+                                typescale: MD.Token.typescale.label_medium
+                                color: MD.Token.color.on_surface_variant
+                            }
+
+                            MD.Slider {
+                                id: horizontalLocation
+                                Layout.fillWidth: true
+                                from: 0
+                                to: 100
+                                stepSize: 1
+                                value: locationGroup.currentX
+                                onMoved: root.applyLocation(value, verticalLocation.value)
+                            }
+
+                            MD.Text {
+                                Layout.preferredWidth: 44
+                                text: qsTr("%1%").arg(root.clampPercent(horizontalLocation.value))
+                                typescale: MD.Token.typescale.label_medium
+                                color: MD.Token.color.on_surface_variant
+                                horizontalAlignment: Text.AlignRight
+                            }
                         }
 
-                        // 3×3 grid of toggle pads. Disabled when the
-                        // active fillmode is Stretched (align has no effect).
-                        GridLayout {
-                            columns: 3
-                            rowSpacing: 4
-                            columnSpacing: 4
-                            enabled: {
-                                if (!root.selected)
-                                    return false;
-                                const eff = root.selected.effectiveLayout || ({});
-                                // Stretched (1) ignores align.
-                                return (eff.fillmode || 0) !== 1;
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            MD.Text {
+                                Layout.preferredWidth: 72
+                                text: "Vertical"
+                                typescale: MD.Token.typescale.label_medium
+                                color: MD.Token.color.on_surface_variant
                             }
-                            opacity: enabled ? 1.0 : 0.4
 
-                            Repeater {
-                                model: 9
-                                delegate: Rectangle {
-                                    required property int index
+                            MD.Slider {
+                                id: verticalLocation
+                                Layout.fillWidth: true
+                                from: 0
+                                to: 100
+                                stepSize: 1
+                                value: locationGroup.currentY
+                                onMoved: root.applyLocation(horizontalLocation.value, value)
+                            }
 
-                                    readonly property int alignValue: root.kAlignValues[index]
-                                    readonly property bool isCurrent: {
-                                        if (!root.selected)
-                                            return false;
-                                        const eff = root.selected.effectiveLayout || ({});
-                                        return (eff.align || 0) === alignValue;
-                                    }
-
-                                    width: 22
-                                    height: 22
-                                    radius: 4
-                                    color: isCurrent ? MD.Token.color.primary : MD.Token.color.surface_container_highest
-                                    border.color: MD.Token.color.outline
-                                    border.width: 1
-
-                                    Rectangle {
-                                        anchors.centerIn: parent
-                                        width: 6
-                                        height: 6
-                                        radius: 3
-                                        color: parent.isCurrent ? MD.Token.color.on_primary : MD.Token.color.on_surface_variant
-                                    }
-
-                                    MD.ToolTip {
-                                        visible: ma.containsMouse
-                                        text: root.kAlignTooltips[index]
-                                    }
-
-                                    MouseArea {
-                                        id: ma
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        onClicked: {
-                                            if (!root.selected)
-                                                return;
-                                            layoutSetQuery.name = root.selected.name;
-                                            layoutSetQuery.displayId = root.selected.id;
-                                            layoutSetQuery.fillmodeSet = false;
-                                            layoutSetQuery.alignSet = true;
-                                            layoutSetQuery.align = parent.alignValue;
-                                            layoutSetQuery.rotationSet = false;
-                                            layoutSetQuery.clearFillmode = false;
-                                            layoutSetQuery.clearAlign = false;
-                                            layoutSetQuery.clearRotation = false;
-                                            layoutSetQuery.reload();
-                                        }
-                                    }
-                                }
+                            MD.Text {
+                                Layout.preferredWidth: 44
+                                text: qsTr("%1%").arg(root.clampPercent(verticalLocation.value))
+                                typescale: MD.Token.typescale.label_medium
+                                color: MD.Token.color.on_surface_variant
+                                horizontalAlignment: Text.AlignRight
                             }
                         }
                     }
@@ -667,10 +684,12 @@ MD.Page {
                                 layoutSetQuery.name = root.selected.name;
                                 layoutSetQuery.displayId = root.selected.id;
                                 layoutSetQuery.fillmodeSet = false;
+                                layoutSetQuery.locationSet = false;
                                 layoutSetQuery.alignSet = false;
                                 layoutSetQuery.rotationSet = true;
                                 layoutSetQuery.rotation = rotationValue;
                                 layoutSetQuery.clearFillmode = false;
+                                layoutSetQuery.clearLocation = false;
                                 layoutSetQuery.clearAlign = false;
                                 layoutSetQuery.clearRotation = false;
                                 layoutSetQuery.reload();

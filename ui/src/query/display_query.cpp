@@ -2,6 +2,7 @@ module;
 #include "waywallen/query/display_query.moc.h"
 #undef assert
 #include <rstd/macro.hpp>
+#include <algorithm>
 
 module waywallen;
 import :query.display;
@@ -87,11 +88,15 @@ void DisplayLayoutSetQuery::setName(const QString& v) { WW_SET(m_name, v); }
 void DisplayLayoutSetQuery::setDisplayId(quint64 v) { WW_SET(m_display_id, v); }
 void DisplayLayoutSetQuery::setFillmodeSet(bool v) { WW_SET(m_fillmode_set, v); }
 void DisplayLayoutSetQuery::setFillmode(int v) { WW_SET(m_fillmode, v); }
+void DisplayLayoutSetQuery::setLocationSet(bool v) { WW_SET(m_location_set, v); }
+void DisplayLayoutSetQuery::setLocationX(int v) { WW_SET(m_location_x, v); }
+void DisplayLayoutSetQuery::setLocationY(int v) { WW_SET(m_location_y, v); }
 void DisplayLayoutSetQuery::setAlignSet(bool v) { WW_SET(m_align_set, v); }
 void DisplayLayoutSetQuery::setAlign(int v) { WW_SET(m_align, v); }
 void DisplayLayoutSetQuery::setRotationSet(bool v) { WW_SET(m_rotation_set, v); }
 void DisplayLayoutSetQuery::setRotation(int v) { WW_SET(m_rotation, v); }
 void DisplayLayoutSetQuery::setClearFillmode(bool v) { WW_SET(m_clear_fillmode, v); }
+void DisplayLayoutSetQuery::setClearLocation(bool v) { WW_SET(m_clear_location, v); }
 void DisplayLayoutSetQuery::setClearAlign(bool v) { WW_SET(m_clear_align, v); }
 void DisplayLayoutSetQuery::setClearRotation(bool v) { WW_SET(m_clear_rotation, v); }
 #undef WW_SET
@@ -103,6 +108,9 @@ void DisplayLayoutSetQuery::reload() {
     proto::LayoutOverride ovr;
     ovr.setFillmodeSet(m_fillmode_set);
     ovr.setFillmode(static_cast<proto::FillMode>(m_fillmode));
+    ovr.setLocationSet(m_location_set);
+    ovr.setLocationX(static_cast<quint32>(std::clamp(m_location_x, 0, 100)));
+    ovr.setLocationY(static_cast<quint32>(std::clamp(m_location_y, 0, 100)));
     ovr.setAlignSet(m_align_set);
     ovr.setAlign(static_cast<proto::Align>(m_align));
     ovr.setRotationSet(m_rotation_set);
@@ -113,6 +121,7 @@ void DisplayLayoutSetQuery::reload() {
     inner.setDisplayId(m_display_id);
     inner.setOverride(ovr);
     inner.setClearFillmode(m_clear_fillmode);
+    inner.setClearLocation(m_clear_location);
     inner.setClearAlign(m_clear_align);
     inner.setClearRotation(m_clear_rotation);
 

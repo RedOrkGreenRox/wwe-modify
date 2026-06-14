@@ -105,7 +105,7 @@ Item {
     }
 
     W.UserPropertyListModel {
-        id: userPropModel
+        id: propertyModel
         schemaJson: wallpaperGetQuery.wallpaper?.userPropertiesSchema ?? ""
         overridesJson: wallpaperGetQuery.wallpaper?.userPropertyOverrides ?? ""
     }
@@ -133,7 +133,7 @@ Item {
     }
 
     Connections {
-        target: userPropModel
+        target: propertyModel
         function onValueChanged(key, value) {
             const e = m_pending_writes.entries;
             e[key] = value;
@@ -208,13 +208,13 @@ Item {
 
         MD.VerticalListView {
             id: m_detail_view
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            clip: true
-            model: userPropModel
-            spacing: 8
-            leftMargin: 16
-            rightMargin: 16
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    model: propertyModel
+                    spacing: 8
+                    leftMargin: 16
+                    rightMargin: 16
             topMargin: 0
             bottomMargin: 8
 
@@ -404,32 +404,46 @@ Item {
                         onLinkActivated: link => MD.Util.openUrlExternally(link)
                     }
                 }
+            }
 
-                ColumnLayout {
+            section.property: "section"
+            section.criteria: ViewSection.FullString
+            section.delegate: ColumnLayout {
+                id: m_prop_section
+                required property string section
+
+                width: m_detail_view.contentWidth
+                spacing: 4
+
+                MD.Divider {
+                    Layout.fillWidth: true
+                    Layout.topMargin: 4
+                }
+
+                RowLayout {
                     Layout.fillWidth: true
                     spacing: 4
-                    visible: userPropModel.count > 0
 
-                    MD.Divider { Layout.fillWidth: true }
-
-                    RowLayout {
+                    MD.Text {
                         Layout.fillWidth: true
-                        spacing: 4
-                        MD.Text {
-                            Layout.fillWidth: true
-                            text: "Properties"
-                            typescale: MD.Token.typescale.label_large
-                            color: MD.Token.color.on_surface_variant
-                        }
-                        MD.IconButton {
-                            icon.name: MD.Token.icon.restart_alt
-                            mdState.size: MD.Enum.XS
-                            onClicked: userPropModel.resetAll()
+                        text: m_prop_section.section
+                        typescale: MD.Token.typescale.label_large
+                        color: MD.Token.color.on_surface_variant
+                    }
 
-                            MD.ToolTip {
-                                visible: parent.hovered
-                                text: "Reset to defaults"
-                            }
+                    MD.IconButton {
+                        icon.name: MD.Token.icon.restart_alt
+                        mdState.size: MD.Enum.XS
+                        onClicked: {
+                            if (m_prop_section.section === "Properties")
+                                propertyModel.resetPredefinedProperties();
+                            else
+                                propertyModel.resetUserProperties();
+                        }
+
+                        MD.ToolTip {
+                            visible: parent.hovered
+                            text: "Reset to defaults"
                         }
                     }
                 }
@@ -440,6 +454,8 @@ Item {
                 required property string key
                 required property string label
                 required property string type
+                required property string section
+                required property string kind
                 required property bool   supported
                 required property real   minVal
                 required property real   maxVal
@@ -473,7 +489,7 @@ Item {
                 MD.Switch {
                     id: m_switch
                     visible: m_prop_delegate.type === "bool"
-                    onToggled: userPropModel.setValue(m_prop_delegate.key, checked ? "true" : "false")
+                    onToggled: propertyModel.setValue(m_prop_delegate.key, checked ? "true" : "false")
                 }
                 Binding {
                     target: m_switch
@@ -490,10 +506,11 @@ Item {
                         Layout.fillWidth: true
                         from: m_prop_delegate.minVal
                         to: m_prop_delegate.maxVal
-                        onMoved: userPropModel.setValue(m_prop_delegate.key, String(value))
+                        stepSize: m_prop_delegate.maxVal > 10 ? 1 : 0
+                        onMoved: propertyModel.setValue(m_prop_delegate.key, String(value))
                     }
                     MD.Text {
-                        text: Number(m_prop_delegate.currentValue).toFixed(3)
+                        text: Number(m_prop_delegate.currentValue).toFixed(m_prop_delegate.maxVal > 10 ? 0 : 3)
                         typescale: MD.Token.typescale.body_small
                         color: MD.Token.color.on_surface_variant
                         Layout.preferredWidth: 56
@@ -512,7 +529,7 @@ Item {
                     Layout.preferredWidth: 80
                     Layout.preferredHeight: 32
                     showAlpha: m_prop_delegate.hasAlpha
-                    onAccepted: c => userPropModel.setValue(m_prop_delegate.key, W.Util.colorToWire(c, showAlpha))
+                    onAccepted: c => propertyModel.setValue(m_prop_delegate.key, W.Util.colorToWire(c, showAlpha))
                 }
                 Binding {
                     target: m_color
@@ -528,7 +545,7 @@ Item {
                     onActivated: idx => {
                         const values = m_prop_delegate.optionValues || [];
                         if (idx >= 0 && idx < values.length)
-                            userPropModel.setValue(m_prop_delegate.key, String(values[idx]));
+                            propertyModel.setValue(m_prop_delegate.key, String(values[idx]));
                     }
                 }
                 Binding {

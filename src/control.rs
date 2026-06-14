@@ -20,6 +20,7 @@ use crate::queue::rotator::RotationConfig;
 use crate::queue::Mode;
 use crate::renderer_manager;
 use crate::scheduler::DisplayId;
+use crate::wallpaper_properties::split_renderer_properties;
 use crate::wallpaper_type::WallpaperEntry;
 use crate::AppState;
 
@@ -276,29 +277,28 @@ async fn apply_wallpaper_core(
     // on `SettingsSet`). The D-Bus / scheduler / rotator entry points
     // don't take per-call setting overrides, so this is the canonical
     // source.
-    let mut spawn_settings = app
+    let spawn_settings = app
         .settings
         .plugin(&renderer_plugin_name)
         .unwrap_or_default();
-    // Per-item user-property overrides ship as a separate JSON blob in
-    // `Init.user_properties`, decoupled from the schema-validated
-    // plugin settings. The renderer parses the JSON once on startup
-    // (`scene_main.cpp`) and routes each entry through the WE
-    // user-property pipeline. Sending the raw DB value avoids
-    // round-tripping through `HashMap<String, String>` and prevents
-    // accidental name collisions with native plugin settings.
-    let mut user_properties_json: Option<String> = None;
+    // Per-item renderer-owned user-property overrides ship as a
+    // separate JSON blob in `Init.user_properties`; daemon-owned
+    // display layout keys are consumed below as wallpaper-local layout
+    // overrides.
+    let mut raw_user_properties_json: Option<String> = None;
     if !entry.library_root.is_empty() {
         if let Some(rel) = crate::queue::relative_under_root(&entry.library_root, &entry.resource) {
             if let Ok(Some(it)) =
                 repo::find_item_by_library_path(&app.db, &entry.library_root, &rel).await
             {
-                user_properties_json = repo::get_user_property_overrides_raw(&app.db, it.id)
+                raw_user_properties_json = repo::get_user_property_overrides_raw(&app.db, it.id)
                     .await
                     .unwrap_or(None);
             }
         }
     }
+    let (user_properties_json, wallpaper_layout_override) =
+        split_renderer_properties(raw_user_properties_json.as_deref());
     let spawn_req = renderer_manager::SpawnRequest {
         wp_type: entry.wp_type.clone(),
         extras,
@@ -330,6 +330,9 @@ async fn apply_wallpaper_core(
             new_id
         }
     };
+    app.router
+        .set_renderer_wallpaper_layout_override(&renderer_id, wallpaper_layout_override)
+        .await;
     match target {
         None => app.router.relink_all_displays_to(&renderer_id).await,
         Some(ids) => app.router.relink_displays_to(ids, &renderer_id).await,

@@ -26,6 +26,9 @@ use crate::settings::{
     WallpaperIntFilterState, WallpaperSortRuleState, WallpaperStringFilterState,
 };
 use crate::tasks;
+use crate::wallpaper_properties::{
+    dedupe_predefined_schema, is_daemon_display_property_key, split_renderer_properties,
+};
 use crate::wallpaper_sort::apply_wallpaper_sorts;
 use crate::AppState;
 
@@ -285,16 +288,15 @@ fn gpu_info_to_pb(g: &crate::gpu::GpuInfo) -> pb::GpuInfo {
 }
 
 fn display_snapshot_to_pb(s: DisplaySnapshot, settings: &SettingsStore) -> pb::DisplayInfo {
-    // Per-display prefs are keyed by `instance_id` when the consumer
-    // advertises one (v4); name is only the fallback. Mirrors
-    // `Router::resolved_layout` so the snapshot the UI sees agrees with
-    // what `resync_display_set_config` pushes to the display subprocess.
+    // The router snapshot already carries the display's effective
+    // layout, including any active wallpaper-local override. Settings
+    // are still consulted here for the persisted display override and
+    // alias fields.
     let layout_key: &str = s
         .instance_id
         .as_deref()
         .filter(|iid| settings.display_prefs(iid).is_some())
         .unwrap_or(s.name.as_str());
-    let resolved = settings.resolved_layout(layout_key);
     let override_prefs = settings.display_prefs(layout_key).unwrap_or_default();
     pb::DisplayInfo {
         display_id: s.id,
@@ -310,7 +312,7 @@ fn display_snapshot_to_pb(s: DisplaySnapshot, settings: &SettingsStore) -> pb::D
                 z_order: l.z_order,
             })
             .collect(),
-        effective_layout: Some(layout_prefs_to_pb_resolved(&resolved)),
+        effective_layout: Some(layout_prefs_to_pb_resolved(&s.effective_layout)),
         layout_override: Some(layout_override_to_pb(&override_prefs)),
         drm_render_major: s.drm_render_major,
         drm_render_minor: s.drm_render_minor,
@@ -321,12 +323,18 @@ fn display_snapshot_to_pb(s: DisplaySnapshot, settings: &SettingsStore) -> pb::D
 fn layout_prefs_to_pb_resolved(r: &crate::settings::ResolvedLayout) -> pb::LayoutPrefs {
     pb::LayoutPrefs {
         fillmode: fillmode_to_pb(r.fillmode) as i32,
-        align: align_to_pb(r.align) as i32,
+        align: align_to_pb(r.location.to_align()) as i32,
         rotation: rotation_to_pb(r.rotation) as i32,
+        location_x: u32::from(r.location.x.min(100)),
+        location_y: u32::from(r.location.y.min(100)),
+        location_set: true,
     }
 }
 
 fn layout_override_to_pb(p: &crate::settings::DisplayPrefs) -> pb::LayoutOverride {
+    let location = p
+        .location
+        .or_else(|| p.align.map(crate::display::layout::Location::from_align));
     pb::LayoutOverride {
         fillmode_set: p.fillmode.is_some(),
         fillmode: p
@@ -340,6 +348,9 @@ fn layout_override_to_pb(p: &crate::settings::DisplayPrefs) -> pb::LayoutOverrid
             .rotation
             .map(rotation_to_pb)
             .unwrap_or(pb::Rotation::Unspecified) as i32,
+        location_set: location.is_some(),
+        location_x: location.map(|v| u32::from(v.x.min(100))).unwrap_or(0),
+        location_y: location.map(|v| u32::from(v.y.min(100))).unwrap_or(0),
     }
 }
 
@@ -416,6 +427,10 @@ fn align_from_pb(v: i32) -> Option<crate::display::layout::Align> {
     }
 }
 
+fn location_from_pb(x: u32, y: u32) -> crate::display::layout::Location {
+    crate::display::layout::Location::new(x.min(100) as u8, y.min(100) as u8)
+}
+
 fn autopause_mode_to_pb(m: crate::settings::AutopauseMode) -> pb::AutopauseMode {
     use crate::settings::AutopauseMode as M;
     match m {
@@ -449,8 +464,28 @@ fn global_to_pb(g: &crate::settings::GlobalSettings) -> pb::GlobalSettings {
         wallpaper_sorts,
         layout_defaults: Some(pb::LayoutPrefs {
             fillmode: fillmode_to_pb(g.layout.fillmode) as i32,
-            align: align_to_pb(g.layout.align) as i32,
+            align: align_to_pb(
+                g.layout
+                    .location
+                    .unwrap_or_else(|| crate::display::layout::Location::from_align(g.layout.align))
+                    .to_align(),
+            ) as i32,
             rotation: rotation_to_pb(g.layout.rotation) as i32,
+            location_x: u32::from(
+                g.layout
+                    .location
+                    .unwrap_or_else(|| crate::display::layout::Location::from_align(g.layout.align))
+                    .x
+                    .min(100),
+            ),
+            location_y: u32::from(
+                g.layout
+                    .location
+                    .unwrap_or_else(|| crate::display::layout::Location::from_align(g.layout.align))
+                    .y
+                    .min(100),
+            ),
+            location_set: true,
         }),
         autopause: Some(pb::AutopauseSettings {
             mode: autopause_mode_to_pb(g.autopause.mode) as i32,
@@ -1086,6 +1121,7 @@ async fn dispatch_inner(
                 .await
                 .ok()
                 .flatten()
+                .map(|schema| dedupe_predefined_schema(&schema))
                 .unwrap_or_default();
             let overrides = repo::get_user_property_overrides_raw(&state.db, entry.item_id)
                 .await?
@@ -1110,28 +1146,45 @@ async fn dispatch_inner(
             )
             .await?;
             let persist_tag = format!("item={}", entry.item_id);
-            // Push live: unknown keys on the renderer side go through
-            // setPropertyString → MainSetProperty → shader cbuffer.
-            let push_tag = if let Some(h) = state
+            let live_renderer = state
                 .renderer_manager
                 .find_by_resource(&entry.resource)
-                .await
-            {
-                let kv = vec![(r.key.clone(), r.value.clone())];
-                let id = h.id.clone();
-                state
-                    .renderer_manager
-                    .send_control(&h.id, ControlMsg::SettingChanged { settings: kv })
-                    .await
-                    .map_err(|e| {
-                        Error::Internal(anyhow::anyhow!(
-                            "send setting_changed to renderer {}: {e}",
-                            h.id
-                        ))
-                    })?;
-                format!("renderer={id}")
+                .await;
+            let push_tag = if is_daemon_display_property_key(&r.key) {
+                if let Some(h) = live_renderer {
+                    let raw =
+                        repo::get_user_property_overrides_raw(&state.db, entry.item_id).await?;
+                    let (_, wallpaper_layout_override) = split_renderer_properties(raw.as_deref());
+                    let id = h.id.clone();
+                    state
+                        .router
+                        .set_renderer_wallpaper_layout_override(&id, wallpaper_layout_override)
+                        .await;
+                    format!("display-layout={id}")
+                } else {
+                    String::from("offline")
+                }
             } else {
-                String::from("offline")
+                // Push live: unknown keys on the renderer side go
+                // through setPropertyString -> MainSetProperty ->
+                // shader cbuffer.
+                if let Some(h) = live_renderer {
+                    let kv = vec![(r.key.clone(), r.value.clone())];
+                    let id = h.id.clone();
+                    state
+                        .renderer_manager
+                        .send_control(&h.id, ControlMsg::SettingChanged { settings: kv })
+                        .await
+                        .map_err(|e| {
+                            Error::Internal(anyhow::anyhow!(
+                                "send setting_changed to renderer {}: {e}",
+                                h.id
+                            ))
+                        })?;
+                    format!("renderer={id}")
+                } else {
+                    String::from("offline")
+                }
             };
             log::debug!(
                 "WallpaperPropertySet: {}={} on {} persist={} push={}",
@@ -1228,6 +1281,15 @@ async fn dispatch_inner(
                     .filter(|o| o.align_set)
                     .and_then(|o| align_from_pb(o.align))
             };
+            let new_location = if r.clear_location || r.clear_align {
+                None
+            } else {
+                r.r#override
+                    .as_ref()
+                    .filter(|o| o.location_set)
+                    .map(|o| location_from_pb(o.location_x, o.location_y))
+                    .or_else(|| new_align.map(crate::display::layout::Location::from_align))
+            };
             let new_rotation = if r.clear_rotation {
                 None
             } else {
@@ -1242,10 +1304,11 @@ async fn dispatch_inner(
                     (r.display_id != 0).then_some(r.display_id),
                     r.name.clone(),
                     new_fillmode,
+                    new_location,
                     new_align,
                     new_rotation,
                     r.clear_fillmode,
-                    r.clear_align,
+                    r.clear_align || r.clear_location,
                     r.clear_rotation,
                 )
                 .await;
@@ -1352,14 +1415,14 @@ async fn dispatch_inner(
             // per-wallpaper metadata wins on collisions.
             let plugin_kv = state.settings.plugin(&plugin_name).unwrap_or_default();
 
-            // Per-item user-property overrides ride as a separate JSON
-            // payload in `Init.user_properties` (decoupled from the
-            // schema-validated plugin settings). The renderer parses it
-            // once on startup and routes each entry through the WE
-            // user-property pipeline; no name collisions with plugin
-            // settings are possible.
-            let user_properties_json =
+            // Renderer-owned per-item user-property overrides ride as
+            // a separate JSON payload in `Init.user_properties`.
+            // Daemon-owned predefined display keys become
+            // wallpaper-local layout overrides on the router instead.
+            let raw_user_properties_json =
                 repo::get_user_property_overrides_raw(&state.db, entry.item_id).await?;
+            let (user_properties_json, wallpaper_layout_override) =
+                split_renderer_properties(raw_user_properties_json.as_deref());
 
             // SPAWN_VERSION 3: extras (canonical `path` + manifest
             // whitelist like `assets`/`workshop_id`) ride as CLI
@@ -1439,6 +1502,11 @@ async fn dispatch_inner(
                     new_id
                 }
             };
+
+            state
+                .router
+                .set_renderer_wallpaper_layout_override(&renderer_id, wallpaper_layout_override)
+                .await;
 
             if r.display_ids.is_empty() {
                 state.router.relink_all_displays_to(&renderer_id).await;
@@ -1598,6 +1666,10 @@ async fn dispatch_inner(
                         }
                         if let Some(al) = align_from_pb(ld.align) {
                             s.global.layout.align = al;
+                        }
+                        if ld.location_set {
+                            s.global.layout.location =
+                                Some(location_from_pb(ld.location_x, ld.location_y));
                         }
                         if let Some(rt) = rotation_from_pb(ld.rotation) {
                             s.global.layout.rotation = rt;

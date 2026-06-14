@@ -37,6 +37,8 @@ auto Display::effectiveLayoutFromPb(const proto::DisplayInfo& info) -> QVariantM
     const auto& l    = info.effectiveLayout();
     m[u"fillmode"_s] = static_cast<int>(l.fillmode());
     m[u"align"_s]    = static_cast<int>(l.align());
+    m[u"locationX"_s] = l.locationX();
+    m[u"locationY"_s] = l.locationY();
     m[u"rotation"_s] = static_cast<int>(l.rotation());
     return m;
 }
@@ -49,6 +51,9 @@ auto Display::layoutOverrideFromPb(const proto::DisplayInfo& info) -> QVariantMa
     m[u"fillmode"_s]    = static_cast<int>(o.fillmode());
     m[u"alignSet"_s]    = o.alignSet();
     m[u"align"_s]       = static_cast<int>(o.align());
+    m[u"locationSet"_s] = o.locationSet();
+    m[u"locationX"_s]   = o.locationX();
+    m[u"locationY"_s]   = o.locationY();
     m[u"rotationSet"_s] = o.rotationSet();
     m[u"rotation"_s]    = static_cast<int>(o.rotation());
     return m;

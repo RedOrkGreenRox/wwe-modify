@@ -29,6 +29,7 @@ mod settings;
 mod sync;
 mod tasks;
 mod tray;
+mod wallpaper_properties;
 mod wallpaper_sort;
 mod wallpaper_type;
 mod ws_server;

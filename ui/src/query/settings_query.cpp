@@ -20,8 +20,12 @@ namespace
 
 auto layout_to_map(const proto::LayoutPrefs& l) -> QVariantMap {
     QVariantMap m;
-    m[u"fillmode"_s] = static_cast<int>(l.fillmode());
-    m[u"align"_s]    = static_cast<int>(l.align());
+    m[u"fillmode"_s]    = static_cast<int>(l.fillmode());
+    m[u"align"_s]       = static_cast<int>(l.align());
+    m[u"locationSet"_s] = l.locationSet();
+    m[u"locationX"_s]   = l.locationX();
+    m[u"locationY"_s]   = l.locationY();
+    m[u"rotation"_s]    = static_cast<int>(l.rotation());
     return m;
 }
 
@@ -29,6 +33,10 @@ auto map_to_layout(const QVariantMap& m) -> proto::LayoutPrefs {
     proto::LayoutPrefs l;
     l.setFillmode(static_cast<proto::FillMode>(m.value(u"fillmode"_s).toInt()));
     l.setAlign(static_cast<proto::Align>(m.value(u"align"_s).toInt()));
+    l.setLocationSet(m.value(u"locationSet"_s).toBool());
+    l.setLocationX(m.value(u"locationX"_s).toUInt());
+    l.setLocationY(m.value(u"locationY"_s).toUInt());
+    l.setRotation(static_cast<proto::Rotation>(m.value(u"rotation"_s).toInt()));
     return l;
 }
 
@@ -124,8 +132,8 @@ auto map_to_global(const QVariantMap& m) -> proto::GlobalSettings {
     }
     g.setWallpaperSorts(wallpaper_sorts);
     // Round-trip layout_defaults so a single-plugin SettingsSet doesn't
-    // wipe the daemon's current LayoutPrefs (fillmode / align /
-    // clear_rgba). UI never edits these — it just forwards them.
+    // wipe the daemon's current LayoutPrefs. UI never edits these; it
+    // just forwards them.
     if (m.contains(u"layoutDefaults"_s)) {
         g.setLayoutDefaults(map_to_layout(m.value(u"layoutDefaults"_s).toMap()));
     }

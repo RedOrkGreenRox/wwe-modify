@@ -966,7 +966,7 @@ pub async fn get_user_property_overrides(
         return Ok(HashMap::new());
     };
     match serde_json::from_str::<HashMap<String, String>>(&raw) {
-        Ok(m) => Ok(m),
+        Ok(m) => Ok(crate::wallpaper_properties::normalize_user_property_overrides(m)),
         Err(e) => {
             log::warn!(
                 "item {item_id}: user_property_overrides JSON unparseable ({e}); treating as empty"
@@ -976,11 +976,9 @@ pub async fn get_user_property_overrides(
     }
 }
 
-/// Read the raw `user_property_overrides` column verbatim (a JSON
-/// string when set, `None` otherwise). Callers forward this byte-for-
-/// byte to the renderer through `Init.user_properties` so the renderer
-/// can do its own typed decoding (e.g. preserving numeric / boolean
-/// values without an intermediate string conversion).
+/// Read the raw `user_property_overrides` column as JSON text after
+/// canonicalising known predefined keys. Values stay untouched so the
+/// renderer can do its own typed decoding.
 pub async fn get_user_property_overrides_raw(
     db: &DatabaseConnection,
     item_id: i64,
@@ -989,7 +987,9 @@ pub async fn get_user_property_overrides_raw(
         .one(db)
         .await
         .with_context(|| format!("select item by id={item_id} for raw overrides"))?;
-    Ok(row.and_then(|it| it.user_property_overrides))
+    Ok(row
+        .and_then(|it| it.user_property_overrides)
+        .map(|raw| crate::wallpaper_properties::normalize_user_property_overrides_json(&raw)))
 }
 
 /// Merge `kv` into the item's override map and rewrite the column.
@@ -1003,10 +1003,11 @@ pub async fn merge_user_property_overrides(
 ) -> Result<()> {
     let mut current = get_user_property_overrides(db, item_id).await?;
     for (k, v) in kv {
+        let key = crate::wallpaper_properties::canonical_user_property_key(k);
         if v.is_empty() {
-            current.remove(k);
+            current.remove(key);
         } else {
-            current.insert(k.clone(), v.clone());
+            current.insert(key.to_string(), v.clone());
         }
     }
     let serialized = if current.is_empty() {

@@ -1,5 +1,5 @@
 //! Pure-function layout module: turn a `(texture_size, display_size,
-//! fillmode, align)` tuple into the `source_rect` / `dest_rect` /
+//! fillmode, location)` tuple into the `source_rect` / `dest_rect` /
 //! `clear_color` triple the wire-level `set_config` event carries.
 //!
 //! Also hosts `display_point_to_texture` — the inverse mapping used
@@ -81,6 +81,67 @@ impl Align {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Location {
+    pub x: u8,
+    pub y: u8,
+}
+
+impl Default for Location {
+    fn default() -> Self {
+        Self { x: 50, y: 50 }
+    }
+}
+
+impl Location {
+    pub fn new(x: u8, y: u8) -> Self {
+        Self {
+            x: x.min(100),
+            y: y.min(100),
+        }
+    }
+
+    pub fn from_align(align: Align) -> Self {
+        Self::new(
+            (align.h_factor() * 100.0).round() as u8,
+            (align.v_factor() * 100.0).round() as u8,
+        )
+    }
+
+    pub fn to_align(self) -> Align {
+        fn bucket(v: u8) -> u8 {
+            if v <= 25 {
+                0
+            } else if v >= 75 {
+                2
+            } else {
+                1
+            }
+        }
+        match (bucket(self.x), bucket(self.y)) {
+            (0, 0) => Align::TopLeft,
+            (1, 0) => Align::Top,
+            (2, 0) => Align::TopRight,
+            (0, 1) => Align::Left,
+            (1, 1) => Align::Center,
+            (2, 1) => Align::Right,
+            (0, 2) => Align::BottomLeft,
+            (1, 2) => Align::Bottom,
+            (2, 2) => Align::BottomRight,
+            _ => Align::Center,
+        }
+    }
+
+    fn h_factor(self) -> f32 {
+        f32::from(self.x.min(100)) / 100.0
+    }
+
+    fn v_factor(self) -> f32 {
+        f32::from(self.y.min(100)) / 100.0
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct LayoutInput {
     pub tex_w: f32,
@@ -88,7 +149,7 @@ pub struct LayoutInput {
     pub disp_w: f32,
     pub disp_h: f32,
     pub fillmode: FillMode,
-    pub align: Align,
+    pub location: Location,
     pub clear_rgba: [f32; 4],
 }
 
@@ -125,8 +186,8 @@ pub fn compute(i: LayoutInput) -> LayoutOutput {
             let scale = (i.disp_w / i.tex_w).min(i.disp_h / i.tex_h);
             let dw = i.tex_w * scale;
             let dh = i.tex_h * scale;
-            let dx = (i.disp_w - dw) * i.align.h_factor();
-            let dy = (i.disp_h - dh) * i.align.v_factor();
+            let dx = (i.disp_w - dw) * i.location.h_factor();
+            let dy = (i.disp_h - dh) * i.location.v_factor();
             LayoutOutput {
                 source: (0.0, 0.0, i.tex_w, i.tex_h),
                 dest: (dx, dy, dw, dh),
@@ -137,12 +198,12 @@ pub fn compute(i: LayoutInput) -> LayoutOutput {
         FillMode::PreserveAspectCrop => {
             // Pick the source-side rect that, when stretched to fill
             // the display, preserves aspect. The cropped axis is
-            // positioned by `align`.
+            // positioned by `location`.
             let scale = (i.disp_w / i.tex_w).max(i.disp_h / i.tex_h);
             let sw = i.disp_w / scale;
             let sh = i.disp_h / scale;
-            let sx = (i.tex_w - sw) * i.align.h_factor();
-            let sy = (i.tex_h - sh) * i.align.v_factor();
+            let sx = (i.tex_w - sw) * i.location.h_factor();
+            let sy = (i.tex_h - sh) * i.location.v_factor();
             LayoutOutput {
                 source: (sx, sy, sw, sh),
                 dest: (0.0, 0.0, i.disp_w, i.disp_h),
@@ -153,10 +214,10 @@ pub fn compute(i: LayoutInput) -> LayoutOutput {
         FillMode::Centered => {
             // 1:1 pixel display. If the texture is smaller than the
             // display on a given axis, place it inside according to
-            // `align` and letterbox the rest. If larger, crop the
-            // texture according to `align`.
-            let (sx, sw, dx, dw) = axis_centered(i.tex_w, i.disp_w, i.align.h_factor());
-            let (sy, sh, dy, dh) = axis_centered(i.tex_h, i.disp_h, i.align.v_factor());
+            // `location` and letterbox the rest. If larger, crop the
+            // texture according to `location`.
+            let (sx, sw, dx, dw) = axis_centered(i.tex_w, i.disp_w, i.location.h_factor());
+            let (sy, sh, dy, dh) = axis_centered(i.tex_h, i.disp_h, i.location.v_factor());
             LayoutOutput {
                 source: (sx, sy, sw, sh),
                 dest: (dx, dy, dw, dh),
@@ -239,7 +300,24 @@ mod tests {
             disp_w: disp.0,
             disp_h: disp.1,
             fillmode,
-            align,
+            location: Location::from_align(align),
+            clear_rgba: [0.0, 0.0, 0.0, 1.0],
+        }
+    }
+
+    fn input_at(
+        tex: (f32, f32),
+        disp: (f32, f32),
+        fillmode: FillMode,
+        location: Location,
+    ) -> LayoutInput {
+        LayoutInput {
+            tex_w: tex.0,
+            tex_h: tex.1,
+            disp_w: disp.0,
+            disp_h: disp.1,
+            fillmode,
+            location,
             clear_rgba: [0.0, 0.0, 0.0, 1.0],
         }
     }
@@ -321,6 +399,18 @@ mod tests {
             Align::TopLeft,
         ));
         assert!((out.source.0 - 0.0).abs() < 1e-3);
+        assert!((out.source.1 - 0.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn crop_fine_location_positions_visible_window() {
+        let out = compute(input_at(
+            (1920.0, 1080.0),
+            (800.0, 600.0),
+            FillMode::PreserveAspectCrop,
+            Location::new(25, 50),
+        ));
+        assert!((out.source.0 - 120.0).abs() < 1e-3);
         assert!((out.source.1 - 0.0).abs() < 1e-3);
     }
 

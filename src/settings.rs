@@ -28,7 +28,7 @@ use std::time::Duration;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tokio::sync::Notify;
 
-use crate::display::layout::{Align, FillMode, Rotation};
+use crate::display::layout::{Align, FillMode, Location, Rotation};
 
 /// Quiet period after the last `update()` before the debounced writer
 /// flushes to disk. Short enough that `Ctrl-C` shortly after a setting
@@ -46,6 +46,7 @@ const DEBOUNCE_WRITE: Duration = Duration::from_secs(2);
 #[serde(default)]
 pub struct LayoutDefaults {
     pub fillmode: FillMode,
+    pub location: Option<Location>,
     pub align: Align,
     pub rotation: Rotation,
 }
@@ -57,6 +58,7 @@ pub struct LayoutDefaults {
 #[serde(default)]
 pub struct DisplayPrefs {
     pub fillmode: Option<FillMode>,
+    pub location: Option<Location>,
     pub align: Option<Align>,
     pub rotation: Option<Rotation>,
     pub autopause_mode: Option<AutopauseMode>,
@@ -73,6 +75,7 @@ pub struct DisplayPrefs {
 impl DisplayPrefs {
     pub fn is_empty(&self) -> bool {
         self.fillmode.is_none()
+            && self.location.is_none()
             && self.align.is_none()
             && self.rotation.is_none()
             && self.autopause_mode.is_none()
@@ -87,7 +90,7 @@ impl DisplayPrefs {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ResolvedLayout {
     pub fillmode: FillMode,
-    pub align: Align,
+    pub location: Location,
     pub rotation: Rotation,
 }
 
@@ -674,9 +677,15 @@ impl SettingsStore {
         let g = self.inner.read().expect("settings poisoned");
         let defaults = &g.global.layout;
         let prefs = g.displays.get(display_name);
+        let default_location = defaults
+            .location
+            .unwrap_or_else(|| Location::from_align(defaults.align));
         ResolvedLayout {
             fillmode: prefs.and_then(|p| p.fillmode).unwrap_or(defaults.fillmode),
-            align: prefs.and_then(|p| p.align).unwrap_or(defaults.align),
+            location: prefs
+                .and_then(|p| p.location)
+                .or_else(|| prefs.and_then(|p| p.align.map(Location::from_align)))
+                .unwrap_or(default_location),
             rotation: prefs.and_then(|p| p.rotation).unwrap_or(defaults.rotation),
         }
     }
@@ -990,10 +999,12 @@ mod tests {
 [global.layout]
 fillmode = "preserve_aspect_crop"
 align = "top_right"
+location = { x = 25, y = 75 }
 "#;
         let s: Settings = toml::from_str(src).unwrap();
         assert_eq!(s.global.layout.fillmode, FillMode::PreserveAspectCrop);
         assert_eq!(s.global.layout.align, Align::TopRight);
+        assert_eq!(s.global.layout.location, Some(Location::new(25, 75)));
     }
 
     #[test]
@@ -1009,6 +1020,7 @@ fillmode = "preserve_aspect_fit"
         let s: Settings = toml::from_str(src).unwrap();
         let prefs = s.displays.get("HDMI-A-1").unwrap();
         assert_eq!(prefs.fillmode, Some(FillMode::PreserveAspectFit));
+        assert_eq!(prefs.location, None); // inherits
         assert_eq!(prefs.align, None); // inherits
     }
 
@@ -1021,11 +1033,11 @@ fillmode = "preserve_aspect_fit"
         // No per-display entry => pure global defaults.
         let r = store.resolved_layout("eDP-1");
         assert_eq!(r.fillmode, FillMode::default());
-        assert_eq!(r.align, Align::default());
+        assert_eq!(r.location, Location::from_align(Align::default()));
 
         // Set a partial override for "eDP-1" (only fillmode).
         store.update(|s| {
-            s.global.layout.align = Align::Bottom;
+            s.global.layout.location = Some(Location::new(20, 80));
             s.displays.insert(
                 "eDP-1".into(),
                 DisplayPrefs {
@@ -1037,7 +1049,7 @@ fillmode = "preserve_aspect_fit"
 
         let r = store.resolved_layout("eDP-1");
         assert_eq!(r.fillmode, FillMode::PreserveAspectCrop); // override
-        assert_eq!(r.align, Align::Bottom); // global
+        assert_eq!(r.location, Location::new(20, 80)); // global
     }
 
     #[test]

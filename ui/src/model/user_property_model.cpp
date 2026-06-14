@@ -15,6 +15,11 @@ bool isSupported(const QString& type, bool has_options) {
            type == QLatin1String("bool") || (type == QLatin1String("combo") && has_options);
 }
 
+QString propertiesSection() { return QStringLiteral("Properties"); }
+QString userPropertiesSection() { return QStringLiteral("User properties"); }
+QString builtinKind() { return QStringLiteral("property"); }
+QString userKind() { return QStringLiteral("user"); }
+
 QString jsonValueToWireString(const QJsonValue& v) {
     switch (v.type()) {
     case QJsonValue::Bool: return v.toBool() ? QStringLiteral("true") : QStringLiteral("false");
@@ -74,6 +79,8 @@ QHash<int, QByteArray> UserPropertyListModel::roleNames() const {
         { HasAlphaRole, "hasAlpha" },
         { OptionLabelsRole, "optionLabels" },
         { OptionValuesRole, "optionValues" },
+        { SectionRole, "section" },
+        { KindRole, "kind" },
     };
 }
 
@@ -97,6 +104,8 @@ QVariant UserPropertyListModel::data(const QModelIndex& index, int role) const {
         static const QRegularExpression reSpaces(QStringLiteral("\\s+"));
         return cv.trimmed().split(reSpaces, Qt::SkipEmptyParts).size() >= 4;
     }
+    case SectionRole: return e.section;
+    case KindRole: return e.kind;
     default: return {};
     }
 }
@@ -142,17 +151,21 @@ void UserPropertyListModel::setOverridesJson(const QString& v) {
 void UserPropertyListModel::rebuildEntries_() {
     beginResetModel();
     m_entries.clear();
+    appendPredefinedEntries_();
     if (! m_schema_json.isEmpty()) {
         QJsonParseError err {};
         const auto      doc = QJsonDocument::fromJson(m_schema_json.toUtf8(), &err);
         if (err.error == QJsonParseError::NoError && doc.isObject()) {
             const auto obj = doc.object();
-            m_entries.reserve(obj.size());
+            QList<Entry> user_entries;
+            user_entries.reserve(obj.size());
             for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
                 const auto v = it.value().toObject();
                 Entry      e;
-                e.key   = it.key();
-                e.label = v.value(QStringLiteral("text")).toString();
+                e.key     = it.key();
+                e.label   = v.value(QStringLiteral("text")).toString();
+                e.section = userPropertiesSection();
+                e.kind    = userKind();
                 if (e.label.isEmpty()) e.label = e.key;
                 e.type = v.value(QStringLiteral("type")).toString().toLower();
                 if (v.value(QStringLiteral("options")).isArray()) {
@@ -173,15 +186,88 @@ void UserPropertyListModel::rebuildEntries_() {
                 e.max_val      = v.value(QStringLiteral("max")).toDouble(1.0);
                 e.default_wire = coerceDefaultWireString(v.value(QStringLiteral("value")), e.type);
                 e.order        = v.value(QStringLiteral("order")).toDouble(0.0);
-                m_entries.append(std::move(e));
+                user_entries.append(std::move(e));
             }
-            std::sort(m_entries.begin(), m_entries.end(), [](const Entry& a, const Entry& b) {
+            std::sort(user_entries.begin(), user_entries.end(), [](const Entry& a, const Entry& b) {
                 return a.order < b.order;
             });
+            m_entries.append(user_entries);
         }
     }
     endResetModel();
     Q_EMIT countChanged();
+}
+
+void UserPropertyListModel::appendPredefinedEntries_() {
+    auto make = [](QString key, QString label, QString type, QString value) {
+        Entry e;
+        e.key          = std::move(key);
+        e.label        = std::move(label);
+        e.type         = std::move(type);
+        e.section      = propertiesSection();
+        e.kind         = builtinKind();
+        e.supported    = true;
+        e.default_wire = std::move(value);
+        return e;
+    };
+
+    auto scheme = make(QStringLiteral("waywallen.scheme_color"),
+                       QStringLiteral("Scheme color"),
+                       QStringLiteral("color"),
+                       QStringLiteral("0.0000 0.0000 0.0000 1.0000"));
+    m_entries.append(std::move(scheme));
+
+    auto fill = make(QStringLiteral("waywallen.fill_mode"),
+                     QStringLiteral("Fill mode"),
+                     QStringLiteral("combo"),
+                     QStringLiteral("preserve_aspect_crop"));
+    fill.option_labels = {
+        QStringLiteral("Stretch"),
+        QStringLiteral("Fit"),
+        QStringLiteral("Crop"),
+        QStringLiteral("Center"),
+    };
+    fill.option_values = {
+        QStringLiteral("stretched"),
+        QStringLiteral("preserve_aspect_fit"),
+        QStringLiteral("preserve_aspect_crop"),
+        QStringLiteral("centered"),
+    };
+    m_entries.append(std::move(fill));
+
+    auto rotation = make(QStringLiteral("waywallen.rotation"),
+                         QStringLiteral("Rotation"),
+                         QStringLiteral("combo"),
+                         QStringLiteral("normal"));
+    rotation.option_labels = {
+        QStringLiteral("0°"),
+        QStringLiteral("90°"),
+        QStringLiteral("180°"),
+        QStringLiteral("270°"),
+    };
+    rotation.option_values = {
+        QStringLiteral("normal"),
+        QStringLiteral("cw_90"),
+        QStringLiteral("cw_180"),
+        QStringLiteral("cw_270"),
+    };
+    m_entries.append(std::move(rotation));
+
+    auto location_x = make(QStringLiteral("waywallen.location_x"),
+                           QStringLiteral("Horizontal location"),
+                           QStringLiteral("slider"),
+                           QStringLiteral("50"));
+    location_x.min_val = 0.0;
+    location_x.max_val = 100.0;
+    m_entries.append(std::move(location_x));
+
+    auto location_y = make(QStringLiteral("waywallen.location_y"),
+                           QStringLiteral("Vertical location"),
+                           QStringLiteral("slider"),
+                           QStringLiteral("50"));
+    location_y.min_val = 0.0;
+    location_y.max_val = 100.0;
+    m_entries.append(std::move(location_y));
 }
 
 void UserPropertyListModel::setValue(const QString& key, const QString& value) {
@@ -192,6 +278,24 @@ void UserPropertyListModel::setValue(const QString& key, const QString& value) {
 
 void UserPropertyListModel::resetAll() {
     for (const auto& e : m_entries) {
+        m_overrides.insert(e.key, e.default_wire);
+        notifyCurrentChanged_(e.key);
+        Q_EMIT valueChanged(e.key, e.default_wire);
+    }
+}
+
+void UserPropertyListModel::resetPredefinedProperties() {
+    for (const auto& e : m_entries) {
+        if (e.kind != builtinKind()) continue;
+        m_overrides.insert(e.key, e.default_wire);
+        notifyCurrentChanged_(e.key);
+        Q_EMIT valueChanged(e.key, e.default_wire);
+    }
+}
+
+void UserPropertyListModel::resetUserProperties() {
+    for (const auto& e : m_entries) {
+        if (e.kind != userKind()) continue;
         m_overrides.insert(e.key, e.default_wire);
         notifyCurrentChanged_(e.key);
         Q_EMIT valueChanged(e.key, e.default_wire);

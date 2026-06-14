@@ -505,10 +505,8 @@ enum Rotation {
   ROTATION_CW_270      = 4;
 }
 
-// 9-position alignment grid. Used by all FillMode values that don't
-// fully cover the display: positions the visible content within the
-// surface (PreserveAspectFit, Centered) or within the texture
-// (PreserveAspectCrop). Stretched ignores it.
+// 9-position alignment grid. Kept for older clients; new clients
+// should use location_x/location_y below for 0..100 positioning.
 enum Align {
   ALIGN_UNSPECIFIED   = 0;
   ALIGN_TOP_LEFT      = 1;
@@ -532,6 +530,9 @@ message LayoutPrefs {
   FillMode fillmode = 1;
   Align    align    = 2;
   Rotation rotation = 4;
+  uint32   location_x = 5; // 0..100, 50 = center
+  uint32   location_y = 6; // 0..100, 50 = center
+  bool     location_set = 7;
   reserved 3;
   reserved "clear_rgba";
 }
@@ -548,6 +549,9 @@ message LayoutOverride {
   Align align       = 4;
   bool rotation_set = 7;
   Rotation rotation = 8;
+  bool   location_set = 9;
+  uint32 location_x = 10; // 0..100, 50 = center
+  uint32 location_y = 11; // 0..100, 50 = center
   reserved 5, 6;
   reserved "clear_rgba_set", "clear_rgba";
 }
@@ -686,6 +690,7 @@ message DisplayLayoutSetRequest {
   bool clear_align    = 4;
   bool clear_rotation = 6;
   uint64 display_id   = 7;
+  bool clear_location = 8;
   reserved 5;
   reserved "clear_clear_rgba";
 }

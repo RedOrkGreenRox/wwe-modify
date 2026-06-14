@@ -14,11 +14,8 @@ import rstd.cppstd;
 export namespace waywallen::model
 {
 
-// QML-side list model for `general.properties` published by a
-// wescene-renderer subprocess. The view (WallpaperPage right pane)
-// uses this as a ListView model; the panel-level QML logic that used
-// to live in UserPropertyPanel.qml (schema parse / order sort / wire
-// value coercion / 200ms debounce) is consolidated here.
+// Wallpaper detail property list. Built-in rows are always present;
+// plugin-published user properties are appended from the schema.
 //
 // `schemaJson` is the renderer-published map<string,WPProperty>;
 // `overridesJson` is the DB column verbatim (object keyed by property
@@ -45,6 +42,8 @@ public:
         HasAlphaRole,
         OptionLabelsRole,
         OptionValuesRole,
+        SectionRole,
+        KindRole,
     };
     Q_ENUM(Roles)
 
@@ -73,13 +72,15 @@ public:
     // overrides rebuilds.
     Q_INVOKABLE void setValue(const QString& key, const QString& value);
 
-    // `setValue` every key back to its schema default. One
+    // `setValue` each matching key back to its default. One
     // `valueChanged` per key, in order.
     Q_INVOKABLE void resetAll();
+    Q_INVOKABLE void resetPredefinedProperties();
+    Q_INVOKABLE void resetUserProperties();
 
-    // Emitted exclusively from `setValue` / `resetAll` (i.e. user
-    // intent), never from external schema/overrides updates. Drives
-    // the QML-side debounced query flush.
+    // Emitted exclusively from user intent, never from external
+    // schema/overrides updates. Drives the QML-side debounced query
+    // flush.
     Q_SIGNAL void valueChanged(const QString& key, const QString& value);
 
 private:
@@ -87,6 +88,8 @@ private:
         QString     key;
         QString     label;
         QString     type;
+        QString     section;
+        QString     kind;
         bool        supported { false };
         double      min_val { 0.0 };
         double      max_val { 1.0 };
@@ -97,6 +100,7 @@ private:
     };
 
     void    rebuildEntries_();
+    void    appendPredefinedEntries_();
     QString currentValueFor_(qsizetype row) const;
     void    notifyCurrentChanged_(const QString& key);
 
