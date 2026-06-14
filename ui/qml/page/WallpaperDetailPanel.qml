@@ -476,13 +476,17 @@ Item {
                     return 0;
                 }
 
-                MD.Text {
+                MD.TextEdit {
                     text: m_prop_delegate.label
-                    textFormat: Text.StyledText
+                    textFormat: TextEdit.RichText
                     typescale: MD.Token.typescale.label_medium
                     color: MD.Token.color.on_surface
                     Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
+                    Layout.preferredHeight: Math.max(MD.Token.typescale.label_medium.line_height, contentHeight)
+                    readOnly: true
+                    selectByMouse: false
+                    activeFocusOnPress: false
+                    wrapMode: TextEdit.WordWrap
                     onLinkActivated: link => MD.Util.openUrlExternally(link)
                 }
 
