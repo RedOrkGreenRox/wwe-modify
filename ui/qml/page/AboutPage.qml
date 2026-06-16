@@ -35,6 +35,20 @@ MD.Page {
             color: MD.Token.color.on_surface_variant
         }
 
+        Item {
+            Layout.alignment: Qt.AlignHCenter
+            implicitWidth: m_author_button.implicitWidth
+            implicitHeight: m_author_button.contentItem.implicitHeight
+
+            MD.Button {
+                id: m_author_button
+                anchors.centerIn: parent
+                text: "hypengw"
+                mdState.type: MD.Enum.BtText
+                onClicked: MD.Util.openUrlExternally("https://github.com/hypengw")
+            }
+        }
+
         MD.Text {
             Layout.alignment: Qt.AlignHCenter
             text: "Wallpaper Manager for Linux"
@@ -75,6 +89,12 @@ MD.Page {
                 text: "Issues"
                 mdState.type: MD.Enum.BtText
                 onClicked: MD.Util.openUrlExternally("https://github.com/waywallen/waywallen/issues")
+            }
+
+            MD.Button {
+                text: "Donate"
+                mdState.type: MD.Enum.BtText
+                onClicked: MD.Util.openUrlExternally("https://ko-fi.com/hypengw")
             }
         }
     }
