@@ -8,6 +8,7 @@ QtObject {
     id: root
 
     property bool sidebarAutoExpand: true
+    property bool useEmbeddedWorkshopBrowser: false   // Настройка "Встроенный браузер в Мастерской"
 
     readonly property Settings _generalSettings: Settings {
         property alias sidebarAutoExpand: root.sidebarAutoExpand

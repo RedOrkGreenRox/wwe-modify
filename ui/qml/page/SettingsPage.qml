@@ -320,6 +320,43 @@ MD.Page {
                 }
             }
 
+            // ---- Workshop ---------------------------------------------------
+            SectionPane {
+                contentItem: ColumnLayout {
+                    spacing: 12
+
+                    SectionTitle { text: qsTr("Workshop") }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            MD.Text {
+                                text: qsTr("Use embedded browser")
+                                typescale: MD.Token.typescale.body_medium
+                                color: MD.Token.color.on_surface
+                            }
+                            MD.Text {
+                                text: qsTr("Download and use built-in browser for Workshop (requires QtWebEngine)")
+                                typescale: MD.Token.typescale.body_small
+                                color: MD.Token.color.on_surface_variant
+                                wrapMode: Text.WordWrap
+                                Layout.fillWidth: true
+                            }
+                        }
+
+                        MD.Switch {
+                            checked: W.Global.useEmbeddedWorkshopBrowser
+                            onToggled: W.Global.useEmbeddedWorkshopBrowser = checked
+                        }
+                    }
+                }
+            }
+
             // ---- Rotation ---------------------------------------------------
             SectionPane {
                 contentItem: ColumnLayout {

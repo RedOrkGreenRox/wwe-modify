@@ -50,16 +50,25 @@ MD.ApplicationWindow {
     readonly property var pageModel: [
         { icon: MD.Token.icon.wallpaper, name: "Wallpapers" },
         { icon: MD.Token.icon.monitor, name: "Displays" },
-        { icon: MD.Token.icon.monitor_heart, name: "Status" }
+        { icon: MD.Token.icon.monitor_heart, name: "Status" },
+        { icon: MD.Token.icon.store, name: "Мастерская" }
     ]
 
-
-    readonly property var pageComponents: ["qrc:/waywallen/ui/qml/page/WallpaperPage.qml", "qrc:/waywallen/ui/qml/page/DisplaysPage.qml", "qrc:/waywallen/ui/qml/page/StatusPage.qml"]
+    readonly property var pageComponents: [
+        "qrc:/waywallen/ui/qml/page/WallpaperPage.qml",
+        "qrc:/waywallen/ui/qml/page/DisplaysPage.qml",
+        "qrc:/waywallen/ui/qml/page/StatusPage.qml"
+    ]
 
     readonly property var pageCacheable: [true, false, false]
 
     onCurrentPageChanged: {
-        m_content.switchTo(pageComponents[currentPage], {}, pageCacheable[currentPage]);
+        if (currentPage === 3) {
+            // Переключаемся на WorkshopPage (WebEngine загрузится только при первом создании)
+            m_content.switchTo("qrc:/waywallen/ui/qml/page/WorkshopPage.qml", {}, false);
+        } else {
+            m_content.switchTo(pageComponents[currentPage], {}, pageCacheable[currentPage]);
+        }
     }
 
     Component.onCompleted: {

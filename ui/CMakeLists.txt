@@ -14,6 +14,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(BUILD_SHARED_LIBS OFF)
 
 find_package(Qt6 REQUIRED COMPONENTS Quick DBus Protobuf ProtobufQuick ProtobufWellKnownTypes QuickPrivate)
+
+# Опциональная зависимость — WebEngine загружается только при необходимости
+find_package(Qt6 COMPONENTS WebEngineQuick QUIET)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SplitMocFiles.cmake)
 
 if(QT_KNOWN_POLICY_QTP0004)
@@ -177,6 +180,7 @@ set(QML_FILES
   qml/page/AddLibraryPage.qml
   qml/page/AboutPage.qml
   qml/page/PluginSettingsPage.qml
+  qml/page/WorkshopPage.qml
 )
 set(RESOURCES
   assets/waywallen-ui.svg
@@ -230,7 +234,6 @@ set_source_files_properties(
 set_source_files_properties(${SOURCES_NO_MOC} PROPERTIES SKIP_AUTOMOC ON)
 #set_source_files_properties( PROPERTIES COMPILE_DEFINITIONS "${APP_INFO_MACROS}")
 
-set_target_properties(waywallen-qml PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
 split_moc_files(
   TARGET
@@ -267,9 +270,14 @@ target_link_libraries(waywallen-qml
     wavsen::decode
 )
 
+# Лениво линкуем WebEngine только если он найден
+if(TARGET Qt6::WebEngineQuick)
+    target_link_libraries(waywallen-qml PUBLIC Qt6::WebEngineQuick)
+    target_compile_definitions(waywallen-qml PUBLIC WAYWALLEN_HAS_WEBENGINE=1)
+endif()
+
 qt_add_executable(${PROJECT_NAME} MANUAL_FINALIZATION src/main.cpp)
 set_target_properties(${PROJECT_NAME} PROPERTIES 
-  CXX_SCAN_FOR_MODULES ON
   INSTALL_RPATH "${WAYWALLEN_BIN_RPATH}"
 )
 target_compile_definitions(${PROJECT_NAME} PRIVATE "${APP_INFO_MACROS}")
