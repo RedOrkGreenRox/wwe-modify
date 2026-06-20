@@ -1,5 +1,6 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use anyhow::Context;
 
@@ -210,6 +211,90 @@ fn main() -> anyhow::Result<()> {
     result
 }
 
+fn mtime_ns(path: &Path) -> u128 {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return 0;
+    };
+    let Ok(t) = meta.modified() else {
+        return 0;
+    };
+    t.duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
+
+fn library_watch_roots(path: &str) -> Vec<PathBuf> {
+    let root = PathBuf::from(path);
+    vec![
+        root.clone(),
+        root.join("steamapps/workshop/content/431960"),
+        root.join("steamapps/workshop/content"),
+        root.join("steamapps/workshop"),
+    ]
+}
+
+fn library_fingerprint(path: &str) -> u128 {
+    let mut fp = 0u128;
+    for root in library_watch_roots(path) {
+        fp ^= mtime_ns(&root);
+        if let Ok(entries) = std::fs::read_dir(&root) {
+            for entry in entries.flatten().take(4096) {
+                fp = fp.wrapping_add(mtime_ns(&entry.path()));
+            }
+        }
+    }
+    fp
+}
+
+async fn library_watch_loop(app: Arc<AppState>) {
+    use crate::model::repo;
+    use std::collections::HashMap;
+    use std::sync::atomic::Ordering;
+
+    let mut shutdown = app.shutdown_subscribe();
+    let mut interval = tokio::time::interval(Duration::from_secs(5));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut known: HashMap<i64, u128> = HashMap::new();
+
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => {
+                if *shutdown.borrow() {
+                    break;
+                }
+            }
+            _ = interval.tick() => {
+                let Ok(libs) = repo::list_libraries(&app.db).await else {
+                    continue;
+                };
+                let mut changed = false;
+                for lib in libs {
+                    let fp = library_fingerprint(&lib.path);
+                    match known.insert(lib.id, fp) {
+                        Some(old) if old != fp => changed = true,
+                        None => {}
+                        _ => {}
+                    }
+                }
+                if changed && !app.scan_in_progress.load(Ordering::SeqCst) {
+                    let app_clone = app.clone();
+                    app.tasks.spawn_async_unique(
+                        tasks::TaskKind::Generic,
+                        "scan/refresh",
+                        "scan/refresh-after-library-fs-change",
+                        async move {
+                            control::refresh_sources(&app_clone)
+                                .await
+                                .map(|_| ())
+                                .map_err(anyhow::Error::from)
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+
 async fn async_main() -> anyhow::Result<()> {
     let cli = parse_args();
 
@@ -340,6 +425,18 @@ async fn async_main() -> anyhow::Result<()> {
         probe: probe.clone(),
         playlists: playlist::engine::Engine::new(),
     });
+
+    // Watch configured libraries (including Steam Workshop content dirs) and
+    // trigger a rescan shortly after new subscribed wallpapers appear on disk.
+    {
+        let app_for_watch = state.clone();
+        state
+            .tasks
+            .spawn_async(tasks::TaskKind::Service, "library/fs-watch", async move {
+                library_watch_loop(app_for_watch).await;
+                Ok(())
+            });
+    }
 
     // Auto-rotation service. Runs until shutdown, parked on a watch
     // channel until the user activates a playlist.

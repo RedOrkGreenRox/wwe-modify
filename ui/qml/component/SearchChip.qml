@@ -22,6 +22,11 @@ Item {
     property int debounceMs: 200
     signal textEdited()
 
+    function focusInput() {
+        m_input.forceActiveFocus();
+        m_input.selectAll();
+    }
+
     implicitHeight: 32
     implicitWidth: 200
 

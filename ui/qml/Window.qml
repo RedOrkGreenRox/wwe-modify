@@ -61,7 +61,9 @@ MD.ApplicationWindow {
         "qrc:/waywallen/ui/qml/page/WorkshopPage.qml"
     ]
 
-    readonly property var pageCacheable: [true, false, false, false]
+    // Keep Workshop alive while switching tabs so the embedded WebEngine page
+    // does not reload or lose scroll/navigation state until the app exits.
+    readonly property var pageCacheable: [true, false, false, true]
 
     onCurrentPageChanged: {
         m_content.switchTo(pageComponents[currentPage], {}, pageCacheable[currentPage]);

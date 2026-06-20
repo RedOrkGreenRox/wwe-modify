@@ -536,8 +536,10 @@ export RUST_LOG="${RUST_LOG:-waywallen=info}"
 
 # QtWebEngine is a Chromium runtime: it needs an external helper process and
 # resource/locale files.  AppImage mount paths are dynamic, so point WebEngine
-# at the bundled files explicitly on every launch.
+# at the bundled files explicitly on every launch.  Force dark rendering to
+# avoid the white flash and Steam's bright pages in the embedded Workshop.
 export QTWEBENGINEPROCESS_PATH="$HERE/usr/libexec/QtWebEngineProcess"
+export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:-} --force-dark-mode --enable-features=WebContentsForceDark"
 export QTWEBENGINE_RESOURCES_PATH="$HERE/usr/resources"
 export QTWEBENGINE_LOCALES_PATH="$HERE/usr/translations/qtwebengine_locales"
 

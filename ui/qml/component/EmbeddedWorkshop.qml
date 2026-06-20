@@ -14,12 +14,36 @@ Item {
     signal statusMessage(string message)
 
     // Keep Steam cookies outside the AppImage mount and outside any temporary
-    // runtime directory.  This is stable across AppImage rebuilds/restarts.
-    readonly property string profileStoragePath: StandardPaths.writableLocation(StandardPaths.GenericDataLocation) + "/waywallen/steam-workshop-webengine"
+    // runtime directory.  StandardPaths returns a file:// URL in QML; WebEngine
+    // needs a plain filesystem path, otherwise cookies/cache may not persist.
+    readonly property string profileStoragePath: decodeURIComponent(String(StandardPaths.writableLocation(StandardPaths.GenericDataLocation)).replace(/^file:\/\//, "")) + "/waywallen/steam-workshop-webengine"
     property bool loginSignalEmitted: false
 
     function reload() {
         web.reload();
+    }
+
+    function focusWorkshopSearch() {
+        web.runJavaScript(`
+            (() => {
+                const selectors = [
+                    '#workshopSearchText',
+                    'input[name="searchtext"]',
+                    'input[name="term"]',
+                    'input[type="search"]',
+                    'input[placeholder*="Search" i]'
+                ];
+                for (const selector of selectors) {
+                    const el = document.querySelector(selector);
+                    if (el) {
+                        el.focus();
+                        if (el.select) el.select();
+                        return true;
+                    }
+                }
+                return false;
+            })();
+        `);
     }
 
     function looksLikeLoginUrl(url) {
@@ -83,8 +107,28 @@ Item {
         anchors.fill: parent
         profile: steamProfile
         url: root.workshopUrl
+        backgroundColor: "#121212"
+        focus: true
         settings.javascriptEnabled: true
         settings.localStorageEnabled: true
+
+        Keys.onPressed: event => {
+            if (event.key === Qt.Key_F5 || (event.key === Qt.Key_R && (event.modifiers & Qt.ControlModifier))) {
+                web.reload();
+                event.accepted = true;
+            } else if (event.key === Qt.Key_F && (event.modifiers & Qt.ControlModifier)) {
+                root.focusWorkshopSearch();
+                event.accepted = true;
+            } else if (event.key === Qt.Key_Back || (event.key === Qt.Key_Left && (event.modifiers & Qt.AltModifier))) {
+                if (web.canGoBack)
+                    web.goBack();
+                event.accepted = true;
+            } else if (event.key === Qt.Key_Forward || (event.key === Qt.Key_Right && (event.modifiers & Qt.AltModifier))) {
+                if (web.canGoForward)
+                    web.goForward();
+                event.accepted = true;
+            }
+        }
 
         onUrlChanged: {
             if (root.looksLikeLoginUrl(url) && !root.loginSignalEmitted) {

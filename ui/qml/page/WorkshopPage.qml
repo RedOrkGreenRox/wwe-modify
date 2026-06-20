@@ -71,6 +71,7 @@ Item {
         root.embeddedBrowser = object;
         root.statusText = "";
         root.compactStatus = true;
+        object.forceActiveFocus();
 
         object.loginRequired.connect(function () {
             root.statusText = qsTr("Sign in to Steam in the embedded browser. Your session will be saved for future launches.");

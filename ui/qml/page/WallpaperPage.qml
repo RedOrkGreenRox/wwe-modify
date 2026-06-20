@@ -1021,6 +1021,42 @@ MD.Page {
                                 event.accepted = true;
                             }
                         }
+                        Keys.onPressed: event => {
+                            if (event.key === Qt.Key_F5 || (event.key === Qt.Key_R && (event.modifiers & Qt.ControlModifier))) {
+                                if (!W.Notify.scanInProgress)
+                                    scanQuery.reload();
+                                event.accepted = true;
+                            } else if (event.key === Qt.Key_F && (event.modifiers & Qt.ControlModifier)) {
+                                m_search_field.focusInput();
+                                event.accepted = true;
+                            } else if ((event.modifiers & Qt.ControlModifier) && m_grid_view.count > 0
+                                       && (event.key === Qt.Key_Left || event.key === Qt.Key_Right
+                                           || event.key === Qt.Key_Up || event.key === Qt.Key_Down)) {
+                                const cols = Math.max(1, m_grid_view._cols);
+                                const count = m_grid_view.count;
+                                const cur = m_grid_view.currentIndex >= 0 ? m_grid_view.currentIndex : 0;
+                                const row = Math.floor(cur / cols);
+                                const col = cur % cols;
+                                if (event.key === Qt.Key_Left) {
+                                    m_grid_view.currentIndex = row * cols;
+                                } else if (event.key === Qt.Key_Right) {
+                                    m_grid_view.currentIndex = Math.min(count - 1, row * cols + cols - 1);
+                                } else if (event.key === Qt.Key_Up) {
+                                    m_grid_view.currentIndex = col;
+                                } else if (event.key === Qt.Key_Down) {
+                                    const lastRow = Math.floor((count - 1) / cols);
+                                    m_grid_view.currentIndex = Math.min(count - 1, lastRow * cols + col);
+                                }
+                                m_grid_view.positionViewAtIndex(m_grid_view.currentIndex, GridView.Contain);
+                                event.accepted = true;
+                            } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && m_grid_view.currentIndex >= 0) {
+                                root.handleWallpaperClick(m_grid_view.currentIndex, event.modifiers);
+                                event.accepted = true;
+                            } else if (event.key === Qt.Key_Space && m_grid_view.currentIndex >= 0) {
+                                root.requestWallpaperSelection(m_grid_view.currentIndex);
+                                event.accepted = true;
+                            }
+                        }
 
                         highlightFollowsCurrentItem: true
                         highlight: Component {
