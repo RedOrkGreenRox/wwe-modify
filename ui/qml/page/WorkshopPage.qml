@@ -8,79 +8,98 @@ import waywallen.ui as W
 Item {
     id: root
 
-    // Настройка из глобальных настроек
-    property bool useEmbeddedBrowser: false
+    readonly property string workshopUrl: "https://steamcommunity.com/app/431960/workshop/"
+    property Item embeddedBrowser: null
 
-    // Пытаемся открыть через Steam протокол
     function openWithSteam() {
-        const url = "https://steamcommunity.com/app/431960/workshop/";
-        Qt.openUrlExternally("steam://openurl/" + url);
+        MD.Util.openUrlExternally("steam://openurl/" + encodeURIComponent(root.workshopUrl));
     }
 
-    // Открыть в системном браузере
     function openWithSystemBrowser() {
-        Qt.openUrlExternally("https://steamcommunity.com/app/431960/workshop/");
+        MD.Util.openUrlExternally(root.workshopUrl);
     }
 
-    // Попытка открыть встроенный браузер (если WebEngine доступен)
     function tryOpenEmbedded() {
-        if (typeof WebEngineView !== "undefined") {
-            // Динамически создаём WebEngineView
-            const component = Qt.createComponent("qrc:/waywallen/ui/qml/component/EmbeddedWorkshop.qml");
-            if (component.status === Component.Ready) {
-                component.createObject(root, {});
-            } else {
-                openWithSystemBrowser();
-            }
-        } else {
-            openWithSystemBrowser();
+        if (root.embeddedBrowser) {
+            return true;
         }
+
+        const component = Qt.createComponent("qrc:/waywallen/ui/qml/component/EmbeddedWorkshop.qml");
+        if (component.status === Component.Error) {
+            console.warn("QtWebEngine is not available; opening Workshop externally:", component.errorString());
+            root.openWithSystemBrowser();
+            return false;
+        }
+
+        if (component.status === Component.Ready) {
+            const object = component.createObject(root, { "workshopUrl": root.workshopUrl });
+            if (object) {
+                root.embeddedBrowser = object;
+                return true;
+            }
+
+            console.warn("Failed to create embedded Workshop view; opening Workshop externally");
+            root.openWithSystemBrowser();
+            return false;
+        }
+
+        component.statusChanged.connect(function () {
+            if (component.status === Component.Ready) {
+                const object = component.createObject(root, { "workshopUrl": root.workshopUrl });
+                if (object) {
+                    root.embeddedBrowser = object;
+                } else {
+                    root.openWithSystemBrowser();
+                }
+            } else if (component.status === Component.Error) {
+                console.warn("QtWebEngine is not available; opening Workshop externally:", component.errorString());
+                root.openWithSystemBrowser();
+            }
+        });
+        return true;
     }
 
     Component.onCompleted: {
-        // Проверяем настройку (будет приходить из Settings)
-        // Пока используем глобальную настройку
-        if (W.Global.useEmbeddedWorkshopBrowser === true) {
-            tryOpenEmbedded();
-        } else {
-            // Пробуем Steam → системный браузер
-            openWithSteam();
-            // Через 800мс проверяем, открылось ли. Если нет — fallback
-            Qt.callLater(() => {
-                // Steam протокол не всегда срабатывает мгновенно,
-                // поэтому даём fallback на системный браузер
-            });
+        if (W.Global.useEmbeddedWorkshopBrowser) {
+            root.tryOpenEmbedded();
         }
     }
 
-    // Простая заглушка с кнопками (на случай, если ничего не открылось)
     ColumnLayout {
         anchors.centerIn: parent
         spacing: 16
-        visible: true   // Можно скрыть после успешного открытия
+        visible: !root.embeddedBrowser
 
         MD.Label {
             Layout.alignment: Qt.AlignHCenter
-            text: "Мастерская Wallpaper Engine"
+            text: qsTr("Wallpaper Engine Workshop")
             typescale: MD.Token.typescale.title_large
+        }
+
+        MD.Label {
+            Layout.alignment: Qt.AlignHCenter
+            Layout.maximumWidth: 420
+            horizontalAlignment: Text.AlignHCenter
+            text: qsTr("Open the Wallpaper Engine workshop in Steam, in the system browser, or in the embedded browser when QtWebEngine is installed.")
+            typescale: MD.Token.typescale.body_medium
+            wrapMode: Text.WordWrap
         }
 
         MD.Button {
             Layout.alignment: Qt.AlignHCenter
-            text: "Открыть в Steam"
+            text: qsTr("Open in Steam")
             onClicked: root.openWithSteam()
         }
 
         MD.Button {
             Layout.alignment: Qt.AlignHCenter
-            text: "Открыть в браузере"
+            text: qsTr("Open in browser")
             onClicked: root.openWithSystemBrowser()
         }
 
         MD.Button {
             Layout.alignment: Qt.AlignHCenter
-            text: "Встроенный браузер"
-            visible: typeof WebEngineView !== "undefined"
+            text: qsTr("Embedded browser")
             onClicked: root.tryOpenEmbedded()
         }
     }

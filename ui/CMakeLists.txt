@@ -15,8 +15,17 @@ set(BUILD_SHARED_LIBS OFF)
 
 find_package(Qt6 REQUIRED COMPONENTS Quick DBus Protobuf ProtobufQuick ProtobufWellKnownTypes QuickPrivate)
 
-# Опциональная зависимость — WebEngine загружается только при необходимости
-find_package(Qt6 COMPONENTS WebEngineQuick QUIET)
+option(WAYWALLEN_ENABLE_WEBENGINE "Enable the embedded Workshop browser when QtWebEngineQuick is available" ON)
+option(WAYWALLEN_REQUIRE_WEBENGINE "Require QtWebEngineQuick for the embedded Workshop browser" OFF)
+# Optional outside full/AppImage builds.  Lite AppImage builds pass
+# WAYWALLEN_ENABLE_WEBENGINE=OFF to keep QtWebEngine out even if it exists in
+# the build environment.
+if(WAYWALLEN_ENABLE_WEBENGINE)
+  find_package(Qt6 COMPONENTS WebEngineQuick QUIET)
+endif()
+if(WAYWALLEN_REQUIRE_WEBENGINE AND NOT TARGET Qt6::WebEngineQuick)
+  message(FATAL_ERROR "WAYWALLEN_REQUIRE_WEBENGINE=ON, but Qt6::WebEngineQuick was not found")
+endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SplitMocFiles.cmake)
 
 if(QT_KNOWN_POLICY_QTP0004)
@@ -182,6 +191,11 @@ set(QML_FILES
   qml/page/PluginSettingsPage.qml
   qml/page/WorkshopPage.qml
 )
+
+if(TARGET Qt6::WebEngineQuick)
+  list(APPEND QML_FILES qml/component/EmbeddedWorkshop.qml)
+endif()
+
 set(RESOURCES
   assets/waywallen-ui.svg
 )
@@ -234,6 +248,7 @@ set_source_files_properties(
 set_source_files_properties(${SOURCES_NO_MOC} PROPERTIES SKIP_AUTOMOC ON)
 #set_source_files_properties( PROPERTIES COMPILE_DEFINITIONS "${APP_INFO_MACROS}")
 
+set_target_properties(waywallen-qml PROPERTIES CXX_SCAN_FOR_MODULES ON)
 
 split_moc_files(
   TARGET
@@ -270,14 +285,17 @@ target_link_libraries(waywallen-qml
     wavsen::decode
 )
 
-# Лениво линкуем WebEngine только если он найден
+# Link QtWebEngine only for builds that provide it.  Without this target the
+# Workshop page falls back to Steam/system browser and no QtWebEngine QML is
+# imported into the resource module.
 if(TARGET Qt6::WebEngineQuick)
-    target_link_libraries(waywallen-qml PUBLIC Qt6::WebEngineQuick)
-    target_compile_definitions(waywallen-qml PUBLIC WAYWALLEN_HAS_WEBENGINE=1)
+  target_link_libraries(waywallen-qml PUBLIC Qt6::WebEngineQuick)
+  target_compile_definitions(waywallen-qml PUBLIC WAYWALLEN_HAS_WEBENGINE=1)
 endif()
 
 qt_add_executable(${PROJECT_NAME} MANUAL_FINALIZATION src/main.cpp)
-set_target_properties(${PROJECT_NAME} PROPERTIES 
+set_target_properties(${PROJECT_NAME} PROPERTIES
+  CXX_SCAN_FOR_MODULES ON
   INSTALL_RPATH "${WAYWALLEN_BIN_RPATH}"
 )
 target_compile_definitions(${PROJECT_NAME} PRIVATE "${APP_INFO_MACROS}")

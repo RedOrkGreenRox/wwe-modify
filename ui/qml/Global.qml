@@ -8,10 +8,11 @@ QtObject {
     id: root
 
     property bool sidebarAutoExpand: true
-    property bool useEmbeddedWorkshopBrowser: false   // Настройка "Встроенный браузер в Мастерской"
+    property bool useEmbeddedWorkshopBrowser: false
 
     readonly property Settings _generalSettings: Settings {
         property alias sidebarAutoExpand: root.sidebarAutoExpand
+        property alias useEmbeddedWorkshopBrowser: root.useEmbeddedWorkshopBrowser
     }
 
     // Per-vendor Material color schemes, seeded from each GPU vendor's brand

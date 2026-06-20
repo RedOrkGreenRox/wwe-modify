@@ -48,27 +48,23 @@ MD.ApplicationWindow {
     readonly property bool isCompact: MD.MProp.size.isCompact
 
     readonly property var pageModel: [
-        { icon: MD.Token.icon.wallpaper, name: "Wallpapers" },
-        { icon: MD.Token.icon.monitor, name: "Displays" },
-        { icon: MD.Token.icon.monitor_heart, name: "Status" },
-        { icon: MD.Token.icon.store, name: "Мастерская" }
+        { icon: MD.Token.icon.wallpaper, name: qsTr("Wallpapers") },
+        { icon: MD.Token.icon.monitor, name: qsTr("Displays") },
+        { icon: MD.Token.icon.monitor_heart, name: qsTr("Status") },
+        { icon: MD.Token.icon.extension, name: qsTr("Workshop") }
     ]
 
     readonly property var pageComponents: [
         "qrc:/waywallen/ui/qml/page/WallpaperPage.qml",
         "qrc:/waywallen/ui/qml/page/DisplaysPage.qml",
-        "qrc:/waywallen/ui/qml/page/StatusPage.qml"
+        "qrc:/waywallen/ui/qml/page/StatusPage.qml",
+        "qrc:/waywallen/ui/qml/page/WorkshopPage.qml"
     ]
 
-    readonly property var pageCacheable: [true, false, false]
+    readonly property var pageCacheable: [true, false, false, false]
 
     onCurrentPageChanged: {
-        if (currentPage === 3) {
-            // Переключаемся на WorkshopPage (WebEngine загрузится только при первом создании)
-            m_content.switchTo("qrc:/waywallen/ui/qml/page/WorkshopPage.qml", {}, false);
-        } else {
-            m_content.switchTo(pageComponents[currentPage], {}, pageCacheable[currentPage]);
-        }
+        m_content.switchTo(pageComponents[currentPage], {}, pageCacheable[currentPage]);
     }
 
     Component.onCompleted: {

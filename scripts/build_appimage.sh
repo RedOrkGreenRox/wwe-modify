@@ -1,23 +1,35 @@
 #!/usr/bin/env bash
 # Build waywallen end-to-end and produce a single-file AppImage at:
-#     <repo>/waywallen-x86_64.AppImage
+#     <repo>/waywallen-<version>-lite-x86_64.AppImage
+# or:
+#     <repo>/waywallen-<version>-full-x86_64.AppImage
 #
 # Audience: users unfamiliar with cmake / cargo / linuxdeploy.
 # Prerequisites:
-#   1. conda (Miniconda recommended: https://docs.conda.io/projects/miniconda/)
-#   2. rustup (https://rustup.rs/) — restart the shell after install
+#   - git, curl, tar, and a few host development packages.
+#   - If conda is missing, this script downloads portable micromamba into build/_tools.
+#   - If cargo is missing, this script installs Rust with rustup.
 # Usage (works from anywhere inside the repo):
 #   ./scripts/build_appimage.sh   first run takes ~15–30 min (creates conda env, builds qtgrpc, packs AppImage)
+#   WAYWALLEN_APPIMAGE_WEBENGINE=ON ./scripts/build_appimage.sh   builds the larger embedded-Workshop edition
 #   ./scripts/build_appimage.sh   re-running performs an incremental rebuild + repack
 #
 # Optional environment variables:
 #   WAYWALLEN_CONDA_ENV     conda env name, default "waywallen"
+#   WAYWALLEN_APPIMAGE_WEBENGINE  ON for full WebEngine build, OFF for lite build, default OFF
 #   OWE_PLUGIN_ZIP          prebuilt OWE plugin zip path or URL
 #   WAYWALLEN_DISPLAY_REPO  layer-shell source repo URL
 #   WAYWALLEN_DISPLAY_REF   layer-shell source git ref
 #   WAYWALLEN_DISPLAY_SRC   layer-shell source cache dir
 
 set -euo pipefail
+
+# Bazzite/Fedora libraries may contain ELF RELR sections (.relr.dyn).
+# The strip binary bundled in linuxdeploy is often too old and fails with:
+#   unknown type [0x13] section `.relr.dyn'
+# Disabling stripping makes AppImage packaging reliable. The AppImage will be
+# a bit larger, but it will build.
+export NO_STRIP="${NO_STRIP:-true}"
 
 # Script lives in <repo>/scripts/, so PROJECT_DIR is one level up.
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -34,6 +46,21 @@ PLUGINS_DIR="$INSTALL_DIR/share/waywallen/plugins"
 OWE_PLUGIN_DIR="$PLUGINS_DIR/$OWE_PLUGIN_ID"
 TOOLS_DIR="$PROJECT_DIR/build/_tools"
 WAYWALLEN_DISPLAY_SRC="${WAYWALLEN_DISPLAY_SRC:-$TMP_DIR/waywallen-display-src}"
+WAYWALLEN_APPIMAGE_WEBENGINE="${WAYWALLEN_APPIMAGE_WEBENGINE:-OFF}"
+case "${WAYWALLEN_APPIMAGE_WEBENGINE,,}" in
+    1|on|true|yes|full|web|webengine)
+        WAYWALLEN_APPIMAGE_WEBENGINE=ON
+        WAYWALLEN_APPIMAGE_FLAVOR=full
+        ;;
+    0|off|false|no|lite|minimal)
+        WAYWALLEN_APPIMAGE_WEBENGINE=OFF
+        WAYWALLEN_APPIMAGE_FLAVOR=lite
+        ;;
+    *)
+        printf '\033[1;31mERROR:\033[0m invalid WAYWALLEN_APPIMAGE_WEBENGINE=%s (use ON or OFF)\n' "$WAYWALLEN_APPIMAGE_WEBENGINE" >&2
+        exit 1
+        ;;
+esac
 
 step() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 fail() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -45,6 +72,148 @@ append_unique_path() {
         [[ "$existing" == "$path" ]] && return
     done
     paths_ref+=("$path")
+}
+find_first_file() {
+    local file="$1"
+    shift
+    local dir candidate
+    for dir in "$@"; do
+        [[ -n "$dir" && -e "$dir" ]] || continue
+        candidate="$(find "$dir" -type f -name "$file" -print -quit 2>/dev/null || true)"
+        if [[ -n "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+
+need_cmd() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+run_as_root() {
+    if [[ "$(id -u)" -eq 0 ]]; then
+        "$@"
+    elif need_cmd sudo; then
+        sudo "$@"
+    else
+        return 1
+    fi
+}
+
+bootstrap_micromamba() {
+    MICROMAMBA="$TOOLS_DIR/micromamba"
+    if [[ ! -x "$MICROMAMBA" ]]; then
+        step "conda not found; downloading portable micromamba into build/_tools"
+        need_cmd curl || fail "curl not found; install curl first, then re-run"
+        need_cmd tar  || fail "tar not found; install tar first, then re-run"
+        mkdir -p "$TOOLS_DIR"
+        local archive="$TOOLS_DIR/micromamba-linux-64.tar.bz2"
+        local extract_dir="$TOOLS_DIR/micromamba-extract"
+        curl -fsSL --retry 3 -o "$archive.tmp" \
+            "https://micro.mamba.pm/api/micromamba/linux-64/latest"
+        mv "$archive.tmp" "$archive"
+        rm -rf "$extract_dir"
+        mkdir -p "$extract_dir"
+        tar -xjf "$archive" -C "$extract_dir" bin/micromamba
+        install -Dm755 "$extract_dir/bin/micromamba" "$MICROMAMBA"
+        rm -rf "$extract_dir"
+    fi
+
+    export MAMBA_ROOT_PREFIX="$PROJECT_DIR/build/_micromamba-root"
+    eval "$("$MICROMAMBA" shell hook -s bash)"
+}
+
+ensure_rust() {
+    if need_cmd cargo; then
+        return 0
+    fi
+    step "cargo not found; installing Rust toolchain with rustup"
+    need_cmd curl || fail "curl not found; install curl first, then re-run"
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --default-toolchain stable
+    source "$HOME/.cargo/env"
+    need_cmd cargo || fail "cargo still not found after rustup installation"
+}
+
+ensure_host_build_deps() {
+    local missing=()
+    if [[ ! -x /usr/bin/pkg-config ]]; then
+        missing+=(pkg-config)
+    else
+        env -u PKG_CONFIG_PATH -u PKG_CONFIG_LIBDIR /usr/bin/pkg-config --exists libpipewire-0.3 || missing+=(libpipewire-0.3)
+        env -u PKG_CONFIG_PATH -u PKG_CONFIG_LIBDIR /usr/bin/pkg-config --exists libspa-0.2      || missing+=(libspa-0.2)
+        env -u PKG_CONFIG_PATH -u PKG_CONFIG_LIBDIR /usr/bin/pkg-config --exists fontconfig      || missing+=(fontconfig)
+        env -u PKG_CONFIG_PATH -u PKG_CONFIG_LIBDIR /usr/bin/pkg-config --exists 'libpulse >= 14.0' || missing+=(libpulse)
+    fi
+
+    [[ "${#missing[@]}" -eq 0 ]] && return 0
+
+    step "Missing host development packages: ${missing[*]}"
+    if need_cmd dnf; then
+        step "Trying to install host build dependencies with dnf"
+        if run_as_root dnf install -y \
+            git curl tar pkgconf-pkg-config pipewire-devel fontconfig-devel pulseaudio-libs-devel libarchive; then
+            return 0
+        fi
+    fi
+
+    cat >&2 <<'EOF'
+
+Could not auto-install required host development packages.
+On Bazzite/immutable systems, the recommended way is to build inside a Fedora distrobox/toolbox:
+
+  distrobox create -n waywallen-dev -i fedora:latest
+  distrobox enter waywallen-dev
+  sudo dnf install -y git curl tar pkgconf-pkg-config pipewire-devel fontconfig-devel pulseaudio-libs-devel libarchive
+
+Then run this script again from the repository:
+
+  ./make_appimages.sh lite
+  ./make_appimages.sh full
+
+EOF
+    fail "missing host development packages: ${missing[*]}"
+}
+
+conda_env_exists() {
+    if [[ "$CONDA_FRONTEND" == "conda" ]]; then
+        conda env list | awk 'NF && $1 !~ /^#/ {print $1}' | grep -qx "$ENV_NAME"
+    else
+        micromamba env list | awk 'NF && $1 !~ /^#/ {print $1}' | grep -qx "$ENV_NAME"
+    fi
+}
+
+install_conda_package() {
+    local pkg="$1"
+    if [[ "$CONDA_FRONTEND" == "conda" ]]; then
+        conda install -n "$ENV_NAME" -c conda-forge -y "$pkg"
+    else
+        micromamba install -n "$ENV_NAME" -c conda-forge -y "$pkg"
+    fi
+}
+
+ensure_webengine_package_if_needed() {
+    [[ "$WAYWALLEN_APPIMAGE_WEBENGINE" == "ON" ]] || return 0
+    if [[ -f "$CONDA_PREFIX/lib/cmake/Qt6WebEngineQuick/Qt6WebEngineQuickConfig.cmake" ]] \
+        || find "$CONDA_PREFIX" -path '*/Qt6WebEngineQuickConfig.cmake' -print -quit | grep -q .; then
+        return 0
+    fi
+
+    step "QtWebEngineQuick not found in the build environment; trying to install it"
+    local pkg
+    for pkg in qt6-webengine qtwebengine qt-webengine; do
+        if install_conda_package "$pkg"; then
+            break
+        fi
+    done
+
+    if [[ ! -f "$CONDA_PREFIX/lib/cmake/Qt6WebEngineQuick/Qt6WebEngineQuickConfig.cmake" ]] \
+        && ! find "$CONDA_PREFIX" -path '*/Qt6WebEngineQuickConfig.cmake' -print -quit | grep -q .; then
+        fail "Qt6WebEngineQuickConfig.cmake was not found after trying known conda-forge package names. Build the lite AppImage or install a Qt6 WebEngine package manually."
+    fi
 }
 
 # ---- Compute the version string baked into the AppImage filename ----
@@ -74,44 +243,54 @@ fi
 # Clean APPDIR
 rm -rf "$APPDIR"
 
-APPIMAGE_OUT="$PROJECT_DIR/waywallen-$BUILD_TAG-x86_64.AppImage"
-step "Building AppImage tagged as $BUILD_TAG"
+APPIMAGE_OUT="$PROJECT_DIR/waywallen-$BUILD_TAG-$WAYWALLEN_APPIMAGE_FLAVOR-x86_64.AppImage"
+step "Building $WAYWALLEN_APPIMAGE_FLAVOR AppImage tagged as $BUILD_TAG (WebEngine=$WAYWALLEN_APPIMAGE_WEBENGINE)"
 
-# ---- Check required tools ----
-command -v conda >/dev/null \
-    || fail "conda not found. Install Miniconda first: https://docs.conda.io/projects/miniconda/"
-command -v cargo >/dev/null \
-    || fail "cargo not found. Install rustup first: https://rustup.rs/  Then restart your shell and re-run."
-command -v curl >/dev/null \
-    || fail "curl not found. Install curl first, then re-run."
-command -v bsdtar >/dev/null \
-    || fail "bsdtar not found. Install libarchive/bsdtar first, then re-run."
-command -v git >/dev/null \
-    || fail "git not found. Install git first, then re-run."
+# ---- Check/bootstrap required tools ----
+need_cmd curl || fail "curl not found; install curl first, then re-run"
+need_cmd git  || fail "git not found; install git first, then re-run"
+ensure_rust
+ensure_host_build_deps
 
-# ---- Set up the conda environment ----
-# Make `conda activate` available inside this script.
-# Note: conda's profile script is not friendly to `set -u`; disable it briefly.
-set +u
-# shellcheck disable=SC1091
-source "$(conda info --base)/etc/profile.d/conda.sh"
-set -u
-
+# ---- Set up the conda-compatible environment ----
 ENV_FILE="$PROJECT_DIR/environment.yml"
 [[ -f "$ENV_FILE" ]] || fail "missing $ENV_FILE"
 
-if conda env list | awk 'NF && $1 !~ /^#/ {print $1}' | grep -qx "$ENV_NAME"; then
-    step "Updating conda env: $ENV_NAME (sync to environment.yml)"
-    conda env update -n "$ENV_NAME" -f "$ENV_FILE" --prune
+if need_cmd conda; then
+    CONDA_FRONTEND=conda
+    set +u
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+    set -u
 else
-    step "Creating conda env: $ENV_NAME (install per environment.yml)"
-    conda env create -n "$ENV_NAME" -f "$ENV_FILE"
+    CONDA_FRONTEND=micromamba
+    bootstrap_micromamba
+fi
+
+if conda_env_exists; then
+    step "Updating build env: $ENV_NAME (sync to environment.yml)"
+    if [[ "$CONDA_FRONTEND" == "conda" ]]; then
+        conda env update -n "$ENV_NAME" -f "$ENV_FILE" --prune
+    else
+        micromamba env update -n "$ENV_NAME" -f "$ENV_FILE" -y
+    fi
+else
+    step "Creating build env: $ENV_NAME (install per environment.yml)"
+    if [[ "$CONDA_FRONTEND" == "conda" ]]; then
+        conda env create -n "$ENV_NAME" -f "$ENV_FILE"
+    else
+        micromamba env create -n "$ENV_NAME" -f "$ENV_FILE" -y
+    fi
 fi
 
 step "Activating env: $ENV_NAME"
 set +u
-conda activate "$ENV_NAME"
+if [[ "$CONDA_FRONTEND" == "conda" ]]; then
+    conda activate "$ENV_NAME"
+else
+    micromamba activate "$ENV_NAME"
+fi
 set -u
+ensure_webengine_package_if_needed
 
 # ---- Build a minimal FFmpeg into the conda env (replaces conda-forge's ffmpeg) ----
 bash "$PROJECT_DIR/scripts/build_ffmpeg.sh"
@@ -161,7 +340,9 @@ cmake -S "$PROJECT_DIR" --preset clang-release \
     -DWAYWALLEN_BUILD_UI=ON \
     -DWAYWALLEN_BUILD_PLUGINS=ON \
     -DWAYWALLEN_BUILD_IMAGE_PLUGIN=ON \
-    -DWAYWALLEN_BUILD_VIDEO_PLUGIN=ON
+    -DWAYWALLEN_BUILD_VIDEO_PLUGIN=ON \
+    -DWAYWALLEN_ENABLE_WEBENGINE="$WAYWALLEN_APPIMAGE_WEBENGINE" \
+    -DWAYWALLEN_REQUIRE_WEBENGINE="$WAYWALLEN_APPIMAGE_WEBENGINE"
 
 step "Compiling)"
 cmake --build build/clang-release --parallel
@@ -226,6 +407,75 @@ if compgen -G "$OWE_PLUGIN_DIR/bin/weweb/*.so" >/dev/null; then
     strip "$OWE_PLUGIN_DIR/bin/weweb"/*.so || true
 fi
 
+if [[ "$WAYWALLEN_APPIMAGE_WEBENGINE" == "ON" ]]; then
+# ---- Bundle QtWebEngine for the embedded Steam Workshop page ----
+step "Bundling QtWebEngine runtime"
+QT_INSTALL_LIBEXECS="$("$CONDA_PREFIX/bin/qmake6" -query QT_INSTALL_LIBEXECS 2>/dev/null || true)"
+QT_INSTALL_DATA="$("$CONDA_PREFIX/bin/qmake6" -query QT_INSTALL_DATA 2>/dev/null || true)"
+QT_INSTALL_TRANSLATIONS="$("$CONDA_PREFIX/bin/qmake6" -query QT_INSTALL_TRANSLATIONS 2>/dev/null || true)"
+QT_INSTALL_QML="$("$CONDA_PREFIX/bin/qmake6" -query QT_INSTALL_QML 2>/dev/null || true)"
+
+WEBENGINE_PROCESS="$(find_first_file QtWebEngineProcess \
+    "$QT_INSTALL_LIBEXECS" \
+    "$CONDA_PREFIX/libexec" \
+    "$CONDA_PREFIX/lib/qt6/libexec" \
+    "$CONDA_PREFIX" || true)"
+[[ -n "$WEBENGINE_PROCESS" ]] || fail "QtWebEngineProcess not found. Install the Qt6 WebEngine package in the conda env."
+install -Dm755 "$WEBENGINE_PROCESS" "$INSTALL_DIR/libexec/QtWebEngineProcess"
+cat > "$INSTALL_DIR/libexec/qt.conf" <<'QTC_EOF'
+[Paths]
+Prefix=..
+Libraries=lib
+Plugins=plugins
+Qml2Imports=qml
+Data=.
+Translations=translations
+QTC_EOF
+
+mkdir -p "$INSTALL_DIR/resources" "$INSTALL_DIR/translations/qtwebengine_locales"
+for resource_file in \
+    qtwebengine_resources.pak \
+    qtwebengine_devtools_resources.pak \
+    qtwebengine_resources_100p.pak \
+    qtwebengine_resources_200p.pak \
+    icudtl.dat
+do
+    resource_path="$(find_first_file "$resource_file" \
+        "$QT_INSTALL_DATA/resources" \
+        "$CONDA_PREFIX/resources" \
+        "$CONDA_PREFIX/share/qt6/resources" \
+        "$CONDA_PREFIX" || true)"
+    [[ -n "$resource_path" ]] || fail "QtWebEngine resource not found: $resource_file"
+    cp -v "$resource_path" "$INSTALL_DIR/resources/"
+done
+
+WEBENGINE_LOCALES_DIR=""
+for candidate in \
+    "$QT_INSTALL_TRANSLATIONS/qtwebengine_locales" \
+    "$CONDA_PREFIX/translations/qtwebengine_locales" \
+    "$CONDA_PREFIX/share/qt6/translations/qtwebengine_locales" \
+    "$CONDA_PREFIX/lib/qt6/translations/qtwebengine_locales"
+do
+    if [[ -d "$candidate" ]]; then
+        WEBENGINE_LOCALES_DIR="$candidate"
+        break
+    fi
+done
+[[ -n "$WEBENGINE_LOCALES_DIR" ]] || fail "qtwebengine_locales directory not found"
+cp -rv "$WEBENGINE_LOCALES_DIR"/*.pak "$INSTALL_DIR/translations/qtwebengine_locales/"
+
+# linuxdeploy-plugin-qt usually detects QML imports, but QtWebEngine is easy to
+# miss because WorkshopPage loads the WebEngine component lazily.  Copy its QML
+# module explicitly as a fallback.
+if [[ -n "$QT_INSTALL_QML" && -d "$QT_INSTALL_QML/QtWebEngine" ]]; then
+    mkdir -p "$INSTALL_DIR/qml"
+    cp -rv "$QT_INSTALL_QML/QtWebEngine" "$INSTALL_DIR/qml/"
+fi
+
+else
+    step "Skipping QtWebEngine runtime bundle (lite AppImage)"
+fi
+
 # # ---- Fetch linuxdeploy / appimagetool (cached on first run under build/_tools) ----
 mkdir -p "$TOOLS_DIR"
 LINUXDEPLOY="$TOOLS_DIR/linuxdeploy-x86_64.AppImage"
@@ -265,6 +515,24 @@ export LD_LIBRARY_PATH="$HERE/usr/lib:${LD_LIBRARY_PATH:-}"
 export QT_PLUGIN_PATH="$HERE/usr/plugins:${QT_PLUGIN_PATH:-}"
 export QML2_IMPORT_PATH="$HERE/usr/qml:${QML2_IMPORT_PATH:-}"
 export QML_IMPORT_PATH="$QML2_IMPORT_PATH"
+
+# QtWebEngine is a Chromium runtime: it needs an external helper process and
+# resource/locale files.  AppImage mount paths are dynamic, so point WebEngine
+# at the bundled files explicitly on every launch.
+export QTWEBENGINEPROCESS_PATH="$HERE/usr/libexec/QtWebEngineProcess"
+export QTWEBENGINE_RESOURCES_PATH="$HERE/usr/resources"
+export QTWEBENGINE_LOCALES_PATH="$HERE/usr/translations/qtwebengine_locales"
+
+# On some distributions unprivileged user namespaces are disabled; in that case
+# Chromium's sandbox prevents the embedded Workshop browser from starting.  Keep
+# the sandbox when possible, otherwise fall back to no-sandbox for the AppImage.
+if [[ -r /proc/sys/kernel/unprivileged_userns_clone ]] \
+    && [[ "$(cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null)" == "1" ]]; then
+    unset QTWEBENGINE_DISABLE_SANDBOX
+else
+    export QTWEBENGINE_DISABLE_SANDBOX=1
+fi
+
 exec "$HERE/usr/bin/waywallen" "$@"
 APPEOF
 chmod +x "$APPRUN_TMP"
@@ -287,6 +555,9 @@ LINUXDEPLOY_EXECUTABLE_ARGS=(
     --executable "$INSTALL_DIR/bin/waywallen-ui"
     --executable "$INSTALL_DIR/bin/waywallen-video-renderer"
 )
+if [[ "$WAYWALLEN_APPIMAGE_WEBENGINE" == "ON" ]]; then
+    LINUXDEPLOY_EXECUTABLE_ARGS+=(--executable "$INSTALL_DIR/libexec/QtWebEngineProcess")
+fi
 for renderer_path in "${OWE_RENDERER_BINS[@]}"; do
     LINUXDEPLOY_EXECUTABLE_ARGS+=(--executable "$renderer_path")
 done
