@@ -397,6 +397,12 @@ while IFS= read -r renderer_bin; do
     [[ -f "$renderer_path" ]] \
         || fail "OWE plugin renderer bin missing: $renderer_bin"
     [[ -x "$renderer_path" ]] || chmod +x "$renderer_path"
+    # Do not hand the bundled CEF web renderer to linuxdeploy.  Its GTK/ATK
+    # dependency chain is intentionally not part of the minimal build container
+    # and linuxdeploy aborts on missing host libs (libatk-1.0.so.0, etc.).
+    # The OWE zip already ships the CEF payload next to this binary; AppRun adds
+    # bin/weweb to LD_LIBRARY_PATH.  The important fix for wallpaper_engine
+    # discovery is the explicit --plugin path below, not linuxdeploying weweb.
     [[ "$renderer_bin" == bin/weweb/* ]] && continue
     OWE_RENDERER_BINS+=("$renderer_path")
     append_unique_path OWE_RENDERER_DIRS "$(dirname "$renderer_path")"
@@ -511,10 +517,22 @@ cat > "$APPRUN_TMP" <<'APPEOF'
 #   usr/plugins/  -> Qt platform plugins / wayland-* / imageformats / etc.
 #   usr/qml/      -> all QML modules (Qt's own + Qcm/Material + waywallen/ui)
 HERE="$(dirname "$(readlink -f "$0")")"
-export LD_LIBRARY_PATH="$HERE/usr/lib:${LD_LIBRARY_PATH:-}"
+OWE_PLUGIN_DIR="$HERE/usr/share/waywallen/plugins/org.waywallen.open-wallpaper-engine"
+# Renderer plugins may ship private shared libraries next to their binaries
+# (notably open-wallpaper-engine / wescene / weweb).  Keep those directories in
+# the runtime loader path, otherwise the daemon reports the renderer as "not
+# found" even though the plugin files are present in the AppImage.
+export LD_LIBRARY_PATH="$OWE_PLUGIN_DIR/bin:$OWE_PLUGIN_DIR/bin/weweb:$HERE/usr/lib:${LD_LIBRARY_PATH:-}"
 export QT_PLUGIN_PATH="$HERE/usr/plugins:${QT_PLUGIN_PATH:-}"
 export QML2_IMPORT_PATH="$HERE/usr/qml:${QML2_IMPORT_PATH:-}"
 export QML_IMPORT_PATH="$QML2_IMPORT_PATH"
+
+# Persistent Steam Workshop login for the embedded QtWebEngine browser.
+WAYWALLEN_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/waywallen"
+mkdir -p "$WAYWALLEN_DATA_HOME/steam-workshop-webengine/cache"
+
+# Turn on useful daemon diagnostics unless the user explicitly chose another log level.
+export RUST_LOG="${RUST_LOG:-waywallen=info}"
 
 # QtWebEngine is a Chromium runtime: it needs an external helper process and
 # resource/locale files.  AppImage mount paths are dynamic, so point WebEngine
@@ -533,7 +551,10 @@ else
     export QTWEBENGINE_DISABLE_SANDBOX=1
 fi
 
-exec "$HERE/usr/bin/waywallen" "$@"
+exec "$HERE/usr/bin/waywallen" \
+    --ui "$HERE/usr/bin/waywallen-ui" \
+    --plugin "$HERE/usr/share/waywallen" \
+    "$@"
 APPEOF
 chmod +x "$APPRUN_TMP"
 

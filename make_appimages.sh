@@ -17,6 +17,9 @@ MODE="${1:-both}"
 step() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 fail() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
+step "Making all repository .sh scripts executable"
+find "$PROJECT_DIR" -type f -name '*.sh' -exec chmod +x {} +
+
 build_lite() {
     step "Building Lite AppImage (small, no embedded web browser)"
     WAYWALLEN_APPIMAGE_WEBENGINE=OFF ./scripts/build_appimage.sh
