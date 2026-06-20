@@ -48,6 +48,7 @@ sea-orm-migration = { version = "1.1", default-features = false, features = [
     "runtime-tokio-rustls",
     "sqlx-sqlite",
 ] }
+notify = "8"
 
 [dev-dependencies]
 tempfile = "3"

@@ -16,6 +16,7 @@ Item {
     id: root
 
     property alias text: m_input.text
+    readonly property bool inputActive: m_input.activeFocus
     property string placeholderText
     // Debounce window for the outward `textEdited` signal. Per-keystroke
     // input still updates `text` immediately for any direct binding.

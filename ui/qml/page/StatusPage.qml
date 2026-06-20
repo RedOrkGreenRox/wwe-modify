@@ -83,6 +83,13 @@ MD.Page {
             reloadAll();
     }
 
+    Shortcut {
+        sequences: [StandardKey.Refresh, "F5", "Ctrl+R"]
+        context: Qt.WidgetWithChildrenShortcut
+        enabled: root.visible
+        onActivated: reloadAll()
+    }
+
     function reloadAll() {
         healthQuery.reload();
         rendererQuery.reload();

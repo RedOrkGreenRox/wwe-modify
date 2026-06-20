@@ -60,6 +60,13 @@ MD.Page {
             getQ.reload();
     }
 
+    Shortcut {
+        sequences: [StandardKey.Refresh, "F5", "Ctrl+R"]
+        context: Qt.WidgetWithChildrenShortcut
+        enabled: root.visible
+        onActivated: getQ.reload()
+    }
+
     // Same pattern as WallpaperPage._persistGlobalChange but routed
     // through a 200ms debounce — slider drags would otherwise flood
     // the daemon with one RPC per pixel.
@@ -315,43 +322,6 @@ MD.Page {
                             target: m_pause_on_user_switch
                             property: "checked"
                             value: getQ.global?.autopause?.pauseOnUserSwitch ?? true
-                        }
-                    }
-                }
-            }
-
-            // ---- Workshop ---------------------------------------------------
-            SectionPane {
-                contentItem: ColumnLayout {
-                    spacing: 12
-
-                    SectionTitle { text: qsTr("Workshop") }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
-
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 2
-
-                            MD.Text {
-                                text: qsTr("Use embedded browser")
-                                typescale: MD.Token.typescale.body_medium
-                                color: MD.Token.color.on_surface
-                            }
-                            MD.Text {
-                                text: qsTr("Download and use built-in browser for Workshop (requires QtWebEngine)")
-                                typescale: MD.Token.typescale.body_small
-                                color: MD.Token.color.on_surface_variant
-                                wrapMode: Text.WordWrap
-                                Layout.fillWidth: true
-                            }
-                        }
-
-                        MD.Switch {
-                            checked: W.Global.useEmbeddedWorkshopBrowser
-                            onToggled: W.Global.useEmbeddedWorkshopBrowser = checked
                         }
                     }
                 }

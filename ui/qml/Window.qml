@@ -49,21 +49,25 @@ MD.ApplicationWindow {
 
     readonly property var pageModel: [
         { icon: MD.Token.icon.wallpaper, name: qsTr("Wallpapers") },
+        { icon: MD.Token.icon.extension, name: qsTr("Workshop") },
         { icon: MD.Token.icon.monitor, name: qsTr("Displays") },
         { icon: MD.Token.icon.monitor_heart, name: qsTr("Status") },
-        { icon: MD.Token.icon.extension, name: qsTr("Workshop") }
+        { icon: MD.Token.icon.extension, name: qsTr("Plugins") },
+        { icon: MD.Token.icon.settings, name: qsTr("Settings") }
     ]
 
     readonly property var pageComponents: [
         "qrc:/waywallen/ui/qml/page/WallpaperPage.qml",
+        "qrc:/waywallen/ui/qml/page/WorkshopPage.qml",
         "qrc:/waywallen/ui/qml/page/DisplaysPage.qml",
         "qrc:/waywallen/ui/qml/page/StatusPage.qml",
-        "qrc:/waywallen/ui/qml/page/WorkshopPage.qml"
+        "qrc:/waywallen/ui/qml/page/PluginManagePage.qml",
+        "qrc:/waywallen/ui/qml/page/SettingsPage.qml"
     ]
 
     // Keep Workshop alive while switching tabs so the embedded WebEngine page
     // does not reload or lose scroll/navigation state until the app exits.
-    readonly property var pageCacheable: [true, false, false, true]
+    readonly property var pageCacheable: [true, true, false, false, false, false]
 
     onCurrentPageChanged: {
         m_content.switchTo(pageComponents[currentPage], {}, pageCacheable[currentPage]);
