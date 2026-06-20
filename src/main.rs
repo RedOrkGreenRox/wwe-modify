@@ -105,6 +105,10 @@ struct Args {
     /// Disable daemon-managed display backend auto-spawn.
     /// The UDS endpoint still listens for external consumers.
     no_display: bool,
+    /// Replace an already-running daemon instead of handing off to it.
+    /// AppImage uses this so an old tray-resident daemon cannot keep stale
+    /// plugin paths after an upgrade/rebuild.
+    replace_existing: bool,
     /// Restore the last applied wallpaper on startup.
     restore_last: bool,
 }
@@ -118,6 +122,7 @@ fn parse_args() -> Args {
         plugin_dirs: Vec::new(),
         display_backend: None,
         no_display: false,
+        replace_existing: false,
         restore_last: true,
     };
 
@@ -149,12 +154,15 @@ fn parse_args() -> Args {
                 let val = it.next().expect("--plugin requires a path");
                 args.plugin_dirs.push(PathBuf::from(val));
             }
+            "--replace" => {
+                args.replace_existing = true;
+            }
             "--no-restore" => {
                 args.restore_last = false;
             }
             other => {
                 eprintln!("unknown argument: {other}");
-                eprintln!("usage: waywallen [--ws-port PORT] [--ui PATH] [--no-ui] [--no-tray] [--plugin PATH]... [--display-backend NAME] [--no-display] [--no-restore]");
+                eprintln!("usage: waywallen [--ws-port PORT] [--ui PATH] [--no-ui] [--no-tray] [--plugin PATH]... [--display-backend NAME] [--no-display] [--replace] [--no-restore]");
                 std::process::exit(1);
             }
         }
@@ -302,7 +310,7 @@ async fn async_main() -> anyhow::Result<()> {
 
     // Single-instance gate.
     let handoff_ui = if cli.no_ui { None } else { ui_bin.as_deref() };
-    let dbus_conn = dbus_iface::acquire_or_handoff(handoff_ui).await;
+    let dbus_conn = dbus_iface::acquire_or_handoff(handoff_ui, cli.replace_existing).await;
     log::info!("DBus name acquired: {}", dbus_iface::BUS_NAME);
 
     // Scan installable plugins from standard roots plus extra

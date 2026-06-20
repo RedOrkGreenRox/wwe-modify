@@ -194,7 +194,12 @@ impl Daemon1 {
 
 /// Single-instance gate.
 /// Claims `BUS_NAME` with `DO_NOT_QUEUE`, or hands off UI launch.
-pub async fn acquire_or_handoff(ui_path: Option<&Path>) -> Connection {
+///
+/// When `replace_existing` is true, ask the existing daemon to quit and retry
+/// claiming the name.  This is important for AppImage upgrades/rebuilds: a
+/// tray-resident daemon from an older mount can keep stale plugin paths and make
+/// bundled plugins (notably `wallpaper_engine`) appear as "not found".
+pub async fn acquire_or_handoff(ui_path: Option<&Path>, replace_existing: bool) -> Connection {
     let conn = match Connection::session().await {
         Ok(c) => c,
         Err(e) => {
@@ -204,27 +209,63 @@ pub async fn acquire_or_handoff(ui_path: Option<&Path>) -> Connection {
     };
 
     let name: WellKnownName<'_> = WellKnownName::try_from(BUS_NAME).expect("valid bus name");
-    // zbus 4 maps `Exists` / `InQueue` to error variants; only the
-    // primary-owner reply means this process owns the name.
-    match conn
-        .request_name_with_flags(name, RequestNameFlags::DoNotQueue.into())
-        .await
-    {
-        Ok(_) => conn,
-        Err(zbus::Error::NameTaken) => {
-            let Some(ui) = ui_path else {
-                eprintln!("waywallen: already running, no UI to launch");
-                std::process::exit(0);
-            };
-            log::info!("waywallen already running; exec into {}", ui.display());
-            use std::os::unix::process::CommandExt;
-            let err = std::process::Command::new(ui).exec();
-            eprintln!("waywallen: exec {} failed: {err}", ui.display());
-            std::process::exit(1);
-        }
-        Err(e) => {
-            eprintln!("waywallen: dbus RequestName failed: {e}");
-            std::process::exit(1);
+    let mut replace_attempted = false;
+    loop {
+        // zbus 4 maps `Exists` / `InQueue` to error variants; only the
+        // primary-owner reply means this process owns the name.
+        match conn
+            .request_name_with_flags(name.clone(), RequestNameFlags::DoNotQueue.into())
+            .await
+        {
+            Ok(_) => return conn,
+            Err(zbus::Error::NameTaken) if replace_existing && !replace_attempted => {
+                replace_attempted = true;
+                log::info!("waywallen already running; requesting daemon replacement");
+                match zbus::Proxy::new(
+                    &conn,
+                    BUS_NAME,
+                    OBJECT_PATH,
+                    "org.waywallen.waywallen.Daemon1",
+                )
+                .await
+                {
+                    Ok(proxy) => {
+                        let _ = proxy.call_method("Quit", &()).await;
+                    }
+                    Err(e) => log::warn!("failed to create daemon proxy for replacement: {e}"),
+                }
+                for _ in 0..50 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    match conn
+                        .request_name_with_flags(name.clone(), RequestNameFlags::DoNotQueue.into())
+                        .await
+                    {
+                        Ok(_) => return conn,
+                        Err(zbus::Error::NameTaken) => continue,
+                        Err(e) => {
+                            eprintln!("waywallen: dbus RequestName failed: {e}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                eprintln!("waywallen: timed out waiting for existing daemon to exit");
+                std::process::exit(1);
+            }
+            Err(zbus::Error::NameTaken) => {
+                let Some(ui) = ui_path else {
+                    eprintln!("waywallen: already running, no UI to launch");
+                    std::process::exit(0);
+                };
+                log::info!("waywallen already running; exec into {}", ui.display());
+                use std::os::unix::process::CommandExt;
+                let err = std::process::Command::new(ui).exec();
+                eprintln!("waywallen: exec {} failed: {err}", ui.display());
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("waywallen: dbus RequestName failed: {e}");
+                std::process::exit(1);
+            }
         }
     }
 }

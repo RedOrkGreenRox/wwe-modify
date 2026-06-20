@@ -74,8 +74,9 @@ Item {
         object.forceActiveFocus();
 
         object.loginRequired.connect(function () {
-            root.statusText = qsTr("Sign in to Steam in the embedded browser. Your session will be saved for future launches.");
-            root.compactStatus = true;
+            // No persistent banner: the Steam page itself already shows the
+            // login form, and external sign-in does not share cookies with
+            // QtWebEngine.
         });
         object.loadFailed.connect(function (reason) {
             console.warn("Embedded Workshop load failed:", reason);

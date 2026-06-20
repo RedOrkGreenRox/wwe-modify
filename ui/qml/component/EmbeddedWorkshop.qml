@@ -16,7 +16,9 @@ Item {
     // Keep Steam cookies outside the AppImage mount and outside any temporary
     // runtime directory.  StandardPaths returns a file:// URL in QML; WebEngine
     // needs a plain filesystem path, otherwise cookies/cache may not persist.
-    readonly property string profileStoragePath: decodeURIComponent(String(StandardPaths.writableLocation(StandardPaths.GenericDataLocation)).replace(/^file:\/\//, "")) + "/waywallen/steam-workshop-webengine"
+    readonly property string profileBasePath: decodeURIComponent(String(StandardPaths.writableLocation(StandardPaths.GenericDataLocation)).replace(/^file:\/\//, "")) + "/waywallen/steam-workshop-webengine"
+    readonly property string profileStoragePath: profileBasePath + "/profile"
+    readonly property string profileCachePath: profileBasePath + "/cache"
     property bool loginSignalEmitted: false
 
     function reload() {
@@ -81,7 +83,6 @@ Item {
                 || text.indexOf("войти через steam") !== -1;
 
             if (!result.hasAccount && (result.hasLoginLink || loginPage)) {
-                root.statusMessage(qsTr("Sign in to Steam in the embedded browser. Your session will be saved for future launches."));
                 if (!root.loginSignalEmitted) {
                     root.loginSignalEmitted = true;
                     root.loginRequired();
@@ -94,9 +95,12 @@ Item {
 
     WebEngineProfile {
         id: steamProfile
-        storageName: "waywallen-steam-workshop"
+        // Set explicit disk paths before storageName/page creation; otherwise
+        // QtWebEngine may initialize the profile in its generated default path.
+        offTheRecord: false
         persistentStoragePath: root.profileStoragePath
-        cachePath: root.profileStoragePath + "/cache"
+        cachePath: root.profileCachePath
+        storageName: "waywallen-steam-workshop"
         persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
         httpCacheType: WebEngineProfile.DiskHttpCache
         httpUserAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -133,7 +137,6 @@ Item {
         onUrlChanged: {
             if (root.looksLikeLoginUrl(url) && !root.loginSignalEmitted) {
                 root.loginSignalEmitted = true;
-                root.statusMessage(qsTr("Sign in to Steam in the embedded browser. Your session will be saved for future launches."));
                 root.loginRequired();
             }
         }

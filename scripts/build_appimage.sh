@@ -389,6 +389,71 @@ mkdir -p "$OWE_PLUGIN_DIR"
 bsdtar -xf "$OWE_PLUGIN_ZIP_PATH" -C "$OWE_PLUGIN_DIR"
 [[ -f "$OWE_PLUGIN_DIR/plugin.toml" ]] \
     || fail "OWE plugin zip did not contain plugin.toml at top level"
+
+# OWE v0.1.7 packages the source plugin in the old manifest shape:
+#   [source]
+#   lua = "wallpaper_engine.lua"
+# Current Waywallen loads source plugins only from [plugin].entry with ABI v2.
+# Without this compatibility shim the renderers are present but the source
+# plugin name `wallpaper_engine` is never registered, causing
+# "source plugin 'wallpaper_engine' not found" when applying existing items.
+if grep -q '^\[source\]' "$OWE_PLUGIN_DIR/plugin.toml" \
+    && ! grep -q '^entry[[:space:]]*=' "$OWE_PLUGIN_DIR/plugin.toml"; then
+    step "Adding compatibility wrapper for legacy OWE source manifest"
+    python3 - "$OWE_PLUGIN_DIR/plugin.toml" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+s = s.replace('version = "0.1.7"\n', 'version = "0.1.7"\nentry = "main.lua"\nentry_version = 2\n', 1)
+p.write_text(s)
+PY
+    cat > "$OWE_PLUGIN_DIR/main.lua" <<'LUA'
+local legacy = import("wallpaper_engine")
+
+local M = {}
+
+function M.info()
+    local old = legacy.info()
+    return {
+        name = old.name or "wallpaper_engine",
+        capabilities = {
+            source = {
+                types = old.types or { "scene", "video", "web" },
+                scan = true,
+                auto_detect = legacy.auto_detect ~= nil,
+                library_label = old.library_label or "Steam Library Path",
+                library_hint = old.library_hint or "Pick the directory that contains the steamapps folder.",
+            },
+            wallpaper = {
+                properties = legacy.properties ~= nil,
+                extras = legacy.extras ~= nil,
+            },
+        },
+    }
+end
+
+M.source = {
+    scan = function(ctx) return legacy.scan(ctx) end,
+    auto_detect = function(ctx) return legacy.auto_detect(ctx) end,
+}
+
+M.wallpaper = {
+    properties = function(entry, ctx)
+        if legacy.properties then return legacy.properties(entry, ctx) end
+        return nil
+    end,
+    extras = function(entry, ctx)
+        if legacy.extras then return legacy.extras(entry, ctx) end
+        return { path = entry.resource }
+    end,
+}
+
+return M
+LUA
+    grep -qxF 'main.lua' "$OWE_PLUGIN_DIR/files.txt" || echo 'main.lua' >> "$OWE_PLUGIN_DIR/files.txt"
+fi
+
 OWE_RENDERER_BINS=()
 OWE_RENDERER_DIRS=()
 while IFS= read -r renderer_bin; do
@@ -529,7 +594,13 @@ export QML_IMPORT_PATH="$QML2_IMPORT_PATH"
 
 # Persistent Steam Workshop login for the embedded QtWebEngine browser.
 WAYWALLEN_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/waywallen"
-mkdir -p "$WAYWALLEN_DATA_HOME/steam-workshop-webengine/cache"
+WAYWALLEN_STEAM_WEBENGINE_HOME="$WAYWALLEN_DATA_HOME/steam-workshop-webengine"
+mkdir -p \
+    "$WAYWALLEN_STEAM_WEBENGINE_HOME/profile" \
+    "$WAYWALLEN_STEAM_WEBENGINE_HOME/cache" \
+    "$WAYWALLEN_STEAM_WEBENGINE_HOME/chromium-user-data" \
+    "$WAYWALLEN_STEAM_WEBENGINE_HOME/chromium-cache"
+export WAYWALLEN_STEAM_WEBENGINE_HOME
 
 # Turn on useful daemon diagnostics unless the user explicitly chose another log level.
 export RUST_LOG="${RUST_LOG:-waywallen=info}"
@@ -539,7 +610,10 @@ export RUST_LOG="${RUST_LOG:-waywallen=info}"
 # at the bundled files explicitly on every launch.  Force dark rendering to
 # avoid the white flash and Steam's bright pages in the embedded Workshop.
 export QTWEBENGINEPROCESS_PATH="$HERE/usr/libexec/QtWebEngineProcess"
-export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:-} --force-dark-mode --enable-features=WebContentsForceDark"
+# Do not force Chromium dark-mode here: Steam Workshop repaints/flickers badly
+# on pointer hover with WebContentsForceDark in QtWebEngine.  The QML view still
+# uses a dark background to avoid the initial white flash.
+export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:-} --password-store=basic --user-data-dir=$WAYWALLEN_STEAM_WEBENGINE_HOME/chromium-user-data --disk-cache-dir=$WAYWALLEN_STEAM_WEBENGINE_HOME/chromium-cache"
 export QTWEBENGINE_RESOURCES_PATH="$HERE/usr/resources"
 export QTWEBENGINE_LOCALES_PATH="$HERE/usr/translations/qtwebengine_locales"
 
@@ -554,6 +628,7 @@ else
 fi
 
 exec "$HERE/usr/bin/waywallen" \
+    --replace \
     --ui "$HERE/usr/bin/waywallen-ui" \
     --plugin "$HERE/usr/share/waywallen" \
     "$@"
