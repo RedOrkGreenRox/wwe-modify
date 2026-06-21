@@ -34,6 +34,35 @@ fi
 
 step "Building FFmpeg $FFMPEG_VERSION into $CONDA_PREFIX"
 
+# FFmpeg configure probes `$CC -print-sysroot`. Conda's clang target wrapper
+# (`x86_64-conda-linux-gnu-clang`) currently rejects that GCC-style option and
+# floods stderr with "unknown argument: -print-sysroot". Use tiny clang shims
+# for the FFmpeg build: answer that probe ourselves, otherwise forward to the
+# real conda clang with the configured sysroot.
+FFMPEG_SHIM_DIR="$CONDA_PREFIX/.waywallen-ffmpeg-toolchain"
+FFMPEG_CC_SHIM="$FFMPEG_SHIM_DIR/clang"
+FFMPEG_CXX_SHIM="$FFMPEG_SHIM_DIR/clang++"
+mkdir -p "$FFMPEG_SHIM_DIR"
+cat > "$FFMPEG_CC_SHIM" <<'SHIM'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$#" -eq 1 && "$1" == "-print-sysroot" ]]; then
+    printf '%s\n' "${CONDA_BUILD_SYSROOT:-}"
+    exit 0
+fi
+exec "${CONDA_PREFIX}/bin/clang" ${CONDA_BUILD_SYSROOT:+--sysroot="$CONDA_BUILD_SYSROOT"} "$@"
+SHIM
+cat > "$FFMPEG_CXX_SHIM" <<'SHIM'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$#" -eq 1 && "$1" == "-print-sysroot" ]]; then
+    printf '%s\n' "${CONDA_BUILD_SYSROOT:-}"
+    exit 0
+fi
+exec "${CONDA_PREFIX}/bin/clang++" ${CONDA_BUILD_SYSROOT:+--sysroot="$CONDA_BUILD_SYSROOT"} "$@"
+SHIM
+chmod +x "$FFMPEG_CC_SHIM" "$FFMPEG_CXX_SHIM"
+
 if [[ ! -d "$FFMPEG_SRC/.git" ]]; then
     rm -rf "$FFMPEG_SRC"
     git clone --depth 1 --branch "$FFMPEG_VERSION" \
@@ -86,8 +115,8 @@ CFG_ARGS=(
     # FFmpeg's configure ignores $CC by default (it hardcodes cc=cc), which
     # silently picks up /usr/bin/cc — the host gcc — and bypasses the conda
     # sysroot. Pass them explicitly so the wrapper injects --sysroot.
-    --cc="${CC:-clang}"
-    --cxx="${CXX:-clang++}"
+    --cc="$FFMPEG_CC_SHIM"
+    --cxx="$FFMPEG_CXX_SHIM"
     --enable-shared
     --disable-static
     --disable-programs

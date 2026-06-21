@@ -13,6 +13,7 @@ Item {
     property bool showApply: true
 
     signal back
+    signal applyVisualRequested()
 
     readonly property var wp: (wallpaperGetQuery.wallpaper?.id_proto ?? "") !== ""
                               ? wallpaperGetQuery.wallpaper
@@ -204,6 +205,7 @@ Item {
         onTriggered: {
             if (busy) return;
             if (!root.wp) return;
+            root.applyVisualRequested();
             applyQuery.wallpaper = root.wp;
             applyQuery.displayIds = root.applyTargetIds;
             if (root.rendererCandidates.length >= 2) {
@@ -223,6 +225,7 @@ Item {
         onTriggered: {
             if (busy) return;
             if (!root.wp) return;
+            root.applyVisualRequested();
             portalApplyQuery.wallpaperId = root.wallpaperId;
             portalApplyQuery.reload();
         }

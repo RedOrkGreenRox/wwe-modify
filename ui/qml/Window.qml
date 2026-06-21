@@ -154,7 +154,7 @@ MD.ApplicationWindow {
                     // is just the toggle; we add branding alongside it).
                     header: Item {
                         implicitWidth: m_rail.useLarge ? m_rail.expandedWidth : m_rail.collapsedWidth
-                        implicitHeight: m_logo.y + m_logo.height + 12
+                        implicitHeight: m_flavor_badge.y + m_flavor_badge.implicitHeight + 12
 
                         MD.StandardIconButton {
                             id: m_menu_btn
@@ -200,20 +200,18 @@ MD.ApplicationWindow {
                         }
 
                         // Build flavor badge: "Lite" or "Full".
-                        // Anchored BELOW the logo (anchors.top: m_logo.bottom),
-                        // not on the same baseline as "waywallen" — it sits in
-                        // its own slot under the title text, so the brand and
-                        // the build variant don't compete for visual weight.
+                        // Keep it directly under the logo and visible even when
+                        // the rail is collapsed, so the build variant is always
+                        // discoverable.
                         MD.Label {
-                            visible: m_rail.useLarge
-                            anchors.left: m_logo.right
-                            anchors.leftMargin: 12
+                            id: m_flavor_badge
+                            anchors.horizontalCenter: m_logo.horizontalCenter
                             anchors.top: m_logo.bottom
-                            anchors.topMargin: -2
+                            anchors.topMargin: 2
                             text: W.Notify.buildFlavor === "full" ? qsTr("Full") : qsTr("Lite")
                             typescale: MD.Token.typescale.label_small
                             color: MD.Token.color.on_surface_variant
-                            opacity: 0.7
+                            opacity: 0.75
                         }
                     }
 

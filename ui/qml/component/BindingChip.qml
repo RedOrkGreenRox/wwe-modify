@@ -45,12 +45,7 @@ MD.Pane {
         }
     }
 
-    ToolTip.visible: conflicts.length > 0 && m_hover.containsMouse
-    ToolTip.text: root.conflicts.length === 0
-        ? ""
-        : qsTr("Conflict — also used by: %1").arg(root.conflicts.join(", "))
-
-    HoverHandler {
-        id: m_hover
-    }
+    // Avoid importing QtQuick.Controls here: the AppImage prunes the Basic/Fusion
+    // Controls styles, and importing Controls just for ToolTip makes this small
+    // chip fail to load. Conflict state is still visible through the error color.
 }

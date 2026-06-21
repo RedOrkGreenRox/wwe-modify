@@ -115,6 +115,7 @@ using proto::LibrarySnapshot;
 
 using proto::AutopauseSettings;
 using proto::GlobalSettings;
+using proto::HotkeyBinding;
 using proto::LayoutPrefs;
 using proto::PluginSettings;
 using proto::SettingsChanged;

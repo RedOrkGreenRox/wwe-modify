@@ -34,6 +34,7 @@ MD.Page {
     component SectionPane: MD.Pane {
         Layout.fillWidth: true
         radius: 16
+        padding: 16
         backgroundColor: MD.MProp.color.surface
     }
 
@@ -425,7 +426,11 @@ MD.Page {
                             mdState.type: MD.Enum.BtFilledTonal
                             onClicked: MD.Util.showPopup(
                                 'waywallen.ui/PagePopup',
-                                { source: 'waywallen.ui/HotkeysSettingsPage' },
+                                {
+                                    source: 'waywallen.ui/HotkeysSettingsPage',
+                                    fillWidth: true,
+                                    fillHeight: true
+                                },
                                 root)
                         }
                     }

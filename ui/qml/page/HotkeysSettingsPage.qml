@@ -7,7 +7,7 @@ import Qcm.Material as MD
 import waywallen.control as WC
 import waywallen.ui as W
 
-import "../component/HotkeyActionCatalog.qml" as HKCat
+import "../component" as HK
 
 MD.Page {
     id: root
@@ -17,6 +17,10 @@ MD.Page {
     showBackground: false
     title: qsTr("Keyboard")
     scrolling: !m_flick.atYBeginning
+
+    HK.HotkeyActionCatalog {
+        id: hotkeyCatalog
+    }
 
     // -------------------------------------------------------------
     // Settings pipeline (reuses the existing SettingsGet/Set RPC).
@@ -35,11 +39,13 @@ MD.Page {
 
     W.SettingsSetQuery {
         id: settingsSet
-        onDone: {
-            if (settingsSet.status === 3) {
-                W.Action.toast(qsTr("Failed to save hotkey settings"));
-            } else {
+        // Query status values used elsewhere in the UI:
+        // 2 = Finished, 3 = Error.
+        onStatusChanged: {
+            if (status === 2) {
                 W.Action.toast(qsTr("Hotkey settings saved"));
+            } else if (status === 3) {
+                W.Action.toast(qsTr("Failed to save hotkey settings"));
             }
         }
     }
@@ -51,7 +57,8 @@ MD.Page {
     property var pending: ({})
 
     function loadFromSettings() {
-        const bindings = settingsGet.global.hotkeyBindings || {};
+        const global = settingsGet.global || {};
+        const bindings = global.hotkeyBindings || {};
         const next = {};
         for (const id in bindings) {
             if (!Object.prototype.hasOwnProperty.call(bindings, id)) continue;
@@ -191,32 +198,39 @@ MD.Page {
     }
 
     function prettyKeyName(key) {
-        // Qt.Key_* integer → portable string. We can't enumerate
-        // every Qt key, so cover common cases and fall back to
-        // QKeySequence-like "Key_<n>" so the daemon still parses it
-        // through its normal pipeline.
-        const map = {
-            [Qt.Key_Space]: "Space",
-            [Qt.Key_Return]: "Return",
-            [Qt.Key_Enter]: "Enter",
-            [Qt.Key_Escape]: "Escape",
-            [Qt.Key_Tab]: "Tab",
-            [Qt.Key_Backspace]: "Backspace",
-            [Qt.Key_Delete]: "Delete",
-            [Qt.Key_Home]: "Home",
-            [Qt.Key_End]: "End",
-            [Qt.Key_PageUp]: "PageUp",
-            [Qt.Key_PageDown]: "PageDown",
-            [Qt.Key_Left]: "Left",
-            [Qt.Key_Right]: "Right",
-            [Qt.Key_Up]: "Up",
-            [Qt.Key_Down]: "Down",
-            [Qt.Key_F1]: "F1", [Qt.Key_F2]: "F2", [Qt.Key_F3]: "F3",
-            [Qt.Key_F4]: "F4", [Qt.Key_F5]: "F5", [Qt.Key_F6]: "F6",
-            [Qt.Key_F7]: "F7", [Qt.Key_F8]: "F8", [Qt.Key_F9]: "F9",
-            [Qt.Key_F10]: "F10", [Qt.Key_F11]: "F11", [Qt.Key_F12]: "F12",
-        };
-        return map[key] || ("Key_" + key);
+        // Qt.Key_* integer → portable string. Keep this as a plain switch:
+        // older Qt/QML parsers used by AppImage builds can be picky about
+        // JavaScript computed object-property names in QML files.
+        switch (key) {
+        case Qt.Key_Space: return "Space";
+        case Qt.Key_Return: return "Return";
+        case Qt.Key_Enter: return "Enter";
+        case Qt.Key_Escape: return "Escape";
+        case Qt.Key_Tab: return "Tab";
+        case Qt.Key_Backspace: return "Backspace";
+        case Qt.Key_Delete: return "Delete";
+        case Qt.Key_Home: return "Home";
+        case Qt.Key_End: return "End";
+        case Qt.Key_PageUp: return "PageUp";
+        case Qt.Key_PageDown: return "PageDown";
+        case Qt.Key_Left: return "Left";
+        case Qt.Key_Right: return "Right";
+        case Qt.Key_Up: return "Up";
+        case Qt.Key_Down: return "Down";
+        case Qt.Key_F1: return "F1";
+        case Qt.Key_F2: return "F2";
+        case Qt.Key_F3: return "F3";
+        case Qt.Key_F4: return "F4";
+        case Qt.Key_F5: return "F5";
+        case Qt.Key_F6: return "F6";
+        case Qt.Key_F7: return "F7";
+        case Qt.Key_F8: return "F8";
+        case Qt.Key_F9: return "F9";
+        case Qt.Key_F10: return "F10";
+        case Qt.Key_F11: return "F11";
+        case Qt.Key_F12: return "F12";
+        default: return "Key_" + key;
+        }
     }
 
     // -------------------------------------------------------------
@@ -225,7 +239,7 @@ MD.Page {
 
     function resetToDefaults() {
         const next = {};
-        const defs = HKCat.HotkeyActionCatalog.defaultsByAction;
+        const defs = hotkeyCatalog.defaultsByAction;
         for (const id in defs) {
             if (!Object.prototype.hasOwnProperty.call(defs, id)) continue;
             const seqs = defs[id];
@@ -266,9 +280,9 @@ MD.Page {
     // UI
     // -------------------------------------------------------------
 
-    MD.Flickable {
+    contentItem: MD.Flickable {
         id: m_flick
-        anchors.fill: parent
+        implicitHeight: Math.min(contentHeight, 640)
         contentWidth: width
         contentHeight: m_col.implicitHeight
         clip: true
@@ -292,7 +306,7 @@ MD.Page {
                     MD.Button {
                         text: qsTr("Reset to defaults")
                         icon.name: MD.Token.icon.restart_alt
-                        mdState.type: MD.Enum.BtTonal
+                        mdState.type: MD.Enum.BtFilledTonal
                         onClicked: root.resetToDefaults()
                     }
                     Item { Layout.fillWidth: true }
@@ -300,7 +314,6 @@ MD.Page {
                         text: qsTr("Save")
                         icon.name: MD.Token.icon.check
                         mdState.type: MD.Enum.BtFilled
-                        busy: settingsSet.querying
                         enabled: !settingsSet.querying
                         onClicked: root.save()
                     }
@@ -323,9 +336,12 @@ MD.Page {
             }
 
             Repeater {
-                model: HKCat.HotkeyActionCatalog.sections
+                model: hotkeyCatalog.sections
 
                 delegate: ColumnLayout {
+                    required property var modelData
+                    readonly property string sectionName: String(modelData || "")
+
                     Layout.fillWidth: true
                     Layout.topMargin: 8
                     spacing: 4
@@ -336,29 +352,32 @@ MD.Page {
                         Layout.leftMargin: 16
                         Layout.rightMargin: 16
                         Layout.topMargin: 16
-                        text: modelData
+                        text: sectionName
                         typescale: MD.Token.typescale.title_small
                         color: MD.Token.color.on_surface_variant
                     }
 
                     // Action rows in this section
                     Repeater {
-                        model: HKCat.HotkeyActionCatalog.itemsInSection(modelData)
-                        delegate: HotkeyActionRow {
+                        model: hotkeyCatalog.itemsInSection(sectionName)
+                        delegate: HK.HotkeyActionRow {
+                            required property var modelData
+                            readonly property string actionIdValue: String((modelData && modelData.id) || "")
+
                             width: parent.width
-                            actionId: modelData.id
-                            actionLabel: modelData.label
-                            defaultSequences: modelData.defaults
-                            pendingFor: root.pendingFor(modelData.id)
-                            isCapturing: root.m_captureFor === modelData.id
+                            actionId: actionIdValue
+                            actionLabel: String((modelData && modelData.label) || "")
+                            defaultSequences: (modelData && modelData.defaults) || []
+                            pendingFor: root.pendingFor(actionIdValue)
+                            isCapturing: root.m_captureFor === actionIdValue
                             captureBuffer: root.m_captureBuffer
                             actionsUsing: function(seq) { return root.actionsUsing(seq); }
                             onStartCapture: id => root.startCapture(id)
-                            onStopCapture: root.stopCapture
-                            onCommitCapture: root.commitCapture
-                            onRemoveBindingAt: (idx) => root.removeBindingAt(modelData.id, idx)
-                            onAddBinding: seq => root.addBinding(modelData.id, seq)
-                            onClearAction: () => root.setPendingFor(modelData.id, [])
+                            onStopCapture: root.stopCapture()
+                            onCommitCapture: root.commitCapture()
+                            onRemoveBindingAt: idx => root.removeBindingAt(actionIdValue, idx)
+                            onAddBinding: seq => root.addBinding(actionIdValue, seq)
+                            onClearAction: root.setPendingFor(actionIdValue, [])
                         }
                     }
                 }

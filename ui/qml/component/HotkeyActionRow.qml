@@ -55,8 +55,12 @@ Rectangle {
             Repeater {
                 model: root.pendingFor
                 delegate: BindingChip {
-                    sequence: modelData
-                    conflicts: root.actionsUsing(modelData).filter(
+                    required property var modelData
+                    required property int index
+                    readonly property string sequenceValue: String(modelData || "")
+
+                    sequence: sequenceValue
+                    conflicts: root.actionsUsing(sequenceValue).filter(
                         function(otherId) { return otherId !== root.actionId; }
                     )
                     onRemove: root.removeBindingAt(index)
@@ -96,24 +100,20 @@ Rectangle {
             MD.IconButton {
                 visible: !root.isCapturing
                 icon.name: MD.Token.icon.keyboard
-                tooltip: qsTr("Record key combination")
                 onClicked: root.startCapture(root.actionId)
             }
             MD.IconButton {
                 visible: root.isCapturing
                 icon.name: MD.Token.icon.close
-                tooltip: qsTr("Cancel recording")
                 onClicked: root.stopCapture()
             }
             MD.IconButton {
                 icon.name: MD.Token.icon.delete_outline
-                tooltip: qsTr("Clear all bindings for this action")
                 enabled: root.pendingFor.length > 0
                 onClicked: root.clearAction()
             }
             MD.IconButton {
                 icon.name: MD.Token.icon.add
-                tooltip: qsTr("Add a manual binding (e.g. Ctrl+Alt+R)")
                 onClicked: {
                     // Focus the inline text input on the next paint.
                     m_add_field.visible = true;

@@ -98,6 +98,18 @@ auto global_to_map(const proto::GlobalSettings& g) -> QVariantMap {
         wallpaper_skip_content_ratings.append(r);
     }
     m[u"wallpaperSkipContentRatings"_s] = wallpaper_skip_content_ratings;
+
+    QVariantMap hotkey_bindings;
+    for (auto it = g.hotkeyBindings().constBegin(); it != g.hotkeyBindings().constEnd(); ++it) {
+        QStringList sequences;
+        for (const auto& seq : it.value().sequences()) {
+            sequences.append(seq);
+        }
+        QVariantMap binding;
+        binding[u"sequences"_s] = QVariant::fromValue(sequences);
+        hotkey_bindings[it.key()] = binding;
+    }
+    m[u"hotkeyBindings"_s] = hotkey_bindings;
     return m;
 }
 
@@ -166,6 +178,21 @@ auto map_to_global(const QVariantMap& m) -> proto::GlobalSettings {
             ratings.append(v.toString());
         }
         g.setWallpaperSkipContentRatings(ratings);
+    }
+    if (m.contains(u"hotkeyBindings"_s)) {
+        QHash<QString, proto::HotkeyBinding> hotkey_bindings;
+        const auto raw = m.value(u"hotkeyBindings"_s).toMap();
+        for (auto it = raw.constBegin(); it != raw.constEnd(); ++it) {
+            proto::HotkeyBinding binding;
+            QStringList          sequences;
+            const auto           binding_map = it.value().toMap();
+            for (const auto& seq : binding_map.value(u"sequences"_s).toList()) {
+                sequences.append(seq.toString());
+            }
+            binding.setSequences(sequences);
+            hotkey_bindings.insert(it.key(), binding);
+        }
+        g.setHotkeyBindings(hotkey_bindings);
     }
     return g;
 }

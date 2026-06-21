@@ -34,7 +34,7 @@ export NO_STRIP="${NO_STRIP:-true}"
 # ---------------------------------------------------------------------------
 # Build behaviour knobs — edit here, or override via env var.
 #
-#   WAYWALLEN_INCREMENTAL   1 = keep AppDir (faster); 0 = wipe first (default)
+#   WAYWALLEN_INCREMENTAL   1 = keep AppDir/CMake tree (faster); 0 = clean product build (default)
 #   WAYWALLEN_DEV           1 = no LTO, no AppImage pack; 0 = full build (default)
 #   WAYWALLEN_FAST_TOOLS    1 = skip linuxdeploy re-extract if done; 0 = always (default)
 #   WAYWALLEN_FAST_CONDA    1 = skip conda update when env.yml unchanged; 0 = always (default)
@@ -411,24 +411,24 @@ step "CMake configure (daemon + UI + image/video renderer plugins)"
 #   - Changes to .qml only need a file copy, not a C++ rebuild
 CMAKE_PRESET="$( [[ "$WAYWALLEN_DEV" == "1" ]] && echo clang-dev || echo clang-release )"
 
-# If the build directory exists but was created by a different preset (or a
-# failed configure), CMake will error out with a stale cache. Wipe it when
-# the preset-specific dir contains a CMakeCache.txt that names a different
-# preset — or simply always wipe clang-dev since it is a dev-only dir and
-# developers run with WAYWALLEN_INCREMENTAL for speed when they want it.
+# Release/AppImage builds embed QML and C++ module artifacts into the final
+# binary. Incremental rebuilds are useful for local iteration, but stale qmlcache
+# / generated qrc / C++ module state is painful when testing UI changes. Treat
+# WAYWALLEN_INCREMENTAL=0 (the default) as a clean product build: keep expensive
+# shared caches under build/_tools and the conda env, but wipe the preset build
+# tree itself. Developers who explicitly want fast incremental rebuilds can set
+# WAYWALLEN_INCREMENTAL=1.
 BUILD_PRESET_DIR="$PROJECT_DIR/build/$CMAKE_PRESET"
 if [[ -d "$BUILD_PRESET_DIR" ]] && [[ "${WAYWALLEN_INCREMENTAL:-0}" != "1" ]]; then
-    # Check if cached preset matches — if not, stale cache will break configure.
-    CACHED_PRESET="$(grep -s 'CMAKE_GENERATOR_PLATFORM\|PRESET' "$BUILD_PRESET_DIR/CMakeCache.txt" | head -1 || true)"
+    step "WAYWALLEN_INCREMENTAL=0: wiping CMake build tree for preset $CMAKE_PRESET"
+    rm -rf "$BUILD_PRESET_DIR"
+elif [[ -d "$BUILD_PRESET_DIR" ]]; then
+    # Incremental mode still needs a small guard for preset/cache mismatch.
     CACHE_FILE="$BUILD_PRESET_DIR/CMakeCache.txt"
-    if [[ -f "$CACHE_FILE" ]]; then
-        # Re-use existing cache only when the last successful configure used
-        # the same preset. A missing stamp means first run — safe to proceed.
-        STAMP="$PROJECT_DIR/build/_tools/.cmake-preset-stamp-$CMAKE_PRESET"
-        if [[ ! -f "$STAMP" ]] || [[ "$(cat "$STAMP" 2>/dev/null)" != "$CMAKE_PRESET" ]]; then
-            step "Wiping stale cmake cache for preset $CMAKE_PRESET"
-            rm -rf "$BUILD_PRESET_DIR"
-        fi
+    STAMP="$PROJECT_DIR/build/_tools/.cmake-preset-stamp-$CMAKE_PRESET"
+    if [[ -f "$CACHE_FILE" && -f "$STAMP" && "$(cat "$STAMP" 2>/dev/null)" != "$CMAKE_PRESET" ]]; then
+        step "Wiping stale cmake cache for preset $CMAKE_PRESET"
+        rm -rf "$BUILD_PRESET_DIR"
     fi
 fi
 

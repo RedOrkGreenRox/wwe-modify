@@ -38,6 +38,22 @@ MD.Page {
         id: scanQuery
     }
 
+    W.WallpaperApplyQuery {
+        id: quickApplyQuery
+    }
+
+    Connections {
+        target: quickApplyQuery
+        function onStatusChanged() {
+            if (quickApplyQuery.status === 3) {
+                const message = quickApplyQuery.error && quickApplyQuery.error.length > 0
+                    ? quickApplyQuery.error
+                    : qsTr("Apply failed");
+                W.Action.toast(message, 6000, 1, null);
+            }
+        }
+    }
+
     W.PlaylistListQuery {
         id: playlistListQuery
     }
@@ -46,6 +62,8 @@ MD.Page {
     property string playlistMutationSuccessMessage: ""
     property string playlistMutationPendingMessage: ""
     readonly property bool playlistListLoading: playlistListQuery.querying && !root.playlistListReady
+    property int applyWaveNonce: 0
+    property int applyWaveOriginIndex: -1
 
     Connections {
         target: playlistListQuery
@@ -299,7 +317,7 @@ MD.Page {
     // from the new process. Delete/Backspace/Ctrl+A are guarded by
     // `!m_search_field.inputActive` so they don't fire inside text fields.
     Shortcut {
-        sequences: [StandardKey.Refresh, "F5", "Ctrl+R"]
+        sequences: ["F5", "Ctrl+R"]
         context: Qt.ApplicationShortcut
         enabled: root.visible && !W.Notify.scanInProgress
         onActivated: scanQuery.reload()
@@ -324,7 +342,16 @@ MD.Page {
     }
 
     Shortcut {
-        sequences: ["Delete", "Backspace"]
+        sequence: "Delete"
+        context: Qt.ApplicationShortcut
+        enabled: root.visible && !m_search_field.inputActive
+                 && (root.selectionActive || root.selectedWallpaper !== null
+                     || (m_grid_view && m_grid_view.currentIndex >= 0))
+        onActivated: root.openWorkshopForWallpaper(root.currentWallpaperCandidate())
+    }
+
+    Shortcut {
+        sequence: "Backspace"
         context: Qt.ApplicationShortcut
         enabled: root.visible && !m_search_field.inputActive
                  && (root.selectionActive || root.selectedWallpaper !== null)
@@ -896,6 +923,51 @@ MD.Page {
         root.confirmPlaylistSelection(playlistWallpaperSelect.playlistEditTarget);
     }
 
+    function startWallpaperApplyWave(index) {
+        if (index === undefined || index < 0)
+            return;
+        root.applyWaveOriginIndex = index;
+        root.applyWaveNonce += 1;
+    }
+
+    function wallpaperAt(index) {
+        const model = wallpaperQuery.data;
+        if (!model || index === undefined || index < 0 || index >= m_grid_view.count)
+            return null;
+        return model.item(index);
+    }
+
+    function currentWallpaperCandidate() {
+        if (root.selectedWallpaper)
+            return root.selectedWallpaper;
+        if (m_grid_view && m_grid_view.currentIndex >= 0)
+            return root.wallpaperAt(m_grid_view.currentIndex);
+        return null;
+    }
+
+    function openWorkshopForWallpaper(wallpaper) {
+        const id = String(wallpaper?.externalId || "").trim();
+        if (id.length === 0) {
+            W.Action.toast(qsTr("This wallpaper has no Workshop id"), 4000, 1, null);
+            return;
+        }
+        MD.Util.openUrlExternally("https://steamcommunity.com/sharedfiles/filedetails/?id=" + encodeURIComponent(id));
+    }
+
+    function applyWallpaperAt(index) {
+        const model = wallpaperQuery.data;
+        if (!model || quickApplyQuery.querying)
+            return;
+        const wallpaper = model.item(index);
+        if (!wallpaper)
+            return;
+        root.startWallpaperApplyWave(index);
+        quickApplyQuery.wallpaper = wallpaper;
+        quickApplyQuery.displayIds = [];
+        quickApplyQuery.rendererName = "";
+        quickApplyQuery.reload();
+    }
+
     function handleWallpaperClick(index, modifiers) {
         const model = wallpaperQuery.data;
         if (!model)
@@ -1111,8 +1183,12 @@ MD.Page {
                             selected: model.selected ?? false
                             itemWidth: m_grid_view._displayItemWidth
                             itemHeight: m_grid_view._displayItemHeight
+                            waveNonce: root.applyWaveNonce
+                            waveOriginIndex: root.applyWaveOriginIndex
+                            waveColumns: m_grid_view._cols
                             onClicked: modifiers => root.handleWallpaperClick(index, modifiers)
                             onSelectionRequested: modifiers => root.requestWallpaperSelection(index)
+                            onApplyRequested: root.applyWallpaperAt(index)
                         }
 
                         Keys.onEscapePressed: event => {
@@ -1351,6 +1427,7 @@ MD.Page {
                 fallbackWallpaper: root.selectedWallpaper
                 showApply: true
                 onBack: root.selectedWallpaper = null
+                onApplyVisualRequested: root.startWallpaperApplyWave(m_grid_view.currentIndex)
             }
         }
     }

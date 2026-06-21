@@ -135,7 +135,13 @@ QtObject {
     /// Default bindings keyed by action id. Mirrors the Rust
     /// `default_bindings()` so the UI can show "Default: F5, Ctrl+R"
     /// when the user has cleared all custom bindings.
-    readonly property var defaultsByAction: {
+    readonly property var defaultsByAction: makeDefaultsByAction()
+
+    /// Unique section labels in display order. Used to group the
+    /// Repeater by section in the UI.
+    readonly property var sections: makeSections()
+
+    function makeDefaultsByAction() {
         const out = {};
         for (let i = 0; i < all.length; ++i) {
             out[all[i].id] = all[i].defaults;
@@ -143,9 +149,7 @@ QtObject {
         return out;
     }
 
-    /// Unique section labels in display order. Used to group the
-    /// Repeater by section in the UI.
-    readonly property var sections: {
+    function makeSections() {
         const seen = {};
         const out = [];
         for (let i = 0; i < all.length; ++i) {
