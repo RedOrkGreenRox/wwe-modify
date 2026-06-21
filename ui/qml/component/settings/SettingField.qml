@@ -162,7 +162,7 @@ ColumnLayout {
             case root.kBool:
                 return boolField;
             case root.kU32:
-                return (root._hasNumericRange() && root._intRangeFitsSlider())
+                return (root._hasNumericRange() && (root._intRangeFitsSlider() || root.isFadeMs))
                     ? sliderField : numericField;
             case root.kF32:
                 return root._hasNumericRange() ? sliderField : numericField;
@@ -200,40 +200,36 @@ ColumnLayout {
 
     Component {
         id: sliderField
-        RowLayout {
-            spacing: 8
-            readonly property real lo: root._toFloat(root.schema.min, 0)
-            readonly property real hi: root._toFloat(root.schema.max, 1)
-
-            MD.Slider {
-                id: slider
-                Layout.fillWidth: true
-                from: parent.lo
-                to: parent.hi
-                stepSize: root._stepFor()
-                snapMode: T.Slider.SnapAlways
-                value: root._toFloat(root.value, parent.lo)
-                onMoved: {
-                    if (root.schema.type === root.kU32) {
-                        root._emit(Math.round(value).toString());
-                    } else {
-                        root._emit(value.toString());
-                    }
-                }
-                Connections {
-                    target: root
-                    function onValueChanged() {
-                        const v = root._toFloat(root.value, slider.from);
-                        if (slider.value !== v) slider.value = v;
-                    }
+        W.ValueSlider {
+            id: slider
+            Layout.fillWidth: true
+            from: root._toFloat(root.schema.min, 0)
+            to: root._toFloat(root.schema.max, 1)
+            stepSize: root._stepFor()
+            snapMode: T.Slider.SnapAlways
+            value: root._toFloat(root.value, from)
+            valueText: displayValue(value)
+            valueMaxText: {
+                const minText = displayValue(from);
+                const maxText = displayValue(to);
+                return minText.length > maxText.length ? minText : maxText;
+            }
+            function displayValue(v) {
+                return root.schema.type === root.kU32 ? Math.round(v).toString() : Number(v).toFixed(2);
+            }
+            onMoved: {
+                if (root.schema.type === root.kU32) {
+                    root._emit(Math.round(value).toString());
+                } else {
+                    root._emit(value.toString());
                 }
             }
-
-            MD.Text {
-                Layout.preferredWidth: 56
-                horizontalAlignment: Text.AlignRight
-                typescale: MD.Token.typescale.label_medium
-                text: root.schema.type === root.kU32 ? Math.round(slider.value).toString() : slider.value.toFixed(2)
+            Connections {
+                target: root
+                function onValueChanged() {
+                    const v = root._toFloat(root.value, slider.from);
+                    if (slider.value !== v) slider.value = v;
+                }
             }
         }
     }

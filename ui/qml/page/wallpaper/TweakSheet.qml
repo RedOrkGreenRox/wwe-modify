@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Templates as T
 import Qcm.Material as MD
+import waywallen.ui as W
 
 MD.BottomSheet {
     id: control
@@ -96,20 +97,17 @@ MD.BottomSheet {
                         color: MD.Token.color.on_surface_variant
                     }
 
-                    MD.Text {
-                        text: qsTr("%1 px").arg(control.tweak.itemSize)
-                        typescale: MD.Token.typescale.label_medium
-                        color: MD.Token.color.on_surface_variant
-                    }
                 }
 
-                MD.Slider {
+                W.ValueSlider {
                     Layout.fillWidth: true
                     from: control.tweak.minimumItemSize
                     to: control.tweak.maximumItemSize
                     stepSize: control.tweak.itemSizeStep
                     snapMode: T.Slider.SnapAlways
                     value: control.tweak.itemSize
+                    valueText: qsTr("%1 px").arg(Math.round(value))
+                    valueMaxText: qsTr("%1 px").arg(Math.round(to))
                     onMoved: control.tweak.setItemSize(value)
                 }
             }

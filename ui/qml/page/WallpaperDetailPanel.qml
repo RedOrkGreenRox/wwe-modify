@@ -538,31 +538,21 @@ Item {
                                 color: MD.Token.color.on_surface_variant
                             }
 
-                            RowLayout {
+                            W.ValueSlider {
+                                id: wallpaperHorizontalLocation
                                 Layout.fillWidth: true
-                                spacing: 6
-
-                                MD.Slider {
-                                    id: wallpaperHorizontalLocation
-                                    Layout.fillWidth: true
-                                    from: 0
-                                    to: 100
-                                    stepSize: 1
-                                    value: m_wallpaper_layout_flow.currentX
-                                    onMoved: root.applyWallpaperLayout(
-                                        m_wallpaper_layout_flow.currentFillmode,
-                                        value,
-                                        wallpaperVerticalLocation.value,
-                                        m_wallpaper_layout_flow.currentRotation)
-                                }
-
-                                MD.Text {
-                                    Layout.minimumWidth: 24
-                                    text: root.clampPercent(wallpaperHorizontalLocation.value)
-                                    typescale: MD.Token.typescale.label_medium
-                                    color: MD.Token.color.on_surface_variant
-                                    horizontalAlignment: Text.AlignLeft
-                                }
+                                from: 0
+                                to: 100
+                                stepSize: 1
+                                value: m_wallpaper_layout_flow.currentX
+                                valueText: root.clampPercent(value)
+                                valueMaxText: root.clampPercent(to).toString()
+                                valueHorizontalAlignment: Text.AlignLeft
+                                onMoved: root.applyWallpaperLayout(
+                                    m_wallpaper_layout_flow.currentFillmode,
+                                    value,
+                                    wallpaperVerticalLocation.value,
+                                    m_wallpaper_layout_flow.currentRotation)
                             }
                         }
 
@@ -578,31 +568,21 @@ Item {
                                 color: MD.Token.color.on_surface_variant
                             }
 
-                            RowLayout {
+                            W.ValueSlider {
+                                id: wallpaperVerticalLocation
                                 Layout.fillWidth: true
-                                spacing: 6
-
-                                MD.Slider {
-                                    id: wallpaperVerticalLocation
-                                    Layout.fillWidth: true
-                                    from: 0
-                                    to: 100
-                                    stepSize: 1
-                                    value: m_wallpaper_layout_flow.currentY
-                                    onMoved: root.applyWallpaperLayout(
-                                        m_wallpaper_layout_flow.currentFillmode,
-                                        wallpaperHorizontalLocation.value,
-                                        value,
-                                        m_wallpaper_layout_flow.currentRotation)
-                                }
-
-                                MD.Text {
-                                    Layout.minimumWidth: 24
-                                    text: root.clampPercent(wallpaperVerticalLocation.value)
-                                    typescale: MD.Token.typescale.label_medium
-                                    color: MD.Token.color.on_surface_variant
-                                    horizontalAlignment: Text.AlignLeft
-                                }
+                                from: 0
+                                to: 100
+                                stepSize: 1
+                                value: m_wallpaper_layout_flow.currentY
+                                valueText: root.clampPercent(value)
+                                valueMaxText: root.clampPercent(to).toString()
+                                valueHorizontalAlignment: Text.AlignLeft
+                                onMoved: root.applyWallpaperLayout(
+                                    m_wallpaper_layout_flow.currentFillmode,
+                                    wallpaperHorizontalLocation.value,
+                                    value,
+                                    m_wallpaper_layout_flow.currentRotation)
                             }
                         }
 
@@ -755,25 +735,24 @@ Item {
                     value: m_prop_delegate.currentValue === "true"
                 }
 
-                RowLayout {
+                W.ValueSlider {
+                    id: m_slider
                     visible: m_prop_delegate.type === "slider"
                     Layout.fillWidth: true
-                    spacing: 8
-                    MD.Slider {
-                        id: m_slider
-                        Layout.fillWidth: true
-                        from: m_prop_delegate.minVal
-                        to: m_prop_delegate.maxVal
-                        stepSize: m_prop_delegate.maxVal > 10 ? 1 : 0
-                        onMoved: propertyModel.setValue(m_prop_delegate.key, String(value))
+                    from: m_prop_delegate.minVal
+                    to: m_prop_delegate.maxVal
+                    stepSize: m_prop_delegate.maxVal > 10 ? 1 : 0
+                    valueText: displayValue(value)
+                    valueMaxText: {
+                        const minText = displayValue(from);
+                        const maxText = displayValue(to);
+                        return minText.length > maxText.length ? minText : maxText;
                     }
-                    MD.Text {
-                        text: Number(m_prop_delegate.currentValue).toFixed(m_prop_delegate.maxVal > 10 ? 0 : 3)
-                        typescale: MD.Token.typescale.body_small
-                        color: MD.Token.color.on_surface_variant
-                        Layout.preferredWidth: 56
-                        horizontalAlignment: Text.AlignRight
+                    valueTypescale: MD.Token.typescale.body_small
+                    function displayValue(v) {
+                        return Number(v).toFixed(m_prop_delegate.maxVal > 10 ? 0 : 3);
                     }
+                    onMoved: propertyModel.setValue(m_prop_delegate.key, String(value))
                 }
                 Binding {
                     target: m_slider

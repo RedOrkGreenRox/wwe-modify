@@ -715,27 +715,17 @@ MD.Page {
                             color: MD.Token.color.on_surface_variant
                         }
 
-                        RowLayout {
+                        W.ValueSlider {
+                            id: horizontalLocation
                             Layout.fillWidth: true
-                            spacing: 6
-
-                            MD.Slider {
-                                id: horizontalLocation
-                                Layout.fillWidth: true
-                                from: 0
-                                to: 100
-                                stepSize: 1
-                                value: layoutFlow.currentX
-                                onMoved: root.applyLocation(value, verticalLocation.value)
-                            }
-
-                            MD.Text {
-                                Layout.minimumWidth: 24
-                                text: root.clampPercent(horizontalLocation.value)
-                                typescale: MD.Token.typescale.label_medium
-                                color: MD.Token.color.on_surface_variant
-                                horizontalAlignment: Text.AlignLeft
-                            }
+                            from: 0
+                            to: 100
+                            stepSize: 1
+                            value: layoutFlow.currentX
+                            valueText: root.clampPercent(value)
+                            valueMaxText: root.clampPercent(to).toString()
+                            valueHorizontalAlignment: Text.AlignLeft
+                            onMoved: root.applyLocation(value, verticalLocation.value)
                         }
                     }
 
@@ -752,27 +742,17 @@ MD.Page {
                             color: MD.Token.color.on_surface_variant
                         }
 
-                        RowLayout {
+                        W.ValueSlider {
+                            id: verticalLocation
                             Layout.fillWidth: true
-                            spacing: 6
-
-                            MD.Slider {
-                                id: verticalLocation
-                                Layout.fillWidth: true
-                                from: 0
-                                to: 100
-                                stepSize: 1
-                                value: layoutFlow.currentY
-                                onMoved: root.applyLocation(horizontalLocation.value, value)
-                            }
-
-                            MD.Text {
-                                Layout.minimumWidth: 24
-                                text: root.clampPercent(verticalLocation.value)
-                                typescale: MD.Token.typescale.label_medium
-                                color: MD.Token.color.on_surface_variant
-                                horizontalAlignment: Text.AlignLeft
-                            }
+                            from: 0
+                            to: 100
+                            stepSize: 1
+                            value: layoutFlow.currentY
+                            valueText: root.clampPercent(value)
+                            valueMaxText: root.clampPercent(to).toString()
+                            valueHorizontalAlignment: Text.AlignLeft
+                            onMoved: root.applyLocation(horizontalLocation.value, value)
                         }
                     }
 
