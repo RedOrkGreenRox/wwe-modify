@@ -201,6 +201,10 @@ set(QML_FILES
   qml/page/AboutPage.qml
   qml/page/PluginSettingsPage.qml
   qml/page/WorkshopPage.qml
+  qml/page/HotkeysSettingsPage.qml
+  qml/component/HotkeyActionCatalog.qml
+  qml/component/HotkeyActionRow.qml
+  qml/component/BindingChip.qml
 )
 
 if(TARGET Qt6::WebEngineQuick)

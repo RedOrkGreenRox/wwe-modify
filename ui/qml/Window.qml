@@ -67,7 +67,8 @@ MD.ApplicationWindow {
 
     // Keep Workshop alive while switching tabs so the embedded WebEngine page
     // does not reload or lose scroll/navigation state until the app exits.
-    readonly property var pageCacheable: [true, true, false, false, false, false] 
+    readonly property var pageCacheable: [true, true, false, false, false, false]
+
 
     onCurrentPageChanged: {
         m_content.switchTo(pageComponents[currentPage], {}, pageCacheable[currentPage]);
@@ -196,6 +197,23 @@ MD.ApplicationWindow {
                             anchors.verticalCenter: m_logo.verticalCenter
                             text: "waywallen"
                             typescale: MD.Token.typescale.title_large
+                        }
+
+                        // Build flavor badge: "Lite" or "Full".
+                        // Anchored BELOW the logo (anchors.top: m_logo.bottom),
+                        // not on the same baseline as "waywallen" — it sits in
+                        // its own slot under the title text, so the brand and
+                        // the build variant don't compete for visual weight.
+                        MD.Label {
+                            visible: m_rail.useLarge
+                            anchors.left: m_logo.right
+                            anchors.leftMargin: 12
+                            anchors.top: m_logo.bottom
+                            anchors.topMargin: -2
+                            text: W.Notify.buildFlavor === "full" ? qsTr("Full") : qsTr("Lite")
+                            typescale: MD.Token.typescale.label_small
+                            color: MD.Token.color.on_surface_variant
+                            opacity: 0.7
                         }
                     }
 
