@@ -161,6 +161,24 @@ void App::init() {
     d->m_backend->connectTo();
 
     engine->addImportPath(u"qrc:/"_s);
+
+#ifdef WAYWALLEN_QML_SRC_DIR
+    // Dev filesystem mode (WAYWALLEN_QML_FILESYSTEM=ON):
+    // QML files are not embedded — tell the engine where to find them.
+    // Priority order:
+    //   1. WAYWALLEN_QML_DIR env var (set by dev_watch.sh for live editing)
+    //   2. Build-tree qml_modules/ directory (always populated by cmake)
+    //   3. Source tree qml/ directory (fallback)
+    {
+        const QByteArray envDir = qgetenv("WAYWALLEN_QML_DIR");
+        if (!envDir.isEmpty()) {
+            engine->addImportPath(QString::fromUtf8(envDir));
+        }
+        engine->addImportPath(QStringLiteral(WAYWALLEN_QML_BUILD_DIR));
+        engine->addImportPath(QStringLiteral(WAYWALLEN_QML_SRC_DIR "/../"));
+    }
+#endif
+
     // Load the main window from the QML module.
     engine->loadFromModule("waywallen.ui", "Window");
 

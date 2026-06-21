@@ -62,6 +62,17 @@
       "cacheVariables": {
         "BUILD_WAYWALLEN_HOST": "OFF"
       }
+    },
+    {
+      "name": "clang-dev",
+      "displayName": "Clang · Dev (QML from filesystem, no LTO)",
+      "description": "Fast iteration build: QML loaded from disk at runtime, no LTO. Changes to .qml files take effect on next UI restart — no C++ rebuild needed.",
+      "inherits": "clang-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "OFF",
+        "WAYWALLEN_QML_FILESYSTEM": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -70,7 +81,8 @@
     { "name": "clang-relwithdebinfo",   "configurePreset": "clang-relwithdebinfo" },
     { "name": "clang-release-qml",      "configurePreset": "clang-release-qml" },
     { "name": "clang-release-renderdoc","configurePreset": "clang-release-renderdoc" },
-    { "name": "clang-release-no-host",  "configurePreset": "clang-release-no-host" }
+    { "name": "clang-release-no-host",  "configurePreset": "clang-release-no-host" },
+    { "name": "clang-dev",              "configurePreset": "clang-dev" }
   ],
   "testPresets": [
     {

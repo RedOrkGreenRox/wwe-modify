@@ -179,8 +179,12 @@ MD.Page {
         target: W.Notify
         function onWallpaperSyncFinished(count, error) {
             if (error && error.length > 0) {
+                // Errors are always shown.
                 W.Action.toast("Sync failed: " + error);
-            } else {
+            } else if (count > 0) {
+                // Only toast when new wallpapers actually appeared.
+                // Silent re-scans (filesystem watcher, periodic checks)
+                // that find nothing new no longer spam the notification area.
                 W.Action.toast("Scanned " + count + " wallpapers");
             }
             wallpaperQuery.reload();
@@ -277,30 +281,39 @@ MD.Page {
         onTriggered: scanQuery.reload()
     }
 
+    // Qt.WindowShortcut fires whenever the window is active, regardless of
+    // which child widget holds focus. This fixes the "must click background
+    // first" problem caused by PageContainer not forwarding focus on switch.
+    // Delete/Backspace use the same context but are already guarded by
+    // !m_search_field.inputActive so they won't fire inside text fields.
     Shortcut {
         sequences: [StandardKey.Refresh, "F5", "Ctrl+R"]
-        context: Qt.WidgetWithChildrenShortcut
+        context: Qt.WindowShortcut
         enabled: root.visible && !W.Notify.scanInProgress
         onActivated: scanQuery.reload()
     }
 
     Shortcut {
         sequence: StandardKey.Find
-        context: Qt.WidgetWithChildrenShortcut
+        context: Qt.WindowShortcut
         enabled: root.visible
         onActivated: m_search_field.focusInput()
     }
 
     Shortcut {
-        sequence: StandardKey.SelectAll
-        context: Qt.WidgetWithChildrenShortcut
+        // `sequences:` (plural) binds every StandardKey variant so
+        // the same shortcut fires on every platform. Using the
+        // singular `sequence:` would only pick one variant and trip
+        // a "binding to one of multiple key bindings" QML warning.
+        sequences: [StandardKey.SelectAll]
+        context: Qt.WindowShortcut
         enabled: root.visible && !m_search_field.inputActive && m_grid_view && m_grid_view.count > 0
         onActivated: root.selectAllWallpapers()
     }
 
     Shortcut {
         sequences: ["Delete", "Backspace"]
-        context: Qt.WidgetWithChildrenShortcut
+        context: Qt.WindowShortcut
         enabled: root.visible && !m_search_field.inputActive
                  && (root.selectionActive || root.selectedWallpaper !== null)
         onActivated: {
@@ -1052,7 +1065,7 @@ MD.Page {
                         focus: true
                         focusPolicy: Qt.StrongFocus
                         keyNavigationEnabled: true
-                        keyNavigationWraps: true
+                        keyNavigationWraps: false
                         currentIndex: -1
                         highlightRangeMode: GridView.NoHighlightRange
                         cacheBuffer: 300
@@ -1104,24 +1117,93 @@ MD.Page {
                             } else if (event.key === Qt.Key_F && (event.modifiers & Qt.ControlModifier)) {
                                 m_search_field.focusInput();
                                 event.accepted = true;
-                            } else if ((event.modifiers & Qt.ControlModifier) && m_grid_view.count > 0
+                            } else if (!(event.modifiers & Qt.ControlModifier) && m_grid_view.count > 0
                                        && (event.key === Qt.Key_Left || event.key === Qt.Key_Right
                                            || event.key === Qt.Key_Up || event.key === Qt.Key_Down)) {
+                                // Arrow (no Ctrl): wrap-around within the same row or column.
                                 const cols = Math.max(1, m_grid_view._cols);
                                 const count = m_grid_view.count;
                                 const cur = root.gridCurrentIndex();
                                 const row = Math.floor(cur / cols);
                                 const col = cur % cols;
+                                const lastRow = Math.floor((count - 1) / cols);
+                                let next = cur;
                                 if (event.key === Qt.Key_Left) {
-                                    root.moveGridCurrentTo(row * cols, GridView.Contain);
+                                    next = col === 0
+                                        ? Math.min(count - 1, row * cols + cols - 1)
+                                        : cur - 1;
                                 } else if (event.key === Qt.Key_Right) {
-                                    root.moveGridCurrentTo(Math.min(count - 1, row * cols + cols - 1), GridView.Contain);
+                                    const rowEnd = Math.min(count - 1, row * cols + cols - 1);
+                                    next = cur >= rowEnd ? row * cols : cur + 1;
                                 } else if (event.key === Qt.Key_Up) {
-                                    root.moveGridCurrentTo(col, GridView.Beginning);
+                                    next = row === 0
+                                        ? Math.min(count - 1, lastRow * cols + col)
+                                        : cur - cols;
                                 } else if (event.key === Qt.Key_Down) {
-                                    const lastRow = Math.floor((count - 1) / cols);
-                                    root.moveGridCurrentTo(Math.min(count - 1, lastRow * cols + col), GridView.End);
+                                    const colBottom = lastRow * cols + col;
+                                    next = cur >= Math.min(count - 1, colBottom) ? col : cur + cols;
                                 }
+                                root.moveGridCurrentTo(next, GridView.Contain);
+                                event.accepted = true;
+                            } else if ((event.modifiers & Qt.ControlModifier) && m_grid_view.count > 0
+                                       && (event.key === Qt.Key_Left || event.key === Qt.Key_Right
+                                           || event.key === Qt.Key_Up || event.key === Qt.Key_Down)) {
+                                // Ctrl+Arrow: jump to row/column boundary.
+                                // If already at boundary, wrap to next/previous row/column.
+                                const cols = Math.max(1, m_grid_view._cols);
+                                const count = m_grid_view.count;
+                                const cur = root.gridCurrentIndex();
+                                const row = Math.floor(cur / cols);
+                                const col = cur % cols;
+                                const lastRow = Math.floor((count - 1) / cols);
+                                const rowEnd = Math.min(count - 1, row * cols + cols - 1);
+                                let next = cur;
+                                if (event.key === Qt.Key_Left) {
+                                    if (cur === row * cols) {
+                                        // Already at left edge → wrap to right edge of previous row
+                                        next = row > 0
+                                            ? Math.min(count - 1, (row - 1) * cols + cols - 1)
+                                            : Math.min(count - 1, lastRow * cols + cols - 1);
+                                    } else {
+                                        next = row * cols;
+                                    }
+                                } else if (event.key === Qt.Key_Right) {
+                                    if (cur >= rowEnd) {
+                                        // Already at right edge → wrap to left edge of next row
+                                        const nextRow = row + 1;
+                                        next = row === lastRow ? 0 : nextRow * cols;
+                                    } else {
+                                        next = rowEnd;
+                                    }
+                                } else if (event.key === Qt.Key_Up) {
+                                    // Find last item in this column (handles short last row)
+                                    let colBottom = col;
+                                    for (let r = lastRow; r >= 0; r--) {
+                                        const idx = r * cols + col;
+                                        if (idx < count) { colBottom = idx; break; }
+                                    }
+                                    if (cur === col) {
+                                        // Already at top of column → wrap to bottom
+                                        next = colBottom;
+                                    } else {
+                                        next = col;
+                                    }
+                                } else if (event.key === Qt.Key_Down) {
+                                    // Find last item in this column (handles short last row)
+                                    let colBottom = col;
+                                    for (let r = lastRow; r >= 0; r--) {
+                                        const idx = r * cols + col;
+                                        if (idx < count) { colBottom = idx; break; }
+                                    }
+                                    if (cur >= colBottom) {
+                                        // Already at bottom → wrap to top of next column
+                                        const nextCol = col + 1;
+                                        next = nextCol >= cols ? 0 : nextCol;
+                                    } else {
+                                        next = colBottom;
+                                    }
+                                }
+                                root.moveGridCurrentTo(next, GridView.Contain);
                                 event.accepted = true;
                             } else if (event.key === Qt.Key_Home && m_grid_view.count > 0) {
                                 if (event.modifiers & Qt.ControlModifier)

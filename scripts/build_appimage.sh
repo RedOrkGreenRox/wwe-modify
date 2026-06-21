@@ -31,8 +31,22 @@ set -euo pipefail
 # a bit larger, but it will build.
 export NO_STRIP="${NO_STRIP:-true}"
 
+# ---------------------------------------------------------------------------
+# Build behaviour knobs — edit here, or override via env var.
+#
+#   WAYWALLEN_INCREMENTAL   1 = keep AppDir (faster); 0 = wipe first (default)
+#   WAYWALLEN_DEV           1 = no LTO, no AppImage pack; 0 = full build (default)
+#   WAYWALLEN_FAST_TOOLS    1 = skip linuxdeploy re-extract if done; 0 = always (default)
+#   WAYWALLEN_FAST_CONDA    1 = skip conda update when env.yml unchanged; 0 = always (default)
+# ---------------------------------------------------------------------------
+WAYWALLEN_INCREMENTAL="${WAYWALLEN_INCREMENTAL:-0}"
+WAYWALLEN_DEV="${WAYWALLEN_DEV:-0}"
+WAYWALLEN_FAST_TOOLS="${WAYWALLEN_FAST_TOOLS:-0}"
+WAYWALLEN_FAST_CONDA="${WAYWALLEN_FAST_CONDA:-0}"
+
+
 # Script lives in <repo>/scripts/, so PROJECT_DIR is one level up.
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 ENV_NAME="${WAYWALLEN_CONDA_ENV:-waywallen}"
 TMP_DIR="${TMPDIR:-/tmp}"
 OWE_PLUGIN_VER="0.1.7"
@@ -63,6 +77,8 @@ case "${WAYWALLEN_APPIMAGE_WEBENGINE,,}" in
 esac
 
 step() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
+ok()   { printf '\n\033[1;32m✓ %s\033[0m\n' "$*"; }
+err()  { printf '\n\033[1;31m✗ %s\033[0m\n' "$*" >&2; }
 fail() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 append_unique_path() {
     local -n paths_ref="$1"
@@ -152,27 +168,44 @@ ensure_host_build_deps() {
     [[ "${#missing[@]}" -eq 0 ]] && return 0
 
     step "Missing host development packages: ${missing[*]}"
-    if need_cmd dnf; then
-        step "Trying to install host build dependencies with dnf"
-        if run_as_root dnf install -y \
-            git curl tar pkgconf-pkg-config pipewire-devel fontconfig-devel pulseaudio-libs-devel libarchive; then
-            return 0
-        fi
+
+    # Try the available package manager — works inside distrobox containers
+    # with Fedora, Debian/Ubuntu, Arch, or openSUSE images.
+    install_host_deps_dnf() {
+        run_as_root dnf install -y             git curl tar pkgconf-pkg-config pipewire-devel fontconfig-devel             pulseaudio-libs-devel libarchive
+    }
+    install_host_deps_apt() {
+        run_as_root apt-get update -qq
+        run_as_root apt-get install -y             git curl tar pkg-config libpipewire-0.3-dev libfontconfig1-dev             libpulse-dev libarchive-tools
+    }
+    install_host_deps_zypper() {
+        run_as_root zypper install -y             git curl tar pkg-config pipewire-devel fontconfig-devel             libpulse-devel libarchive-devel
+    }
+    install_host_deps_pacman() {
+        run_as_root pacman -Sy --noconfirm             git curl tar pkgconf pipewire fontconfig libpulse libarchive
+    }
+
+    if need_cmd dnf;    then step "Installing deps via dnf";    install_host_deps_dnf    && return 0
+    elif need_cmd apt-get; then step "Installing deps via apt"; install_host_deps_apt    && return 0
+    elif need_cmd zypper;  then step "Installing deps via zypper"; install_host_deps_zypper && return 0
+    elif need_cmd pacman;  then step "Installing deps via pacman"; install_host_deps_pacman && return 0
     fi
 
     cat >&2 <<'EOF'
 
 Could not auto-install required host development packages.
-On Bazzite/immutable systems, the recommended way is to build inside a Fedora distrobox/toolbox:
+No supported package manager found (tried: dnf, apt-get, zypper, pacman).
 
-  distrobox create -n waywallen-dev -i fedora:latest
+Install the following packages manually, then re-run:
+  pipewire-dev / libpipewire-0.3-dev
+  fontconfig-dev / libfontconfig1-dev
+  pulseaudio-dev / libpulse-dev
+  libarchive / libarchive-tools
+
+Or build inside a distrobox container:
+  distrobox create -n waywallen-dev -i fedora:latest   # or ubuntu:latest etc.
   distrobox enter waywallen-dev
-  sudo dnf install -y git curl tar pkgconf-pkg-config pipewire-devel fontconfig-devel pulseaudio-libs-devel libarchive
-
-Then run this script again from the repository:
-
   ./make_appimages.sh lite
-  ./make_appimages.sh full
 
 EOF
     fail "missing host development packages: ${missing[*]}"
@@ -241,7 +274,11 @@ else
 fi
 
 # Clean APPDIR
-rm -rf "$APPDIR"
+if [[ "$WAYWALLEN_INCREMENTAL" == "1" ]]; then
+    step "WAYWALLEN_INCREMENTAL=1: keeping existing AppDir"
+else
+    rm -rf "$APPDIR"
+fi
 
 APPIMAGE_OUT="$PROJECT_DIR/waywallen-$BUILD_TAG-$WAYWALLEN_APPIMAGE_FLAVOR-x86_64.AppImage"
 step "Building $WAYWALLEN_APPIMAGE_FLAVOR AppImage tagged as $BUILD_TAG (WebEngine=$WAYWALLEN_APPIMAGE_WEBENGINE)"
@@ -251,6 +288,40 @@ need_cmd curl || fail "curl not found; install curl first, then re-run"
 need_cmd git  || fail "git not found; install git first, then re-run"
 ensure_rust
 ensure_host_build_deps
+
+# ---- Optional build accelerators (sccache + mold) ----
+# sccache: compiler cache — survives distrobox sessions via ~/.cache/sccache
+# (home dir is bind-mounted from the host, so the cache persists across rebuilds).
+# Install once: cargo install sccache
+#
+# mold: fast linker — install inside your distrobox container:
+#   sudo dnf install mold        # Fedora/Bazzite
+#   sudo apt-get install mold    # Debian/Ubuntu
+#   sudo pacman -S mold          # Arch
+setup_accelerators() {
+    # sccache for Rust
+    if need_cmd sccache; then
+        export RUSTC_WRAPPER=sccache
+        log_sccache=true
+    fi
+
+    # sccache for C++ (passed to cmake below via COMPILER_LAUNCHER vars)
+    if need_cmd sccache; then
+        SCCACHE_C_LAUNCHER=sccache
+        SCCACHE_CXX_LAUNCHER=sccache
+    else
+        SCCACHE_C_LAUNCHER=
+        SCCACHE_CXX_LAUNCHER=
+    fi
+
+    # mold linker — only if .cargo/config.toml requests it AND mold exists.
+    # If mold is absent, cargo falls back to the default linker without error.
+    if need_cmd mold; then
+        : # .cargo/config.toml already sets -fuse-ld=mold; nothing else needed.
+        true
+    fi
+}
+setup_accelerators
 
 # ---- Set up the conda-compatible environment ----
 ENV_FILE="$PROJECT_DIR/environment.yml"
@@ -266,12 +337,22 @@ else
     bootstrap_micromamba
 fi
 
+ENV_STAMP="$PROJECT_DIR/build/_tools/.conda-env-stamp"
+ENV_HASH="$(md5sum "$ENV_FILE" | cut -d' ' -f1)"
+
 if conda_env_exists; then
-    step "Updating build env: $ENV_NAME (sync to environment.yml)"
-    if [[ "$CONDA_FRONTEND" == "conda" ]]; then
-        conda env update -n "$ENV_NAME" -f "$ENV_FILE" --prune
+    if [[ "$WAYWALLEN_FAST_CONDA" == "1" ]] \
+        && [[ -f "$ENV_STAMP" ]] && [[ "$(cat "$ENV_STAMP")" == "$ENV_HASH" ]]; then
+        step "Build env up to date: $ENV_NAME (WAYWALLEN_FAST_CONDA=1)"
     else
-        micromamba env update -n "$ENV_NAME" -f "$ENV_FILE" -y
+        step "Updating build env: $ENV_NAME (sync to environment.yml)"
+        if [[ "$CONDA_FRONTEND" == "conda" ]]; then
+            conda env update -n "$ENV_NAME" -f "$ENV_FILE" --prune
+        else
+            micromamba env update -n "$ENV_NAME" -f "$ENV_FILE" -y
+        fi
+        mkdir -p "$(dirname "$ENV_STAMP")"
+        echo "$ENV_HASH" > "$ENV_STAMP"
     fi
 else
     step "Creating build env: $ENV_NAME (install per environment.yml)"
@@ -280,6 +361,8 @@ else
     else
         micromamba env create -n "$ENV_NAME" -f "$ENV_FILE" -y
     fi
+    mkdir -p "$(dirname "$ENV_STAMP")"
+    echo "$ENV_HASH" > "$ENV_STAMP"
 fi
 
 step "Activating env: $ENV_NAME"
@@ -322,8 +405,35 @@ if [[ ! -f "$CONDA_PREFIX/lib/cmake/Qt6Protobuf/Qt6ProtobufConfig.cmake" ]]; the
 fi
 
 step "CMake configure (daemon + UI + image/video renderer plugins)"
+# WAYWALLEN_DEV=1 uses the clang-dev preset:
+#   - QML files loaded from build tree disk (WAYWALLEN_QML_FILESYSTEM=ON)
+#   - LTO disabled
+#   - Changes to .qml only need a file copy, not a C++ rebuild
+CMAKE_PRESET="$( [[ "$WAYWALLEN_DEV" == "1" ]] && echo clang-dev || echo clang-release )"
+
+# If the build directory exists but was created by a different preset (or a
+# failed configure), CMake will error out with a stale cache. Wipe it when
+# the preset-specific dir contains a CMakeCache.txt that names a different
+# preset — or simply always wipe clang-dev since it is a dev-only dir and
+# developers run with WAYWALLEN_INCREMENTAL for speed when they want it.
+BUILD_PRESET_DIR="$PROJECT_DIR/build/$CMAKE_PRESET"
+if [[ -d "$BUILD_PRESET_DIR" ]] && [[ "${WAYWALLEN_INCREMENTAL:-0}" != "1" ]]; then
+    # Check if cached preset matches — if not, stale cache will break configure.
+    CACHED_PRESET="$(grep -s 'CMAKE_GENERATOR_PLATFORM\|PRESET' "$BUILD_PRESET_DIR/CMakeCache.txt" | head -1 || true)"
+    CACHE_FILE="$BUILD_PRESET_DIR/CMakeCache.txt"
+    if [[ -f "$CACHE_FILE" ]]; then
+        # Re-use existing cache only when the last successful configure used
+        # the same preset. A missing stamp means first run — safe to proceed.
+        STAMP="$PROJECT_DIR/build/_tools/.cmake-preset-stamp-$CMAKE_PRESET"
+        if [[ ! -f "$STAMP" ]] || [[ "$(cat "$STAMP" 2>/dev/null)" != "$CMAKE_PRESET" ]]; then
+            step "Wiping stale cmake cache for preset $CMAKE_PRESET"
+            rm -rf "$BUILD_PRESET_DIR"
+        fi
+    fi
+fi
+
 pushd "$PROJECT_DIR"
-cmake -S "$PROJECT_DIR" --preset clang-release \
+cmake -S "$PROJECT_DIR" --preset "$CMAKE_PRESET" \
     -DCMAKE_SYSROOT="$CONDA_BUILD_SYSROOT" \
     `# Under sysroot 2.28 pthread lives in libpthread, not libc — pthread must
      # be enabled globally, otherwise C++20 PCMs produced by rstd / qextra etc.
@@ -333,7 +443,9 @@ cmake -S "$PROJECT_DIR" --preset clang-release \
     -DCMAKE_CXX_FLAGS_INIT="-pthread" \
     -DCMAKE_PREFIX_PATH="$CONDA_PREFIX" \
     -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
-    -DCMAKE_INTERPROCEDURAL_OPTIMIZATION="ON" \
+    -DCMAKE_INTERPROCEDURAL_OPTIMIZATION="$( [[ "$WAYWALLEN_DEV" == "1" ]] && echo OFF || echo ON )" \
+    ${SCCACHE_C_LAUNCHER:+-DCMAKE_C_COMPILER_LAUNCHER="$SCCACHE_C_LAUNCHER"} \
+    ${SCCACHE_CXX_LAUNCHER:+-DCMAKE_CXX_COMPILER_LAUNCHER="$SCCACHE_CXX_LAUNCHER"} \
     -DCMAKE_CXX_COMPILER_AR="llvm-ar" \
     -DQML_MATERIAL_BUILD_TYPE="STATIC" \
     -DWAYWALLEN_BUILD_DAEMON=ON \
@@ -344,13 +456,11 @@ cmake -S "$PROJECT_DIR" --preset clang-release \
     -DWAYWALLEN_ENABLE_WEBENGINE="$WAYWALLEN_APPIMAGE_WEBENGINE" \
     -DWAYWALLEN_REQUIRE_WEBENGINE="$WAYWALLEN_APPIMAGE_WEBENGINE"
 
-step "Compiling)"
-cmake --build build/clang-release --parallel
+# ---- Parallel build: cmake (daemon+UI+plugins) + waywallen-display ----
+# The two are independent Cargo workspaces — building them simultaneously
+# cuts the combined wall-clock time roughly in half on multi-core machines.
 
-step "Installing into AppDir: $APPDIR"
-cmake --install build/clang-release
-
-step "Building and installing waywallen-layer-shell"
+step "Preparing waywallen-display source"
 if [[ -d "$WAYWALLEN_DISPLAY_SRC/.git" ]]; then
     git -C "$WAYWALLEN_DISPLAY_SRC" remote set-url origin "$WAYWALLEN_DISPLAY_REPO"
 else
@@ -360,13 +470,70 @@ fi
 git -C "$WAYWALLEN_DISPLAY_SRC" fetch --tags origin "$WAYWALLEN_DISPLAY_REF" \
     || git -C "$WAYWALLEN_DISPLAY_SRC" fetch --tags origin
 git -C "$WAYWALLEN_DISPLAY_SRC" checkout --detach "$WAYWALLEN_DISPLAY_REF"
-cargo build \
-    --manifest-path "$WAYWALLEN_DISPLAY_SRC/Cargo.toml" \
-    --bin waywallen-layer-shell \
-    --release \
-    --locked
+
+# Cache stamp: skip waywallen-layer-shell rebuild when the pinned ref hasn't changed.
+DISPLAY_STAMP="$PROJECT_DIR/build/_tools/.display-layer-shell-stamp"
+DISPLAY_BINARY="$WAYWALLEN_DISPLAY_SRC/target/release/waywallen-layer-shell"
+DISPLAY_NEEDS_BUILD=true
+if [[ -f "$DISPLAY_STAMP" ]] \
+    && [[ "$(cat "$DISPLAY_STAMP")" == "$WAYWALLEN_DISPLAY_REF" ]] \
+    && [[ -f "$DISPLAY_BINARY" ]]; then
+    step "waywallen-layer-shell already built for ref $WAYWALLEN_DISPLAY_REF — skipping"
+    DISPLAY_NEEDS_BUILD=false
+fi
+
+# Record successful configure so next run can detect preset changes.
+mkdir -p "$PROJECT_DIR/build/_tools"
+echo "$CMAKE_PRESET" > "$PROJECT_DIR/build/_tools/.cmake-preset-stamp-$CMAKE_PRESET"
+
+step "Compiling (cmake + waywallen-display in parallel)"
+BUILD_FAIL=0
+
+# cmake build in foreground (it logs progress; keeping it foreground makes
+# the output readable — display build logs go to a temp file).
+cmake --build "build/$CMAKE_PRESET" --parallel &
+CMAKE_PID=$!
+
+if [[ "$DISPLAY_NEEDS_BUILD" == "true" ]]; then
+    DISPLAY_LOG="$PROJECT_DIR/build/_tools/display-build.log"
+    (
+        cargo build \
+            --manifest-path "$WAYWALLEN_DISPLAY_SRC/Cargo.toml" \
+            --bin waywallen-layer-shell \
+            --release \
+            --locked \
+            > "$DISPLAY_LOG" 2>&1
+    ) &
+    DISPLAY_PID=$!
+else
+    DISPLAY_PID=
+fi
+
+# Wait for cmake
+if ! wait "$CMAKE_PID"; then
+    BUILD_FAIL=1
+    err "cmake build failed"
+fi
+
+# Wait for display build
+if [[ -n "$DISPLAY_PID" ]]; then
+    if ! wait "$DISPLAY_PID"; then
+        BUILD_FAIL=1
+        err "waywallen-layer-shell build failed — see $DISPLAY_LOG"
+        cat "$DISPLAY_LOG" >&2
+    else
+        ok "waywallen-layer-shell built"
+        mkdir -p "$(dirname "$DISPLAY_STAMP")"
+        echo "$WAYWALLEN_DISPLAY_REF" > "$DISPLAY_STAMP"
+    fi
+fi
+
+[[ "$BUILD_FAIL" -eq 0 ]] || fail "one or more parallel builds failed"
+
+step "Installing into AppDir: $APPDIR"
+cmake --install "build/$CMAKE_PRESET"
 install -Dm755 \
-    "$WAYWALLEN_DISPLAY_SRC/target/release/waywallen-layer-shell" \
+    "$DISPLAY_BINARY" \
     "$INSTALL_DIR/bin/waywallen-layer-shell"
 
 popd
@@ -643,8 +810,13 @@ ICON_FILE="$INSTALL_DIR/share/icons/hicolor/scalable/apps/org.waywallen.waywalle
 [[ -f "$ICON_FILE"   ]] || fail "missing icon: $ICON_FILE"
 
 pushd $TOOLS_DIR
-$LINUXDEPLOY_QT --appimage-extract
-$LINUXDEPLOY --appimage-extract
+if [[ "$WAYWALLEN_FAST_TOOLS" == "1" ]]     && [[ -f squashfs-root/AppRun ]]     && [[ ! "$LINUXDEPLOY" -nt squashfs-root/AppRun ]]     && [[ ! "$LINUXDEPLOY_QT" -nt squashfs-root/AppRun ]]; then
+    step "linuxdeploy already extracted (WAYWALLEN_FAST_TOOLS=1)"
+else
+    rm -rf squashfs-root
+    $LINUXDEPLOY_QT --appimage-extract
+    $LINUXDEPLOY --appimage-extract
+fi
 LINUXDEPLOY=$TOOLS_DIR/squashfs-root/AppRun
 popd
 
@@ -710,16 +882,29 @@ for style in "${QUICKCONTROLS2_PRUNE[@]}"; do
 done
 
 # ---- Pack the AppImage ----
-step "Packing AppImage"
-rm -f "$APPIMAGE_OUT"
-PATH="$TOOLS_DIR:$PATH" \
-ARCH=x86_64 \
-"$APPIMAGETOOL" --appimage-extract-and-run \
-    --no-appstream \
-    "$APPDIR" "$APPIMAGE_OUT"
-[[ -f "$APPIMAGE_OUT" ]] || fail "AppImage build failed"
+if [[ "$WAYWALLEN_DEV" == "1" ]]; then
+    cat <<EOF
 
-cat <<EOF
+WAYWALLEN_DEV=1: skipping appimagetool. Run directly:
+    $APPDIR/AppRun
+EOF
+else
+    # Print sccache stats so you can see cache hit rate after the build.
+if [[ "${log_sccache:-false}" == "true" ]]; then
+    step "sccache stats"
+    sccache --show-stats || true
+fi
+
+step "Packing AppImage"
+    rm -f "$APPIMAGE_OUT"
+    PATH="$TOOLS_DIR:$PATH" \
+    ARCH=x86_64 \
+    "$APPIMAGETOOL" --appimage-extract-and-run \
+        --no-appstream \
+        "$APPDIR" "$APPIMAGE_OUT"
+    [[ -f "$APPIMAGE_OUT" ]] || fail "AppImage build failed"
+
+    cat <<EOF
 
 Build complete: $APPIMAGE_OUT
 
@@ -729,3 +914,4 @@ Run it:
 
 Rebuild: re-run ./scripts/build_appimage.sh (incremental rebuild + repack).
 EOF
+fi

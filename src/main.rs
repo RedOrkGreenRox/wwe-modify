@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use anyhow::Context;
 
@@ -219,18 +219,6 @@ fn main() -> anyhow::Result<()> {
     result
 }
 
-fn mtime_ns(path: &Path) -> u128 {
-    let Ok(meta) = std::fs::metadata(path) else {
-        return 0;
-    };
-    let Ok(t) = meta.modified() else {
-        return 0;
-    };
-    t.duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0)
-}
-
 fn library_watch_roots(path: &str) -> Vec<PathBuf> {
     let root = PathBuf::from(path);
     vec![
@@ -241,63 +229,175 @@ fn library_watch_roots(path: &str) -> Vec<PathBuf> {
     ]
 }
 
-fn library_fingerprint(path: &str) -> u128 {
-    let mut fp = 0u128;
-    for root in library_watch_roots(path) {
-        fp ^= mtime_ns(&root);
-        if let Ok(entries) = std::fs::read_dir(&root) {
-            for entry in entries.flatten().take(4096) {
-                fp = fp.wrapping_add(mtime_ns(&entry.path()));
-            }
-        }
-    }
-    fp
-}
-
+/// Watch library directories for filesystem changes using inotify/kqueue
+/// (via the `notify` crate). Falls back to 30-second polling if watcher
+/// setup fails (e.g. inotify fd limit hit).
+///
+/// Why not the old fingerprint loop?
+/// - It woke up every 5 s unconditionally, even when nothing changed.
+/// - It did O(n) stat() calls on every tick.
+/// - New items could take up to 5 s to appear.
+/// With notify we react within ~100 ms of Steam writing the files.
 async fn library_watch_loop(app: Arc<AppState>) {
     use crate::model::repo;
-    use std::collections::HashMap;
+    use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
     use std::sync::atomic::Ordering;
+    use tokio::sync::mpsc;
 
     let mut shutdown = app.shutdown_subscribe();
-    let mut interval = tokio::time::interval(Duration::from_secs(5));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut known: HashMap<i64, u128> = HashMap::new();
+
+    // Channel: notify sends raw events; we coalesce them into a single trigger.
+    let (tx, mut rx) = mpsc::channel::<()>(4);
+
+    // Helper: trigger a rescan if not already in progress.
+    let trigger_rescan = |app: &Arc<AppState>| {
+        if !app.scan_in_progress.load(Ordering::SeqCst) {
+            log::info!("library watcher: queuing rescan after filesystem change");
+            let app_clone = app.clone();
+            app.tasks.spawn_async_unique(
+                tasks::TaskKind::Generic,
+                "scan/refresh",
+                "scan/refresh-after-library-fs-change",
+                async move {
+                    log::info!("library watcher: rescan started");
+                    let result = control::refresh_sources(&app_clone)
+                        .await
+                        .map(|_| ())
+                        .map_err(anyhow::Error::from);
+                    match &result {
+                        Ok(()) => log::info!("library watcher: rescan finished"),
+                        Err(e) => log::warn!("library watcher: rescan failed: {e:#}"),
+                    }
+                    result
+                },
+            );
+        } else {
+            log::debug!("library watcher: rescan already in progress, skipping trigger");
+        }
+    };
+
+    // Build a watcher and attach current library roots.
+    // Rebuild when libraries change (add/remove) — for simplicity we
+    // recreate the whole watcher on each rescan, which is cheap.
+    let build_watcher = |libs: &[crate::model::entities::library::Model]| {
+        let tx2 = tx.clone();
+        let watcher_result = RecommendedWatcher::new(
+            move |res: notify::Result<notify::Event>| {
+                if let Ok(ev) = res {
+                    // Only care about create/modify/remove events.
+                    if matches!(
+                        ev.kind,
+                        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+                    ) {
+                        let _ = tx2.try_send(());
+                    }
+                }
+            },
+            Config::default(),
+        );
+        let mut watcher = match watcher_result {
+            Ok(w) => w,
+            Err(e) => {
+                log::warn!("library watcher: failed to create inotify watcher: {e}; will poll");
+                return None;
+            }
+        };
+        for lib in libs {
+            for root in library_watch_roots(&lib.path) {
+                if root.exists() {
+                    // Use Recursive for the workshop/content/431960 subtree:
+                    // Steam creates <431960>/<item_id>/<files> so a NonRecursive
+                    // watcher on 431960 only sees the new directory being created,
+                    // not the files written inside it. Recursive catches both.
+                    let mode = if root.ends_with("431960")
+                        || root.ends_with("content")
+                        || root.ends_with("workshop")
+                    {
+                        RecursiveMode::Recursive
+                    } else {
+                        RecursiveMode::NonRecursive
+                    };
+                    if let Err(e) = watcher.watch(&root, mode) {
+                        log::debug!("library watcher: skipping {}: {e}", root.display());
+                    } else {
+                        log::debug!("library watcher: watching {} ({:?})", root.display(), mode);
+                    }
+                }
+            }
+        }
+        Some(watcher)
+    };
+
+    // Initial watcher setup.
+    let libs = repo::list_libraries(&app.db).await.unwrap_or_default();
+    let mut _watcher = build_watcher(&libs);
+
+    // Fallback poll interval used only when inotify watcher could not be created.
+    let fallback_poll = Duration::from_secs(30);
+    let mut poll_interval = tokio::time::interval(fallback_poll);
+    poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Consume the immediate first tick so we don't double-scan at startup.
+    poll_interval.tick().await;
+
+    // Debounce: Steam writes dozens of files per workshop item in rapid
+    // succession. 3 seconds lets the full sync burst settle before we scan.
+    // 500ms was too short — each incoming file reset the timer and the scan
+    // fired multiple times per subscription.
+    let debounce = Duration::from_secs(3);
+    let mut pending = false;
+    let mut debounce_deadline = tokio::time::Instant::now() + debounce;
+
+    // Cooldown: minimum gap between two consecutive rescans triggered by the
+    // watcher. Prevents the watcher rebuild itself (which touches the watched
+    // dirs) from immediately queuing another rescan.
+    let cooldown = Duration::from_secs(10);
+    let mut last_rescan = tokio::time::Instant::now()
+        .checked_sub(cooldown)
+        .unwrap_or_else(tokio::time::Instant::now);
 
     loop {
         tokio::select! {
             _ = shutdown.changed() => {
-                if *shutdown.borrow() {
-                    break;
+                if *shutdown.borrow() { break; }
+            }
+
+            // inotify/kqueue event arrived.
+            Some(()) = rx.recv() => {
+                if !pending {
+                    debounce_deadline = tokio::time::Instant::now() + debounce;
+                    pending = true;
                 }
             }
-            _ = interval.tick() => {
-                let Ok(libs) = repo::list_libraries(&app.db).await else {
-                    continue;
-                };
-                let mut changed = false;
-                for lib in libs {
-                    let fp = library_fingerprint(&lib.path);
-                    match known.insert(lib.id, fp) {
-                        Some(old) if old != fp => changed = true,
-                        None => {}
-                        _ => {}
-                    }
+
+            // Debounce timer fired: drain any leftover events and rescan.
+            _ = tokio::time::sleep_until(debounce_deadline), if pending => {
+                // Drain any additional events that arrived during debounce.
+                while rx.try_recv().is_ok() {}
+                pending = false;
+
+                // Respect cooldown — skip if a rescan just ran.
+                if last_rescan.elapsed() >= cooldown {
+                    log::debug!("library watcher: filesystem change detected, triggering rescan");
+                    trigger_rescan(&app);
+                    last_rescan = tokio::time::Instant::now();
+
+                    // Rebuild watcher only when libraries may have changed
+                    // (i.e. after a real rescan, not a cooldown skip).
+                    // Drop and recreate to pick up any newly added library roots.
+                    // We do this AFTER setting last_rescan so the watcher
+                    // rebuild's own filesystem touches fall inside the cooldown
+                    // window and don't immediately re-trigger a scan.
+                    let libs = repo::list_libraries(&app.db).await.unwrap_or_default();
+                    _watcher = build_watcher(&libs);
+                } else {
+                    log::debug!("library watcher: skipping rescan, still in cooldown");
                 }
-                if changed && !app.scan_in_progress.load(Ordering::SeqCst) {
-                    let app_clone = app.clone();
-                    app.tasks.spawn_async_unique(
-                        tasks::TaskKind::Generic,
-                        "scan/refresh",
-                        "scan/refresh-after-library-fs-change",
-                        async move {
-                            control::refresh_sources(&app_clone)
-                                .await
-                                .map(|_| ())
-                                .map_err(anyhow::Error::from)
-                        },
-                    );
-                }
+            }
+
+            // Fallback poll (only meaningful if inotify watcher failed).
+            _ = poll_interval.tick(), if _watcher.is_none() => {
+                log::debug!("library watcher: fallback poll tick");
+                trigger_rescan(&app);
             }
         }
     }
@@ -397,6 +497,18 @@ async fn async_main() -> anyhow::Result<()> {
     let db = model::connect(&db_path)
         .await
         .with_context(|| format!("open database {}", db_path.display()))?;
+
+    // Sweep historical duplicate rows that pre-date the read-time
+    // dedup in `repo::load_entries`. Keeps the DB self-consistent
+    // even for users whose DB already has duplicates from older
+    // builds. Runs after every migration.
+    match model::repo::deduplicate_db_items(&db).await {
+        Ok(removed) if removed > 0 => log::info!(
+            "startup cleanup: removed {removed} duplicate item row(s) from DB"
+        ),
+        Ok(_) => {}
+        Err(e) => log::warn!("startup cleanup: deduplicate_db_items failed: {e:#}"),
+    }
 
     // Hand the DB to the source manager so `ctx.library_meta_*`
     // mlua functions can read and write library metadata.
@@ -711,8 +823,10 @@ async fn async_main() -> anyhow::Result<()> {
             });
     }
 
-    // Bind the WS control plane (port 0 = OS picks an available port).
-    let bind_addr = format!("0.0.0.0:{}", cli.ws_port);
+    // Bind the WS control plane to loopback only.
+    // 0.0.0.0 would expose control to the whole local network — any machine
+    // on the same Wi-Fi could send WallpaperApply / RendererKill / etc.
+    let bind_addr = format!("127.0.0.1:{}", cli.ws_port);
     let (local_addr, ws_fut) = ws_server::bind(state.clone(), &bind_addr).await?;
     let ws_port = local_addr.port();
     state

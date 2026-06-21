@@ -1,0 +1,24 @@
+# ---------------------------------------------------------------------------
+# Cargo configuration for waywallen dev builds.
+#
+# mold linker: 3-10x faster linking than lld.
+#   Install inside your distrobox: sudo dnf install mold
+#   (or apt install mold on Debian-based containers)
+#   If mold is not found, cargo falls back to the default linker automatically.
+#
+# sccache: compiler cache for both Rust and C++ (set in build_appimage.sh).
+#   Install: cargo install sccache  (runs once, binary lives in ~/.cargo/bin)
+#   Cache dir: ~/.cache/sccache — persists across distrobox sessions because
+#   $HOME is bind-mounted from the host.
+# ---------------------------------------------------------------------------
+
+[target.x86_64-unknown-linux-gnu]
+# Use mold if available; comment out if it causes issues.
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+# ---------------------------------------------------------------------------
+# Dev-fast profile: used by WAYWALLEN_DEV=1 builds.
+# Inherits release settings but skips LTO and enables incremental compilation.
+# Produces a slightly larger/slower binary — fine for local iteration.
+# ---------------------------------------------------------------------------

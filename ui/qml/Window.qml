@@ -71,6 +71,9 @@ MD.ApplicationWindow {
 
     onCurrentPageChanged: {
         m_content.switchTo(pageComponents[currentPage], {}, pageCacheable[currentPage]);
+        // Qt.WidgetWithChildrenShortcut fires only when focus is inside the page.
+        // PageContainer does not forward focus on switch — do it explicitly.
+        m_content.forceActiveFocus();
     }
 
     Component.onCompleted: {
@@ -193,6 +196,19 @@ MD.ApplicationWindow {
                             anchors.verticalCenter: m_logo.verticalCenter
                             text: "waywallen"
                             typescale: MD.Token.typescale.title_large
+                        }
+
+                        // Build flavor badge: "Lite" or "Full"
+                        MD.Label {
+                            visible: m_rail.useLarge
+                            anchors.left: m_logo.right
+                            anchors.leftMargin: 12
+                            anchors.top: m_logo.verticalCenter
+                            anchors.topMargin: 2
+                            text: W.Notify.buildFlavor === "full" ? qsTr("Full") : qsTr("Lite")
+                            typescale: MD.Token.typescale.label_small
+                            color: MD.Token.color.on_surface_variant
+                            opacity: 0.7
                         }
                     }
 

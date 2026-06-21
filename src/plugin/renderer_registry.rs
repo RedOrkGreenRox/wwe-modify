@@ -68,9 +68,39 @@ pub struct PluginScan {
 
 impl PluginScan {
     pub fn merge(&mut self, other: PluginScan) {
-        self.renderers.extend(other.renderers);
-        self.entries.extend(other.entries);
-        self.plugins.extend(other.plugins);
+        // Deduplicate renderers by name — same plugin scanned from multiple roots
+        // (bundled + XDG) should not produce duplicate renderer entries.
+        let existing_renderers: std::collections::HashSet<String> =
+            self.renderers.iter().map(|r| r.name.clone()).collect();
+        for def in other.renderers {
+            if existing_renderers.contains(&def.name) {
+                log::debug!("skipping duplicate renderer: {}", def.name);
+                continue;
+            }
+            self.renderers.push(def);
+        }
+
+        // Deduplicate entries by plugin_id.
+        let existing_entries: std::collections::HashSet<String> =
+            self.entries.iter().map(|e| e.plugin_id.clone()).collect();
+        for entry in other.entries {
+            if existing_entries.contains(&entry.plugin_id) {
+                log::debug!("skipping duplicate entry for plugin: {}", entry.plugin_id);
+                continue;
+            }
+            self.entries.push(entry);
+        }
+
+        // Deduplicate plugins by id.
+        let existing_plugins: std::collections::HashSet<String> =
+            self.plugins.iter().map(|p| p.id.clone()).collect();
+        for meta in other.plugins {
+            if existing_plugins.contains(&meta.id) {
+                log::debug!("skipping duplicate plugin: {}", meta.id);
+                continue;
+            }
+            self.plugins.push(meta);
+        }
     }
 
     /// Installable-plugin view of the scan.

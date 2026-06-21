@@ -1,5 +1,6 @@
 module;
 #include "QExtra/macro_qt.hpp"
+#include <QString>
 
 #ifdef Q_MOC_RUN
 #    include "waywallen/notify.moc"
@@ -49,6 +50,10 @@ public:
     /// `Starting` when the WS disconnects so a daemon restart triggers
     /// the dialog again.
     Q_PROPERTY(DaemonPhase daemonPhase READ daemonPhase NOTIFY statusChanged FINAL)
+    /// Build flavor: "lite" or "full". Determined at compile time by
+    /// whether Qt6::WebEngineQuick was available. Used by the UI to
+    /// show a build badge and adjust Workshop page behavior.
+    Q_PROPERTY(QString buildFlavor READ buildFlavor CONSTANT FINAL)
 
     Notify(QObject* parent);
     ~Notify() override;
@@ -62,6 +67,13 @@ public:
     auto scanInProgress() const -> bool { return m_scan_in_progress; }
     auto activeTaskCount() const -> quint32 { return m_active_task_count; }
     auto daemonPhase() const -> DaemonPhase { return m_daemon_phase; }
+    auto buildFlavor() const -> QString {
+#ifdef WAYWALLEN_HAS_WEBENGINE
+        return QStringLiteral("full");
+#else
+        return QStringLiteral("lite");
+#endif
+    }
 
 Q_SIGNALS:
     /// Daemon finished a wallpaper sync (success or failure). `count`

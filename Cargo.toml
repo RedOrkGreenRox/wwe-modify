@@ -54,6 +54,31 @@ notify = "8"
 tempfile = "3"
 tokio = { version = "1.0", features = ["full", "test-util"] }
 
+# ---------------------------------------------------------------------------
+# Build profiles
+# ---------------------------------------------------------------------------
+
+# Release (default for AppImage): full optimisation + LTO.
+# LTO is controlled externally via CMake's INTERPROCEDURAL_OPTIMIZATION;
+# Cargo's own lto flag here stays thin so the Corrosion-driven build and
+# a raw `cargo build --release` both behave the same.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+# dev-fast: local iteration inside distrobox.
+# No LTO, parallel codegen, incremental — compiles 2-4x faster than release.
+# Binary is slightly larger and ~5-15% slower at runtime; fine for testing.
+# Usage: cargo build --profile dev-fast
+[profile.dev-fast]
+inherits = "release"
+opt-level = 1
+lto = false
+codegen-units = 16
+incremental = true
+debug = 1
+
 # Skip `cargo test` harnesses for binaries that hold no bin-specific tests.
 [[bin]]
 name = "waywallen"

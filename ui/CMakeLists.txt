@@ -13,6 +13,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(BUILD_SHARED_LIBS OFF)
 
+# WAYWALLEN_QML_FILESYSTEM: load QML files from disk at runtime instead of
+# embedding them into the binary as Qt resources.
+#
+# OFF (default): QML is compiled into the binary via qrc — correct for AppImage.
+# ON:  QML files are NOT embedded. The binary reads them from the build tree
+#      (or wherever QML_IMPORT_PATH / QML2_IMPORT_PATH points).
+#      Changes to .qml files take effect on the NEXT UI restart — no C++ rebuild.
+#      Only meaningful for local dev; never use this for release/AppImage builds.
+option(WAYWALLEN_QML_FILESYSTEM
+    "Load QML from disk at runtime (dev hot-reload). Do not use for AppImage builds." OFF)
+
 find_package(Qt6 REQUIRED COMPONENTS Quick DBus Protobuf ProtobufQuick ProtobufWellKnownTypes QuickPrivate)
 
 option(WAYWALLEN_ENABLE_WEBENGINE "Enable the embedded Workshop browser when QtWebEngineQuick is available" ON)
@@ -211,13 +222,28 @@ set(APP_INFO_MACROS
     APP_ID="${APP_ID}" APP_VERSION="${APP_VERSION}" APP_AUTHOR="${APP_AUTHOR}"
     APP_NAME="${APP_NAME}" APP_SUMMARY="${APP_SUMMARY}")
 
+if(WAYWALLEN_QML_FILESYSTEM)
+  message(STATUS "waywallen: WAYWALLEN_QML_FILESYSTEM=ON — QML loaded from disk (dev mode)")
+  # Module stays STATIC (no linker issues with MODULE_LIBRARY).
+  # NO_CACHEGEN: skip .qmlc so Qt reads raw .qml source at runtime.
+  # The running binary finds QML via QML_IMPORT_PATH pointing at the
+  # build-tree qml_modules/ directory (set by app.cpp / dev_watch.sh).
+  set(_QML_MODULE_TYPE STATIC)
+  set(_QML_EXTRA_FLAGS NO_CACHEGEN)
+else()
+  set(_QML_MODULE_TYPE STATIC)
+  set(_QML_EXTRA_FLAGS "")
+endif()
+set(_QML_PLUGIN_TARGET waywallen-qml)
+
 qt_add_qml_module(
   waywallen-qml
   URI
   waywallen.ui
-  STATIC
+  ${_QML_MODULE_TYPE}
+  ${_QML_EXTRA_FLAGS}
   PLUGIN_TARGET
-  waywallen-qml
+  ${_QML_PLUGIN_TARGET}
   DEPENDENCIES
   QtCore
   QtQuick
@@ -238,6 +264,15 @@ qt_add_qml_module(
   RESOURCES
   ${RESOURCES}
   NO_PLUGIN_OPTIONAL)
+
+if(WAYWALLEN_QML_FILESYSTEM)
+  # Expose the source QML directory to the binary at compile time so
+  # app.cpp can add it as an import path without hard-coding a path.
+  target_compile_definitions(waywallen-qml PUBLIC
+    WAYWALLEN_QML_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}/qml"
+    WAYWALLEN_QML_BUILD_DIR="${CMAKE_BINARY_DIR}/qml_modules"
+  )
+endif()
 
 target_sources(waywallen-qml PUBLIC FILE_SET CXX_MODULES FILES ${MODULES} ${MOC_SOURCE_FILES})
 target_sources(waywallen-qml PRIVATE ${SOURCES_NO_MOC})
@@ -290,7 +325,14 @@ target_link_libraries(waywallen-qml
 # imported into the resource module.
 if(TARGET Qt6::WebEngineQuick)
   target_link_libraries(waywallen-qml PUBLIC Qt6::WebEngineQuick)
-  target_compile_definitions(waywallen-qml PUBLIC WAYWALLEN_HAS_WEBENGINE=1)
+  target_compile_definitions(waywallen-qml PUBLIC
+    WAYWALLEN_HAS_WEBENGINE=1
+    WAYWALLEN_FLAVOR="full"
+  )
+else()
+  target_compile_definitions(waywallen-qml PUBLIC
+    WAYWALLEN_FLAVOR="lite"
+  )
 endif()
 
 qt_add_executable(${PROJECT_NAME} MANUAL_FINALIZATION src/main.cpp)

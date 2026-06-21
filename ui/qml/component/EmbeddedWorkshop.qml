@@ -12,6 +12,7 @@ Item {
     signal loginRequired()
     signal loadFailed(string reason)
     signal statusMessage(string message)
+    signal currentUrlChanged(string url)
 
     // Keep Steam cookies outside the AppImage mount and outside any temporary
     // runtime directory.  StandardPaths returns a file:// URL in QML; WebEngine
@@ -80,7 +81,17 @@ Item {
                 || title.indexOf("sign in") !== -1
                 || title.indexOf("login") !== -1
                 || text.indexOf("sign in with steam") !== -1
-                || text.indexOf("войти через steam") !== -1;
+                || text.indexOf("войти через steam") !== -1
+                || text.indexOf("anmelden mit steam") !== -1
+                || text.indexOf("se connecter avec steam") !== -1
+                || text.indexOf("iniciar sesión con steam") !== -1
+                || text.indexOf("entrar com steam") !== -1
+                || text.indexOf("accedi con steam") !== -1
+                || text.indexOf("steam’da oturum aç") !== -1
+                || text.indexOf("スティームでサインイン") !== -1
+                || text.indexOf("steam으로 로그인") !== -1
+                || text.indexOf("使用steam登录") !== -1
+                || text.indexOf("zaloguj się przez steam") !== -1;
 
             if (!result.hasAccount && (result.hasLoginLink || loginPage)) {
                 if (!root.loginSignalEmitted) {
@@ -135,6 +146,7 @@ Item {
         }
 
         onUrlChanged: {
+            root.currentUrlChanged(url.toString());
             if (root.looksLikeLoginUrl(url) && !root.loginSignalEmitted) {
                 root.loginSignalEmitted = true;
                 root.loginRequired();

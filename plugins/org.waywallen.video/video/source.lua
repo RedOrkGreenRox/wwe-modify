@@ -53,6 +53,10 @@ function M.scan(ctx)
             dir .. "/*.*",
             dir .. "/*/*.*",
             dir .. "/*/*/*.*",
+            -- Steam Workshop layout: steamapps/workshop/content/431960/<id>/<file>
+            -- That is 4–5 levels deep from a typical Steam library root.
+            dir .. "/*/*/*/*.*",
+            dir .. "/*/*/*/*/*.*",
         }
         for _, pat in ipairs(patterns) do
             for _, path in ipairs(ctx.glob(pat)) do

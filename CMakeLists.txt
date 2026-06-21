@@ -24,7 +24,10 @@ set(WAYWALLEN_LIB_RPATH "$ORIGIN")
 set(WAYWALLEN_BIN_RPATH "$ORIGIN;$ORIGIN/../lib")
 
 include(GNUInstallDirs)
-list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+list(PREPEND CMAKE_MODULE_PATH
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui/cmake"
+)
 
 option(WAYWALLEN_BUILD_DAEMON  "Build the Rust daemon via Corrosion"   ON)
 option(WAYWALLEN_BUILD_UI      "Build the Qt/QML UI"                   ON)

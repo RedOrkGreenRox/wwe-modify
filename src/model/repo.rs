@@ -397,6 +397,15 @@ fn entry_from_item(
 
 /// All items as fully-populated `WallpaperEntry` values, rebuilt from
 /// the DB (the read source of truth). Stable `(library_id, path)` order.
+///
+/// Items are then collapsed by canonical physical path: when the user
+/// has overlapping libraries (e.g. both `/home/u/.steam` and
+/// `/home/u/.steam/steamapps/workshop/content/431960`), the same file
+/// gets scanned twice and stored under two different `library_id`s.
+/// DB-level uniqueness is `(library_id, path)`, so the file appears
+/// twice. We pick the entry whose `library_root` is the most specific
+/// (longest path = deepest directory) — the one the user added
+/// explicitly.
 pub async fn load_entries(
     db: &DatabaseConnection,
 ) -> Result<Vec<crate::wallpaper::types::WallpaperEntry>> {
@@ -411,14 +420,194 @@ pub async fn load_entries(
         .map(|p| (p.id, p.name))
         .collect();
     let items = list_items_all(db).await?;
-    Ok(items
+    let entries: Vec<crate::wallpaper::types::WallpaperEntry> = items
         .into_iter()
         .filter_map(|it| {
             let lib = lib_path.get(&it.library_id)?;
             let plugin = plugin_name.get(&it.plugin_id).cloned().unwrap_or_default();
             Some(entry_from_item(it, lib, &plugin))
         })
-        .collect())
+        .collect();
+    Ok(dedup_entries_by_canonical(entries))
+}
+
+/// Resolve a key used to group entries that point at the same physical
+/// file.
+///
+/// Three-tier strategy, first one that returns `Some` wins:
+///
+/// 1. **`(dev, inode)`** — the kernel-level identity. Two paths with
+///    the same inode on the same device are literally the same file
+///    (BTRFS bind-mount, hardlink, etc.). This is the strongest signal
+///    and the one that catches the Bazzite/dHybrid case where the
+///    same Steam library is mounted at both
+///    `/home/u/.local/share/Steam` and
+///    `/home/u/.steam/steam` via `/var/home` subvol bind.
+/// 2. **`canonicalize(resource)`** — symlinks resolve here even when
+///    their targets live on a different filesystem (where inode
+///    identity no longer applies). Catches the simpler "user added
+///    the same folder twice" case where canonicalize collapses two
+///    lexical paths to one.
+/// 3. **Lexical normalisation** — `..` → parent, drop `.`. Only used
+///    for files that no longer exist (recently removed workshop item);
+///    a transient canonicalize failure must not strand the entry as
+///    a permanent duplicate.
+///
+/// The key is the textual representation used for grouping. We stringise
+/// tier-1 and tier-2 results via `Display` so `HashMap<PathBuf, _>`
+/// stays uniform.
+fn dedup_key(resource: &str) -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    if let Ok(meta) = std::fs::metadata(resource) {
+        use std::os::unix::fs::MetadataExt;
+        let dev = meta.dev();
+        let ino = meta.ino();
+        // Stringify the (dev, ino) pair so the same hash type works for
+        // all three tiers. Realpath collisions are exceedingly rare on
+        // the same dev+ino tuple.
+        return Some(PathBuf::from(format!("ino:{dev:x}:{ino:x}")));
+    }
+    if let Ok(canon) = std::fs::canonicalize(resource) {
+        return Some(canon);
+    }
+    // Last-resort lexical normalisation for missing files.
+    let mut out = PathBuf::new();
+    for comp in std::path::Path::new(resource).components() {
+        match comp {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    if out.as_os_str().is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+/// Collapse entries that resolve to the same physical file. See
+/// [`load_entries`] for the rationale. Two entries dedupe when their
+/// `resource` paths share the same canonical inode OR the same
+/// normalised lexical path (the latter handles in-flight deletions
+/// where `canonicalize` would error).
+fn dedup_entries_by_canonical(
+    entries: Vec<crate::wallpaper::types::WallpaperEntry>,
+) -> Vec<crate::wallpaper::types::WallpaperEntry> {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    let mut by_file: HashMap<PathBuf, crate::wallpaper::types::WallpaperEntry> = HashMap::new();
+    for entry in entries {
+        // `dedup_key` returns `None` only for a resource string that is
+        // empty after normalisation — treat it as a uniquely-keyed entry
+        // so it still reaches the UI rather than getting dropped silently.
+        let key = dedup_key(&entry.resource)
+            .unwrap_or_else(|| PathBuf::from(format!("raw:{}", entry.resource)));
+        match by_file.entry(key) {
+            std::collections::hash_map::Entry::Vacant(v) => {
+                v.insert(entry);
+            }
+            std::collections::hash_map::Entry::Occupied(mut o) => {
+                let existing = o.get();
+                // Prefer the entry from the most specific library root:
+                // - longer path = deeper directory = explicit user choice
+                // - on tie, keep the first-seen (stable across rescans)
+                if entry.library_root.len() > existing.library_root.len() {
+                    o.insert(entry);
+                }
+            }
+        }
+    }
+    let mut out: Vec<crate::wallpaper::types::WallpaperEntry> = by_file.into_values().collect();
+    out.sort_by(|a, b| a.item_id.cmp(&b.item_id));
+    out
+}
+
+/// Sweep duplicate rows out of the `item` table. Runs on every daemon
+/// start so the grid is consistent regardless of when duplicates were
+/// introduced (the dedup-at-read defence in [`load_entries`] never
+/// touched the DB).
+///
+/// Strategy:
+/// 1. Load every item + its library path.
+/// 2. For each item, compute its absolute `resource` (`lib.path` +
+///    `item.path`) and pass it through [`dedup_key`]. The key is the
+///    `(dev, ino)` tuple when the file exists — that's what catches
+///    BTRFS bind-mount duplicates where two lexical paths resolve to
+///    the same physical file.
+/// 3. For each group of duplicates, keep the row whose library root is
+///    longest (deepest = most explicit user add); tie-break by lowest
+///    `item.id` so the original create_at is preserved.
+/// 4. Delete every other row. `item_tag` rows reference `item.id` and
+///    cascade on delete via the existing relation definition.
+///
+/// Returns the number of rows removed so the caller can log it.
+pub async fn deduplicate_db_items(db: &DatabaseConnection) -> Result<u64> {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    let lib_path: HashMap<i64, String> = list_libraries(db)
+        .await?
+        .into_iter()
+        .map(|l| (l.id, l.path))
+        .collect();
+    let items = list_items_all(db).await?;
+
+    // Group item ids by dedup key.
+    let mut groups: HashMap<PathBuf, Vec<(i64, String)>> = HashMap::new();
+    for it in &items {
+        let Some(lib_path) = lib_path.get(&it.library_id) else {
+            continue;
+        };
+        let resource = std::path::Path::new(lib_path)
+            .join(&it.path)
+            .to_string_lossy()
+            .into_owned();
+        // Items whose resource can't produce a key (rare: empty path
+        // after lexical normalisation) get a unique raw-string key
+        // so they survive cleanup rather than disappearing silently.
+        let key = dedup_key(&resource)
+            .unwrap_or_else(|| PathBuf::from(format!("raw:{resource}")));
+        groups
+            .entry(key)
+            .or_default()
+            .push((it.id, lib_path.clone()));
+    }
+
+    let mut to_delete: Vec<i64> = Vec::new();
+    for (_key, mut members) in groups {
+        if members.len() <= 1 {
+            continue;
+        }
+        // Sort: longest library_root first, then lowest id first.
+        members.sort_by(|a, b| {
+            b.1.len()
+                .cmp(&a.1.len())
+                .then(a.0.cmp(&b.0))
+        });
+        // Skip the first (winner); queue the rest for deletion.
+        for (id, _root) in members.into_iter().skip(1) {
+            to_delete.push(id);
+        }
+    }
+
+    if to_delete.is_empty() {
+        return Ok(0);
+    }
+
+    log::info!(
+        "deduplicate_db_items: removing {} duplicate item row(s)",
+        to_delete.len()
+    );
+
+    let res = item::Entity::delete_many()
+        .filter(item::Column::Id.is_in(to_delete.iter().copied()))
+        .exec(db)
+        .await
+        .context("delete duplicate items")?;
+    Ok(res.rows_affected)
 }
 
 /// A single item as a `WallpaperEntry` by DB id, with its tags filled.
@@ -1516,5 +1705,260 @@ mod tests {
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].id, keep_lib.id);
         assert_eq!(list_items_by_plugin(&db, p.id).await.unwrap().len(), 0);
+    }
+
+    #[test]
+    fn dedup_entries_by_canonical_collapses_same_physical_file() {
+        use crate::wallpaper::types::WallpaperEntry;
+        // Create a real temp dir + file so canonicalize resolves the
+        // same path for both entries.
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("scene.pkg");
+        std::fs::write(&file, b"").unwrap();
+        let canonical = std::fs::canonicalize(&file).unwrap();
+
+        let mk = |id: i64, root: &str| WallpaperEntry {
+            item_id: id,
+            name: format!("item-{id}"),
+            wp_type: "scene".into(),
+            resource: canonical.to_string_lossy().into_owned(),
+            preview: None,
+            plugin_name: "wallpaper_engine".into(),
+            library_root: root.into(),
+            description: None,
+            tags: Vec::new(),
+            external_id: None,
+            size: None,
+            width: None,
+            height: None,
+            content_rating: None,
+            modified_at: None,
+        };
+
+        // Two entries that resolve to the same physical file:
+        //  - shallow root `/steam`     (broad library scan)
+        //  - deep root    `/steam/steamapps/workshop/content/431960` (explicit)
+        let shallow = mk(1, "/steam");
+        let deep = mk(2, "/steam/steamapps/workshop/content/431960");
+
+        let deduped = super::dedup_entries_by_canonical(vec![shallow.clone(), deep.clone()]);
+        assert_eq!(deduped.len(), 1, "same physical file must collapse to one entry");
+        assert_eq!(
+            deduped[0].item_id, 2,
+            "entry with the most-specific library_root must win"
+        );
+        assert_eq!(deduped[0].library_root, "/steam/steamapps/workshop/content/431960");
+
+        // Order independence: same result regardless of insertion order.
+        let deduped_rev =
+            super::dedup_entries_by_canonical(vec![deep.clone(), shallow.clone()]);
+        assert_eq!(deduped_rev.len(), 1);
+        assert_eq!(deduped_rev[0].item_id, 2);
+
+        // Distinct files stay distinct.
+        let other_file = tmp.path().join("other.pkg");
+        std::fs::write(&other_file, b"").unwrap();
+        let other_entry = WallpaperEntry {
+            item_id: 3,
+            resource: other_file.to_string_lossy().into_owned(),
+            library_root: "/steam".into(),
+            ..mk(3, "/steam")
+        };
+        let deduped_mixed = super::dedup_entries_by_canonical(vec![shallow, deep, other_entry]);
+        assert_eq!(deduped_mixed.len(), 2);
+    }
+
+    #[test]
+    fn dedup_entries_by_inode_collapses_bind_mount_duplicates() {
+        // Bazzite/dHybrid: same Steam library mounted at two paths
+        // via a BTRFS subvolume bind. canonicalize collapses to one
+        // path, but tests can't bind-mount — so we build the same
+        // shape with two distinct paths that both resolve through
+        // symlinks to the same real file.
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real_workshop");
+        std::fs::create_dir_all(&real).unwrap();
+        let scene = real.join("12345/scene.pkg");
+        std::fs::create_dir_all(scene.parent().unwrap()).unwrap();
+        std::fs::write(&scene, b"").unwrap();
+
+        // Build two symlink paths that resolve to the same physical
+        // file. canonicalize would collapse them, but a true bind-mount
+        // wouldn't (bind-mount preserves its own path components), so
+        // the inode tier must catch it.
+        let view_a = tmp.path().join("view_a");
+        let view_b = tmp.path().join("view_b");
+        std::fs::create_dir_all(&view_a).unwrap();
+        std::fs::create_dir_all(&view_b).unwrap();
+        let a = view_a.join("12345/scene.pkg");
+        let b = view_b.join("12345/scene.pkg");
+        std::fs::create_dir_all(a.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(b.parent().unwrap()).unwrap();
+        // Bind-mount via copy: both views have a real file with the
+        // SAME inode as the original? No — copies get new inodes.
+        // Use a real bind mount via loopback to keep the same inode:
+        // mount --bind real view_a
+        // This is the only way to keep inodes aligned without root in
+        // CI; in production (Bazzite) the kernel gives us this for free.
+        // As a fallback for environments without root, we hardlink:
+        std::fs::hard_link(&scene, &a).unwrap();
+        std::fs::hard_link(&scene, &b).unwrap();
+
+        // Now `a` and `b` share inode with `scene`.
+        let meta_a = std::fs::metadata(&a).unwrap();
+        let meta_b = std::fs::metadata(&b).unwrap();
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(
+            meta_a.ino(),
+            meta_b.ino(),
+            "hardlinks must share inode — test setup is broken"
+        );
+
+        let mk = |id: i64, root: &str, resource: std::path::PathBuf| {
+            use crate::wallpaper::types::WallpaperEntry;
+            WallpaperEntry {
+                item_id: id,
+                name: format!("item-{id}"),
+                wp_type: "scene".into(),
+                resource: resource.to_string_lossy().into_owned(),
+                preview: None,
+                plugin_name: "wallpaper_engine".into(),
+                library_root: root.into(),
+                description: None,
+                tags: Vec::new(),
+                external_id: None,
+                size: None,
+                width: None,
+                height: None,
+                content_rating: None,
+                modified_at: None,
+            }
+        };
+
+        let entry_a = mk(1, view_a.to_str().unwrap(), a.clone());
+        let entry_b = mk(2, view_b.to_str().unwrap(), b.clone());
+
+        let deduped = super::dedup_entries_by_canonical(vec![entry_a, entry_b]);
+        assert_eq!(
+            deduped.len(),
+            1,
+            "hardlinks (same inode, different paths) must collapse via inode tier"
+        );
+    }
+
+    #[tokio::test]
+    async fn deduplicate_db_items_removes_duplicates_and_keeps_longest_root() {
+        // Build the exact real-world failure mode: two libraries
+        // rooted at the same physical file via different prefix paths.
+        let tmp = tempfile::tempdir().unwrap();
+        let deep_root = tmp.path().join("steam/steamapps/workshop/content/431960");
+        let shallow_root = tmp.path().join("steam");
+        std::fs::create_dir_all(&deep_root).unwrap();
+        // Three real physical files under deep_root.
+        let f1 = deep_root.join("12345/project.json");
+        std::fs::create_dir_all(f1.parent().unwrap()).unwrap();
+        std::fs::write(&f1, b"").unwrap();
+        let f2 = deep_root.join("67890/project.json");
+        std::fs::create_dir_all(f2.parent().unwrap()).unwrap();
+        std::fs::write(&f2, b"").unwrap();
+        // A file that exists in deep_root but is intentionally NOT
+        // materialised on disk to exercise the lexical-normalisation
+        // fallback path (canonicalize returns Err).
+        let missing_rel = "99999/missing.json";
+
+        let db = mem_db().await;
+        let plug = upsert_plugin(&db, "wallpaper_engine", "0.1.7")
+            .await
+            .unwrap();
+        let lib_shallow = add_library(&db, plug.id, shallow_root.to_str().unwrap())
+            .await
+            .unwrap();
+        let lib_deep = add_library(&db, plug.id, deep_root.to_str().unwrap())
+            .await
+            .unwrap();
+
+        // Mimic the Lua plugin: each library independently walks the
+        // same subtree, so the relative path under each library differs.
+        // The reconstructed `resource` is identical for both — that's
+        // the only condition `dedup_key` cares about.
+        // - shallow_root is `/tmp/steam`; relative path includes the
+        //   full subtree prefix the plugin walked.
+        // - deep_root is the leaf dir; relative path is just the
+        //   filename under that subtree.
+        let shallow_rel = "steamapps/workshop/content/431960/12345/project.json";
+        let deep_rel = "12345/project.json";
+        let shallow_rel_2 = "steamapps/workshop/content/431960/67890/project.json";
+        let deep_rel_2 = "67890/project.json";
+        let shallow_rel_miss = "steamapps/workshop/content/431960/99999/missing.json";
+        let deep_rel_miss = missing_rel;
+
+        upsert_item(
+            &db,
+            minimal_args(plug.id, lib_shallow.id, shallow_rel, "scene"),
+        )
+        .await
+        .unwrap();
+        upsert_item(
+            &db,
+            minimal_args(plug.id, lib_deep.id, deep_rel, "scene"),
+        )
+        .await
+        .unwrap();
+        upsert_item(
+            &db,
+            minimal_args(plug.id, lib_shallow.id, shallow_rel_2, "scene"),
+        )
+        .await
+        .unwrap();
+        upsert_item(
+            &db,
+            minimal_args(plug.id, lib_deep.id, deep_rel_2, "scene"),
+        )
+        .await
+        .unwrap();
+        upsert_item(
+            &db,
+            minimal_args(plug.id, lib_shallow.id, shallow_rel_miss, "scene"),
+        )
+        .await
+        .unwrap();
+        upsert_item(
+            &db,
+            minimal_args(plug.id, lib_deep.id, deep_rel_miss, "scene"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            list_items_by_plugin(&db, plug.id).await.unwrap().len(),
+            6
+        );
+
+        let removed = deduplicate_db_items(&db).await.unwrap();
+        assert_eq!(
+            removed, 3,
+            "one winner per dedup group, three groups total"
+        );
+
+        let remaining = list_items_by_plugin(&db, plug.id).await.unwrap();
+        assert_eq!(remaining.len(), 3, "three distinct files must remain");
+
+        // Every remaining row's library_root must be the deeper one
+        // (the most explicit user add wins).
+        for it in &remaining {
+            let lib = library::Entity::find_by_id(it.library_id)
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                lib.path,
+                deep_root.to_str().unwrap(),
+                "deeper library root must win the tie-break"
+            );
+        }
+
+        // Idempotency: a second sweep must do nothing.
+        let removed_again = deduplicate_db_items(&db).await.unwrap();
+        assert_eq!(removed_again, 0);
     }
 }
