@@ -207,6 +207,16 @@ MD.Page {
         applySort();
         if (W.Notify.daemonPhase === W.Notify.DaemonPhase.Ready)
             reloadAll();
+        // Grab focus on the grid so the grid-local Keys.onPressed
+        // handler (Ctrl+Arrow, Home/End, Return, Space, etc.) fires
+        // immediately on page show. The page-level Shortcuts already
+        // use Qt.ApplicationShortcut and don't need this, but the
+        // in-grid bindings still do — and the focus-grab is what
+        // makes "press F5 immediately on app start" match user
+        // expectation rather than waiting for a click.
+        if (m_grid_view) {
+            m_grid_view.forceActiveFocus();
+        }
     }
 
     MD.Action {
@@ -281,21 +291,23 @@ MD.Page {
         onTriggered: scanQuery.reload()
     }
 
-    // Qt.WindowShortcut fires whenever the window is active, regardless of
-    // which child widget holds focus. This fixes the "must click background
-    // first" problem caused by PageContainer not forwarding focus on switch.
-    // Delete/Backspace use the same context but are already guarded by
-    // !m_search_field.inputActive so they won't fire inside text fields.
+    // Qt.ApplicationShortcut fires whenever the application is active,
+    // regardless of which window or child holds focus. This is the most
+    // reliable context on Wayland/KDE — Qt.WindowShortcut is restricted
+    // to the window's own focus chain, which is fragile after AppRun's
+    // --replace handoff because the compositor may briefly steal focus
+    // from the new process. Delete/Backspace/Ctrl+A are guarded by
+    // `!m_search_field.inputActive` so they don't fire inside text fields.
     Shortcut {
         sequences: [StandardKey.Refresh, "F5", "Ctrl+R"]
-        context: Qt.WindowShortcut
+        context: Qt.ApplicationShortcut
         enabled: root.visible && !W.Notify.scanInProgress
         onActivated: scanQuery.reload()
     }
 
     Shortcut {
         sequence: StandardKey.Find
-        context: Qt.WindowShortcut
+        context: Qt.ApplicationShortcut
         enabled: root.visible
         onActivated: m_search_field.focusInput()
     }
@@ -306,14 +318,14 @@ MD.Page {
         // singular `sequence:` would only pick one variant and trip
         // a "binding to one of multiple key bindings" QML warning.
         sequences: [StandardKey.SelectAll]
-        context: Qt.WindowShortcut
+        context: Qt.ApplicationShortcut
         enabled: root.visible && !m_search_field.inputActive && m_grid_view && m_grid_view.count > 0
         onActivated: root.selectAllWallpapers()
     }
 
     Shortcut {
         sequences: ["Delete", "Backspace"]
-        context: Qt.WindowShortcut
+        context: Qt.ApplicationShortcut
         enabled: root.visible && !m_search_field.inputActive
                  && (root.selectionActive || root.selectedWallpaper !== null)
         onActivated: {
