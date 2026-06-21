@@ -35,10 +35,14 @@ while IFS= read -r file; do
 done < <(git ls-files '*.c' '*.h' '*.cpp' '*.hpp' '*.cc' '*.hh' '*.cppm')
 
 if [[ ${#cxx_files[@]} -gt 0 ]]; then
+    # `-style=file` makes clang-format honour the per-tree .clang-format
+    # configs (one at the repo root, another in `ui/`). Without this,
+    # clang-format falls back to its built-in default which differs from
+    # both configs and trips `-Wclang-format-violations` on every file.
     if [[ $CHECK -eq 1 ]]; then
-        clang-format --dry-run --Werror "${cxx_files[@]}"
+        clang-format --style=file --dry-run --Werror "${cxx_files[@]}"
     else
-        clang-format -i "${cxx_files[@]}"
+        clang-format --style=file -i "${cxx_files[@]}"
     fi
 fi
 

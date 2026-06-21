@@ -475,6 +475,19 @@ fn autopause_mode_from_pb(v: i32) -> crate::settings::AutopauseMode {
 fn global_to_pb(g: &crate::settings::GlobalSettings) -> pb::GlobalSettings {
     let (wallpaper_filters, wallpaper_filter_logics) = g.wallpaper_filter.clone().to_pb();
     let wallpaper_sorts = WallpaperSortRuleState::vec_to_pb(&g.wallpaper_sorts);
+    let hotkey_bindings = g
+        .hotkeys
+        .bindings
+        .iter()
+        .map(|(action, seqs)| {
+            (
+                action.clone(),
+                pb::HotkeyBinding {
+                    sequences: seqs.clone(),
+                },
+            )
+        })
+        .collect();
     pb::GlobalSettings {
         wallpaper_filters,
         wallpaper_filter_logics,
@@ -515,6 +528,7 @@ fn global_to_pb(g: &crate::settings::GlobalSettings) -> pb::GlobalSettings {
         wallpaper_skip_types: g.wallpaper_skip_types.clone(),
         wallpaper_filter_tags: g.wallpaper_filter_tags.clone(),
         wallpaper_skip_content_ratings: g.wallpaper_skip_content_ratings.clone(),
+        hotkey_bindings,
     }
 }
 
@@ -2165,6 +2179,16 @@ async fn dispatch_inner(
                         s.global.queue_mode = g.queue_mode.clone();
                     }
                     s.global.rotation_secs = g.rotation_secs;
+                    // Hotkey bindings: empty map on the wire is the
+                    // sentinel "don't touch". Non-empty replaces.
+                    if !g.hotkey_bindings.is_empty() {
+                        let raw: std::collections::BTreeMap<String, Vec<String>> =
+                            g.hotkey_bindings
+                                .iter()
+                                .map(|(k, b)| (k.clone(), b.sequences.clone()))
+                                .collect();
+                        s.global.hotkeys.replace_from(raw);
+                    }
                 }
                 s.plugins = new_plugins.clone();
             });

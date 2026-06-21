@@ -393,6 +393,44 @@ MD.Page {
                     }
                 }
             }
+
+            // ---- Keyboard shortcuts (nested under Settings) ----------
+            //
+            // We expose the hotkey editor as a `PagePopup` rather than
+            // another sidebar entry. Settings is the natural home for
+            // "things the user configures once and forgets about".
+            SectionPane {
+                contentItem: ColumnLayout {
+                    spacing: 12
+
+                    SectionTitle { text: qsTr("Keyboard") }
+
+                    MD.Text {
+                        Layout.fillWidth: true
+                        text: qsTr("Rebind any action to any key combination. "
+                                 + "A binding is one specific key press — like \"Ctrl+R\" or \"F5\". "
+                                 + "An action can have any number of bindings.")
+                        typescale: MD.Token.typescale.body_medium
+                        color: MD.Token.color.on_surface_variant
+                        wrapMode: Text.WordWrap
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        MD.Button {
+                            text: qsTr("Open keyboard settings")
+                            icon.name: MD.Token.icon.keyboard
+                            mdState.type: MD.Enum.BtFilledTonal
+                            onClicked: MD.Util.showPopup(
+                                'waywallen.ui/PagePopup',
+                                { source: 'waywallen.ui/HotkeysSettingsPage' },
+                                root)
+                        }
+                    }
+                }
+            }
         }
     }
 }

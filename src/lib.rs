@@ -4,6 +4,7 @@ pub mod dma;
 pub mod error;
 pub mod events;
 pub mod gpu;
+pub mod hotkeys;
 pub mod ipc;
 pub mod model;
 pub mod plugin;

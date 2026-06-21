@@ -15,6 +15,7 @@ mod error;
 mod event_process;
 mod events;
 mod gpu;
+mod hotkeys;
 mod ipc;
 mod model;
 pub mod playlist;

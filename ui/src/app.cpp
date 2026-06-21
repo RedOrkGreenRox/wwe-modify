@@ -171,7 +171,7 @@ void App::init() {
     //   3. Source tree qml/ directory (fallback)
     {
         const QByteArray envDir = qgetenv("WAYWALLEN_QML_DIR");
-        if (!envDir.isEmpty()) {
+        if (! envDir.isEmpty()) {
             engine->addImportPath(QString::fromUtf8(envDir));
         }
         engine->addImportPath(QStringLiteral(WAYWALLEN_QML_BUILD_DIR));

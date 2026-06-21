@@ -168,6 +168,12 @@ pub struct GlobalSettings {
 
     #[serde(default)]
     pub auto_attach_playlist_id: Option<i64>,
+
+    /// User-configurable keyboard shortcuts. The UI drives this via
+    /// `SettingsGet` / `SettingsSet`; the daemon only stores it.
+    /// Defaults to [`crate::hotkeys::HotkeySettings::default`].
+    #[serde(default)]
+    pub hotkeys: crate::hotkeys::HotkeySettings,
 }
 
 impl Default for GlobalSettings {
@@ -184,6 +190,7 @@ impl Default for GlobalSettings {
             wallpaper_filter_tags: Vec::new(),
             wallpaper_skip_content_ratings: Vec::new(),
             auto_attach_playlist_id: None,
+            hotkeys: crate::hotkeys::HotkeySettings::default(),
         }
     }
 }

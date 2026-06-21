@@ -970,6 +970,19 @@ message GlobalSettings {
 
   // Content ratings hidden by the browser's quick toggles. Persisted.
   repeated string wallpaper_skip_content_ratings = 14;
+
+  // User-configurable keyboard shortcuts. Key = `HotkeyAction.as_str()`,
+  // value = ordered list of sequence strings (Qt portable form, e.g.
+  // "Ctrl+R", "F5"). An empty list means the action is unbound. See
+  // `src/hotkeys.rs` for the canonical action list and defaults.
+  map<string, HotkeyBinding> hotkey_bindings = 15;
+}
+
+// One hotkey binding (the action key + the list of sequences that
+// trigger it). Defined as a separate message so the protobuf wire
+// format stays self-describing when the UI inspects settings.
+message HotkeyBinding {
+  repeated string sequences = 1;
 }
 
 // When to pause the wallpaper based on window state on the same

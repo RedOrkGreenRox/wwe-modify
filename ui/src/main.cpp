@@ -2,8 +2,9 @@
 #include <QCoreApplication>
 #include <QCommandLineParser>
 #include <QtQml/QQmlExtensionPlugin>
+#include <QIcon>
 #ifdef WAYWALLEN_HAS_WEBENGINE
-#include <QtWebEngineQuick/QtWebEngineQuick>
+#    include <QtWebEngineQuick/QtWebEngineQuick>
 #endif
 Q_IMPORT_QML_PLUGIN(waywallen_uiPlugin)
 
@@ -22,6 +23,16 @@ int main(int argc, char** argv) {
     gui_app.setOrganizationDomain("waywallen.org");
     gui_app.setApplicationName(APP_NAME);
     gui_app.setApplicationVersion(APP_VERSION);
+    // Without an explicit window icon the platform compositor (KDE/GNOME
+    // on Wayland, macOS, Windows) shows a generic placeholder. The SVG
+    // is exposed by `qt_add_qml_module` under both the legacy `qrc:`
+    // and the modern Qt 6 `:/qt/qml/...` path; try the legacy one
+    // first to stay consistent with the QML `source:` references.
+    QIcon app_icon(QStringLiteral(":/qt/qml/waywallen/ui/assets/waywallen-ui.svg"));
+    if (app_icon.isNull()) {
+        app_icon = QIcon(QStringLiteral(":/waywallen/ui/assets/waywallen-ui.svg"));
+    }
+    gui_app.setWindowIcon(app_icon);
 
     QCommandLineParser parser;
     parser.addHelpOption();
