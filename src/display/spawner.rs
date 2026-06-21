@@ -101,6 +101,7 @@ pub fn builtin_display_defs() -> Vec<DisplayDef> {
             "sway".to_string(),
             "niri".to_string(),
             "river".to_string(),
+            "cosmic".to_string(),
         ],
         priority: 50,
         requires: vec!["wlr-layer-shell".to_string(), "linux-dmabuf-v4".to_string()],
@@ -459,7 +460,7 @@ mod tests {
 
     #[test]
     fn wlroots_desktops_pick_layer_shell() {
-        for desktop in ["hyprland", "sway", "niri"] {
+        for desktop in ["hyprland", "sway", "niri", "cosmic"] {
             let caps = DeCaps {
                 xdg_desktop: vec![desktop.into()],
                 ..Default::default()
