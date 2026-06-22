@@ -1,3 +1,24 @@
+<release version="0.2.2" date="2026-06-21">
+  <description>
+    <p>Added:</p>
+    <ul>
+      <li>Auto-mute by @Arzumify in https://github.com/waywallen/waywallen/pull/110.</li>
+      <li>Auto pause to Auto replay with mute and stop support.</li>
+      <li>Support pause and mute fade.</li>
+      <li>New lua plugin entry.</li>
+      <li>Cosmic support.</li>
+      <li>Custom resolution.</li>
+    </ul>
+    <p>Fixes:</p>
+    <ul>
+      <li>Layershell display rotation.</li>
+      <li>Web wallpaper init on nvidia card.</li>
+      <li>Image frames replay after relinking displays to an existing image renderer.</li>
+      <li>Renderer texture size reporting on the displays page.</li>
+      <li>wallpapers loading component when filtered.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.2.1" date="2026-06-16">
   <description>
     <p>Fix auto pause after switching wallpapers.</p>
