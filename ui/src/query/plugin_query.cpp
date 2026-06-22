@@ -68,7 +68,7 @@ void PluginListQuery::reload() {
     auto self = QWatcher { this };
     spawn([self, backend, req = std::move(req)]() mutable -> task<void> {
         auto result = co_await backend->send(std::move(req));
-        co_await asio::post(asio::bind_executor(self->get_executor(), use_task));
+        co_await asio::post(asio::bind_executor(QAsyncResult::get_executor(), use_task));
         if (! self) co_return;
 
         self->inspect_set(result, [self](const proto::Response& rsp) {
@@ -118,7 +118,7 @@ void PluginInstallQuery::reload() {
     auto self = QWatcher { this };
     spawn([self, backend, req = std::move(req)]() mutable -> task<void> {
         auto result = co_await backend->send(std::move(req));
-        co_await asio::post(asio::bind_executor(self->get_executor(), use_task));
+        co_await asio::post(asio::bind_executor(QAsyncResult::get_executor(), use_task));
         if (! self) co_return;
 
         self->inspect_set(result, [self](const proto::Response& rsp) {
