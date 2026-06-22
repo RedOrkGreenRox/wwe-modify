@@ -43,8 +43,6 @@ namespace
 
 constexpr uint32_t SLOT_COUNT = 3;
 
-using Clock = std::chrono::steady_clock;
-
 struct Options {
     std::string ipc_path;
     std::string video_path;
@@ -187,12 +185,7 @@ struct AudioRuntime {
     bool              enabled { true };
     bool              muted { false };
     bool              device_muted { false };
-    float             current_gain { 1.0f };
-    float             start_gain { 1.0f };
-    float             target_gain { 1.0f };
-    Clock::time_point fade_start {};
-    uint32_t          fade_ms { 0 };
-    bool              fade_active { false };
+    float             target_scale { 1.0f };
 };
 
 wavsen::video::HwAccel parse_hwdec(const char* v) {
@@ -365,19 +358,25 @@ void sync_audio_pause(wavsen::audio::AvPlayer* av_player, bool paused) {
     }
 }
 
+void apply_audio_scale(wavsen::audio::AvPlayer* av_player, AudioRuntime& audio, float scale,
+                       uint32_t fade_ms, bool force = false) {
+    if (! av_player) return;
+    scale = clamp01(scale);
+    if (! force && audio.target_scale == scale) return;
+    audio.target_scale = scale;
+    av_player->set_volume_scale(scale, fade_ms);
+}
+
 void sync_audio_mute(wavsen::audio::AvPlayer* av_player, AudioRuntime& audio, bool muted,
-                     uint32_t fade_ms, Clock::time_point now) {
+                     uint32_t fade_ms) {
     if (! av_player) return;
     if (! audio.enabled) {
-        audio.fade_active  = false;
-        audio.current_gain = 0.0f;
-        audio.target_gain  = 0.0f;
         audio.muted        = muted;
         if (! audio.device_muted) {
             av_player->set_muted(true);
             audio.device_muted = true;
         }
-        av_player->set_volume(0.0f);
+        apply_audio_scale(av_player, audio, 0.0f, 0);
         return;
     }
 
@@ -387,28 +386,9 @@ void sync_audio_mute(wavsen::audio::AvPlayer* av_player, AudioRuntime& audio, bo
     }
 
     if (audio.muted != muted) {
-        audio.muted       = muted;
-        audio.start_gain  = audio.current_gain;
-        audio.target_gain = muted ? 0.0f : 1.0f;
-        audio.fade_ms     = fade_ms;
-        audio.fade_start  = now;
-        audio.fade_active = audio.fade_ms > 0 && audio.start_gain != audio.target_gain;
-        if (! audio.fade_active) audio.current_gain = audio.target_gain;
+        audio.muted = muted;
+        apply_audio_scale(av_player, audio, muted ? 0.0f : 1.0f, fade_ms);
     }
-
-    if (audio.fade_active) {
-        const auto elapsed =
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - audio.fade_start).count();
-        if (elapsed >= static_cast<decltype(elapsed)>(audio.fade_ms)) {
-            audio.current_gain = audio.target_gain;
-            audio.fade_active  = false;
-        } else {
-            const float t      = static_cast<float>(elapsed) / static_cast<float>(audio.fade_ms);
-            audio.current_gain = audio.start_gain + (audio.target_gain - audio.start_gain) * t;
-        }
-    }
-
-    av_player->set_volume(static_cast<float>(audio.volume_pct) / 100.0f * audio.current_gain);
 }
 
 // --selftest: open a video, decode one frame, run YuvToRgba against a
@@ -928,19 +908,36 @@ int main(int argc, char** argv) {
         /* Audio settings — applied to AvPlayer atomically without rebuild. */
         if (host.volume_pending.exchange(false, std::memory_order_acq_rel)) {
             audio_runtime.volume_pct = host.pending_volume.load(std::memory_order_acquire);
+            if (av_player) {
+                av_player->set_volume(static_cast<float>(audio_runtime.volume_pct) / 100.0f);
+            }
         }
         if (host.enable_audio_pending.exchange(false, std::memory_order_acq_rel)) {
-            audio_runtime.enabled      = host.pending_enable_audio.load(std::memory_order_acquire);
-            audio_runtime.fade_active  = false;
-            audio_runtime.current_gain = audio_runtime.muted ? 0.0f : 1.0f;
-            audio_runtime.target_gain  = audio_runtime.current_gain;
+            audio_runtime.enabled = host.pending_enable_audio.load(std::memory_order_acquire);
+            if (av_player) {
+                if (audio_runtime.enabled) {
+                    if (audio_runtime.device_muted) {
+                        av_player->set_muted(false);
+                        audio_runtime.device_muted = false;
+                    }
+                    apply_audio_scale(
+                        av_player.get(), audio_runtime, audio_runtime.muted ? 0.0f : 1.0f, 0,
+                        true);
+                } else {
+                    if (! audio_runtime.device_muted) {
+                        av_player->set_muted(true);
+                        audio_runtime.device_muted = true;
+                    }
+                    apply_audio_scale(av_player.get(), audio_runtime, 0.0f, 0, true);
+                }
+            }
         }
         const bool paused_now = host.paused.load(std::memory_order_acquire);
         sync_audio_pause(av_player.get(), paused_now);
 
         const bool     muted_now = host.muted.load(std::memory_order_acquire);
         const uint32_t fade_ms   = host.mute_fade_ms.load(std::memory_order_acquire);
-        sync_audio_mute(av_player.get(), audio_runtime, muted_now, fade_ms, Clock::now());
+        sync_audio_mute(av_player.get(), audio_runtime, muted_now, fade_ms);
 
         /* hwdec change requested — apply at this loop boundary by
          * tearing down + reopening the decoder. The reopen runs the
