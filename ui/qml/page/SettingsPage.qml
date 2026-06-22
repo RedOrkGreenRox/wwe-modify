@@ -133,7 +133,7 @@ MD.Page {
 
     readonly property var kAutoActions: [
         { value: WC.AutoAction.AUTO_ACTION_NONE,        label: qsTr("None") },
-        { value: WC.AutoAction.AUTO_ACTION_PAUSE_AUDIO, label: qsTr("Pause audio") },
+        { value: WC.AutoAction.AUTO_ACTION_MUTE,        label: qsTr("Mute") },
         { value: WC.AutoAction.AUTO_ACTION_PAUSE,       label: qsTr("Pause") },
         { value: WC.AutoAction.AUTO_ACTION_STOP,        label: qsTr("Stop") }
     ]

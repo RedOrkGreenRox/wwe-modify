@@ -299,7 +299,13 @@ mod tests {
     #[test]
     fn roundtrip_play_pause_shutdown() {
         let (a, b) = pair();
-        for msg in [EventIn::Play, EventIn::Pause, EventIn::Shutdown] {
+        for msg in [
+            EventIn::Play,
+            EventIn::Pause,
+            EventIn::Mute { fade_ms: 0 },
+            EventIn::Unmute { fade_ms: 0 },
+            EventIn::Shutdown,
+        ] {
             send_control(&a, &msg, &[]).unwrap();
             let (got, _) = recv_control(&b).unwrap();
             assert_eq!(msg, got);

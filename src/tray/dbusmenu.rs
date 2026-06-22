@@ -283,8 +283,7 @@ pub async fn notify_menu_changed(app: &Arc<AppState>) {
         Err(_) => return,
     };
 
-    // Push the new toggle-state for every radio / checkmark that this
-    // event might have flipped. Sending only LayoutUpdated isn't
+    // Push changed props for hosts that don't fully rebuild on LayoutUpdated.
     let menu = snapshot_menu_state(app).await;
     let mut updates: Vec<(i32, HashMap<String, OwnedValue>)> = Vec::new();
     {
@@ -310,11 +309,11 @@ pub async fn notify_menu_changed(app: &Arc<AppState>) {
     }
     updates.push((
         ID_PAUSE,
-        menu_action_props(pause_action_label(menu.manual_paused), menu.manual_paused),
+        menu_action_props(pause_action_label(menu.manual_paused)),
     ));
     updates.push((
         ID_MUTE,
-        menu_action_props(mute_action_label(menu.manual_muted), menu.manual_muted),
+        menu_action_props(mute_action_label(menu.manual_muted)),
     ));
     let _ = DBusMenu::items_properties_updated(iface.signal_context(), updates, Vec::new()).await;
 
@@ -336,15 +335,15 @@ fn build_root(menu: &MenuState) -> ItemStruct {
         item_to_value(make_checkmark(ID_SHUFFLE, "Shuffle", menu.is_shuffle)),
         item_to_value(make_submenu_parent(ID_ROTATE, "Rotate")),
         item_to_value(make_leaf(ID_SEP_PL, "", Some("separator"))),
-        item_to_value(make_checkmark(
+        item_to_value(make_leaf(
             ID_PAUSE,
             pause_action_label(menu.manual_paused),
-            menu.manual_paused,
+            None,
         )),
-        item_to_value(make_checkmark(
+        item_to_value(make_leaf(
             ID_MUTE,
             mute_action_label(menu.manual_muted),
-            menu.manual_muted,
+            None,
         )),
         item_to_value(make_leaf(ID_SEP2, "", Some("separator"))),
         item_to_value(make_leaf(ID_RESCAN, "Rescan wallpapers", None)),
@@ -452,19 +451,11 @@ fn mute_action_label(muted: bool) -> &'static str {
     }
 }
 
-fn menu_action_props(label: &str, on: bool) -> HashMap<String, OwnedValue> {
+fn menu_action_props(label: &str) -> HashMap<String, OwnedValue> {
     let mut p = HashMap::new();
     p.insert(
         "label".into(),
         OwnedValue::try_from(Value::from(label)).unwrap(),
-    );
-    p.insert(
-        "toggle-type".into(),
-        OwnedValue::try_from(Value::from("checkmark")).unwrap(),
-    );
-    p.insert(
-        "toggle-state".into(),
-        OwnedValue::try_from(Value::from(if on { 1i32 } else { 0i32 })).unwrap(),
     );
     p
 }
@@ -494,17 +485,8 @@ fn props_for(id: i32, menu: &MenuState) -> Option<HashMap<String, OwnedValue>> {
                 .find(|(rid, _, _)| *rid == id)?;
             Some(make_radio(id, label, menu.rotation_secs == secs).1)
         }
-        ID_PAUSE => Some(
-            make_checkmark(
-                id,
-                pause_action_label(menu.manual_paused),
-                menu.manual_paused,
-            )
-            .1,
-        ),
-        ID_MUTE => {
-            Some(make_checkmark(id, mute_action_label(menu.manual_muted), menu.manual_muted).1)
-        }
+        ID_PAUSE => Some(make_leaf(id, pause_action_label(menu.manual_paused), None).1),
+        ID_MUTE => Some(make_leaf(id, mute_action_label(menu.manual_muted), None).1),
         ID_RESCAN => Some(make_leaf(id, "Rescan wallpapers", None).1),
         ID_QUIT => Some(make_leaf(id, "Quit", None).1),
         _ => None,

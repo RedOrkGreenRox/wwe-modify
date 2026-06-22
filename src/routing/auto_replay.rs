@@ -122,7 +122,7 @@ mod tests {
     #[test]
     fn action_priority_selects_stronger_action() {
         let policy = policy(&[
-            (AutoCondition::Focused, AutoAction::PauseAudio),
+            (AutoCondition::Focused, AutoAction::Mute),
             (AutoCondition::Fullscreen, AutoAction::Pause),
         ]);
         let decision = decide(

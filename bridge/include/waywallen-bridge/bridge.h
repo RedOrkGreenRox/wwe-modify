@@ -374,6 +374,8 @@ typedef struct ww_bridge_control {
         ww_evt_in_setting_changed_t   setting_changed;
         ww_evt_in_play_t              play;
         ww_evt_in_pause_t             pause;
+        ww_evt_in_mute_t              mute;
+        ww_evt_in_unmute_t            unmute;
         ww_evt_in_pointer_motion_t    pointer_motion;
         ww_evt_in_pointer_button_t    pointer_button;
         ww_evt_in_pointer_axis_t      pointer_axis;

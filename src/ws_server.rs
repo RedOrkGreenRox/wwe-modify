@@ -452,7 +452,7 @@ fn auto_action_to_pb(v: crate::settings::AutoAction) -> pb::AutoAction {
     use crate::settings::AutoAction as A;
     match v {
         A::None => pb::AutoAction::None,
-        A::PauseAudio => pb::AutoAction::PauseAudio,
+        A::Mute => pb::AutoAction::Mute,
         A::Pause => pb::AutoAction::Pause,
         A::Stop => pb::AutoAction::Stop,
     }
@@ -462,7 +462,7 @@ fn auto_action_from_pb(v: i32) -> crate::settings::AutoAction {
     use crate::settings::AutoAction as A;
     match pb::AutoAction::try_from(v).unwrap_or(pb::AutoAction::None) {
         pb::AutoAction::None => A::None,
-        pb::AutoAction::PauseAudio => A::PauseAudio,
+        pb::AutoAction::Mute => A::Mute,
         pb::AutoAction::Pause => A::Pause,
         pb::AutoAction::Stop => A::Stop,
     }

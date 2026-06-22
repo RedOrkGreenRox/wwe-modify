@@ -1846,24 +1846,24 @@ impl Router {
                 let has_active_link = !links.is_empty();
                 // Auto replay only matters when at least one active link
                 // exists; no-link pause is handled by ref-count.
-                let (auto_pause_requested, auto_audio_decision) = if has_active_link {
+                let (auto_pause_requested, auto_mute_decision) = if has_active_link {
                     links.iter().fold(
                         (false, None::<auto_replay::Decision>),
-                        |(auto_pause_requested, auto_audio_decision), l| {
+                        |(auto_pause_requested, auto_mute_decision), l| {
                             if let Some(display) = inner.displays.get(&l.display_id) {
                                 match display.auto_replay.requested.action {
-                                    AutoAction::Pause => (true, auto_audio_decision),
-                                    AutoAction::PauseAudio => {
+                                    AutoAction::Pause => (true, auto_mute_decision),
+                                    AutoAction::Mute => {
                                         let decision = display.auto_replay.requested;
-                                        let next = auto_audio_decision.or(Some(decision));
+                                        let next = auto_mute_decision.or(Some(decision));
                                         (auto_pause_requested, next)
                                     }
                                     AutoAction::Stop | AutoAction::None => {
-                                        (auto_pause_requested, auto_audio_decision)
+                                        (auto_pause_requested, auto_mute_decision)
                                     }
                                 }
                             } else {
-                                (auto_pause_requested, auto_audio_decision)
+                                (auto_pause_requested, auto_mute_decision)
                             }
                         },
                     )
@@ -1873,7 +1873,7 @@ impl Router {
                 let manual_paused = inner.manual_paused;
                 let manual_muted = inner.manual_muted;
                 let should_pause = manual_paused || !has_active_link || auto_pause_requested;
-                let should_mute = manual_muted || !has_active_link || auto_audio_decision.is_some();
+                let should_mute = manual_muted || !has_active_link || auto_mute_decision.is_some();
                 let previous_state = inner
                     .renderer_states
                     .get(&rid)
@@ -3138,13 +3138,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auto_replay_action_priority_prefers_pause_over_pause_audio() {
+    async fn auto_replay_action_priority_prefers_pause_over_mute() {
         let mgr = Arc::new(RendererManager::new_default());
         let router = Router::new(mgr.clone());
         router.attach_settings(
             settings_with_auto_replay(auto_replay(&[
                 (AutoCondition::Fullscreen, AutoAction::Pause),
-                (AutoCondition::Focused, AutoAction::PauseAudio),
+                (AutoCondition::Focused, AutoAction::Mute),
             ]))
             .await,
         );

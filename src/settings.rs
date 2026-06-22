@@ -80,7 +80,7 @@ pub enum AutoCondition {
 pub enum AutoAction {
     #[default]
     None,
-    PauseAudio,
+    Mute,
     Pause,
     Stop,
 }
@@ -89,7 +89,7 @@ impl AutoAction {
     pub fn priority(self) -> u8 {
         match self {
             AutoAction::None => 0,
-            AutoAction::PauseAudio => 1,
+            AutoAction::Mute => 1,
             AutoAction::Pause => 2,
             AutoAction::Stop => 3,
         }

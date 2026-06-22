@@ -494,6 +494,8 @@ int ww_bridge_recv_control(int sock, ww_bridge_control_t* out) {
         break;
     case WW_EVT_IN_PLAY: rc = ww_evt_in_play_decode(body, body_len, &out->u.play); break;
     case WW_EVT_IN_PAUSE: rc = ww_evt_in_pause_decode(body, body_len, &out->u.pause); break;
+    case WW_EVT_IN_MUTE: rc = ww_evt_in_mute_decode(body, body_len, &out->u.mute); break;
+    case WW_EVT_IN_UNMUTE: rc = ww_evt_in_unmute_decode(body, body_len, &out->u.unmute); break;
     case WW_EVT_IN_POINTER_MOTION:
         rc = ww_evt_in_pointer_motion_decode(body, body_len, &out->u.pointer_motion);
         break;
@@ -524,6 +526,8 @@ void ww_bridge_control_free(ww_bridge_control_t* msg) {
     case WW_EVT_IN_SETTING_CHANGED: ww_evt_in_setting_changed_free(&msg->u.setting_changed); break;
     case WW_EVT_IN_PLAY: ww_evt_in_play_free(&msg->u.play); break;
     case WW_EVT_IN_PAUSE: ww_evt_in_pause_free(&msg->u.pause); break;
+    case WW_EVT_IN_MUTE: ww_evt_in_mute_free(&msg->u.mute); break;
+    case WW_EVT_IN_UNMUTE: ww_evt_in_unmute_free(&msg->u.unmute); break;
     case WW_EVT_IN_POINTER_MOTION: ww_evt_in_pointer_motion_free(&msg->u.pointer_motion); break;
     case WW_EVT_IN_POINTER_BUTTON: ww_evt_in_pointer_button_free(&msg->u.pointer_button); break;
     case WW_EVT_IN_POINTER_AXIS: ww_evt_in_pointer_axis_free(&msg->u.pointer_axis); break;

@@ -973,10 +973,10 @@ message GlobalSettings {
 }
 
 enum AutoAction {
-  AUTO_ACTION_NONE        = 0;
-  AUTO_ACTION_PAUSE_AUDIO = 1;
-  AUTO_ACTION_PAUSE       = 2;
-  AUTO_ACTION_STOP        = 3;
+  AUTO_ACTION_NONE = 0;
+  AUTO_ACTION_MUTE = 1;
+  AUTO_ACTION_PAUSE = 2;
+  AUTO_ACTION_STOP = 3;
 }
 
 message AutoReplayPolicy {
