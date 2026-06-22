@@ -46,7 +46,6 @@ ColumnLayout {
 
     readonly property bool isRenderNode: schema.key === "render_node"
     readonly property bool isResolution: schema.key === "resolution"
-    readonly property bool isFadeMs: schema.key === "fade_in_ms" || schema.key === "fade_out_ms"
 
     // Wire enum value → display label. Kept in sync with
     // <waywallen-bridge/resolution.h> WW_RESOLUTION_*.
@@ -70,7 +69,7 @@ ColumnLayout {
         // Integer settings fall back to a dense textfield when the range is too
         // wide to be useful on a slider.
         if (root._isIntegerType(t))
-            return !(_hasNumericRange() && (_intRangeFitsSlider() || root.isFadeMs));
+            return !(_hasNumericRange() && root._intRangeFitsSlider());
         return !_hasNumericRange();
     }
 
@@ -169,7 +168,7 @@ ColumnLayout {
                 return boolField;
             case root.kU32:
             case root.kI32:
-                return (root._hasNumericRange() && (root._intRangeFitsSlider() || root.isFadeMs))
+                return (root._hasNumericRange() && root._intRangeFitsSlider())
                     ? sliderField : numericField;
             case root.kF32:
                 return root._hasNumericRange() ? sliderField : numericField;

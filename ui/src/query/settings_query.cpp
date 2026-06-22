@@ -86,6 +86,7 @@ auto global_to_map(const proto::GlobalSettings& g) -> QVariantMap {
     }
     m[u"queueMode"_s]    = g.queueMode();
     m[u"rotationSecs"_s] = g.rotationSecs();
+    m[u"audioFadeMs"_s]  = g.audioFadeMs();
     QStringList wallpaper_skip_types;
     for (const auto& t : g.wallpaperSkipTypes()) {
         wallpaper_skip_types.append(t);
@@ -148,6 +149,9 @@ auto map_to_global(const QVariantMap& m) -> proto::GlobalSettings {
     }
     if (m.contains(u"rotationSecs"_s)) {
         g.setRotationSecs(m.value(u"rotationSecs"_s).toUInt());
+    }
+    if (m.contains(u"audioFadeMs"_s)) {
+        g.setAudioFadeMs(m.value(u"audioFadeMs"_s).toUInt());
     }
     if (m.contains(u"wallpaperSkipTypes"_s)) {
         QStringList skip;

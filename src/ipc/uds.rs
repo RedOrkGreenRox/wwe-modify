@@ -302,8 +302,8 @@ mod tests {
         for msg in [
             EventIn::Play,
             EventIn::Pause,
-            EventIn::Mute { fade_ms: 0 },
-            EventIn::Unmute { fade_ms: 0 },
+            EventIn::Mute { fade_ms: 750 },
+            EventIn::Unmute { fade_ms: 750 },
             EventIn::Shutdown,
         ] {
             send_control(&a, &msg, &[]).unwrap();

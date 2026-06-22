@@ -1441,9 +1441,19 @@ impl RendererHandle {
     /// Construct a `RendererHandle` with no running child process.
     /// Used by routing-table unit tests.
     pub fn test_stub(id: &str, wp_type: &str) -> Arc<Self> {
-        let (a, _b) = StdUnixStream::pair().expect("UnixStream pair");
+        let (handle, _peer) = Self::test_stub_with_peer_inner(id, wp_type);
+        handle
+    }
+
+    #[cfg(test)]
+    pub fn test_stub_with_peer(id: &str, wp_type: &str) -> (Arc<Self>, StdUnixStream) {
+        Self::test_stub_with_peer_inner(id, wp_type)
+    }
+
+    fn test_stub_with_peer_inner(id: &str, wp_type: &str) -> (Arc<Self>, StdUnixStream) {
+        let (a, b) = StdUnixStream::pair().expect("UnixStream pair");
         let (events_tx, _) = broadcast::channel::<EventMsg>(8);
-        Arc::new(Self {
+        let handle = Arc::new(Self {
             id: id.into(),
             wp_type: wp_type.into(),
             extras: HashMap::new(),
@@ -1463,7 +1473,8 @@ impl RendererHandle {
             child: Arc::new(TokioMutex::new(None)),
             events_subscribed: Arc::new(Vec::new()),
             clear_rgba: Arc::new(StdMutex::new([0.0, 0.0, 0.0, 1.0])),
-        })
+        });
+        (handle, b)
     }
 }
 

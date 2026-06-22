@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQml as Qml
+import QtQuick.Templates as T
 import QtQuick.Layouts
 import Qcm.Material as MD
 import waywallen.control as WC
@@ -169,7 +170,8 @@ MD.Page {
         return JSON.stringify({
             autoReplay: root._normalizedAutoReplay(g.autoReplay || ({})),
             queueMode: g.queueMode ?? "sequential",
-            rotationSecs: Number(g.rotationSecs ?? 0)
+            rotationSecs: Number(g.rotationSecs ?? 0),
+            audioFadeMs: Number(g.audioFadeMs ?? 500)
         });
     }
 
@@ -296,6 +298,48 @@ MD.Page {
                                 root.kAutoActions,
                                 root._autoReplay()[autoReplayItem.modelData.key] ?? 0)
                         }
+                    }
+                }
+            }
+
+            SettingHeader { text: qsTr("Audio") }
+
+            SettingItem {
+                first: true
+                last: true
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    FieldLabel {
+                        Layout.fillWidth: true
+                        text: qsTr("Mute fade")
+                    }
+
+                    W.ValueSlider {
+                        id: m_audio_fade_slider
+                        Layout.preferredWidth: 220
+                        from: 0
+                        to: 2000
+                        stepSize: 100
+                        snapMode: T.Slider.SnapAlways
+                        valueText: Math.round(value).toString()
+                        valueMaxText: "2000"
+                        onMoved: root._mut(g => {
+                            g.audioFadeMs = Math.round(value);
+                        })
+                    }
+                    Binding {
+                        target: m_audio_fade_slider
+                        property: "value"
+                        value: Number(root._currentGlobal()?.audioFadeMs ?? 500)
+                    }
+
+                    MD.Text {
+                        text: qsTr("ms")
+                        typescale: MD.Token.typescale.body_medium
+                        color: MD.Token.color.on_surface_variant
                     }
                 }
             }

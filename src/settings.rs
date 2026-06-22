@@ -13,6 +13,8 @@ use crate::display::layout::{Align, FillMode, Location, Rotation};
 /// Quiet period after the last `update()` before the debounced writer
 /// flushes to disk.
 const DEBOUNCE_WRITE: Duration = Duration::from_secs(2);
+pub const DEFAULT_AUDIO_FADE_MS: u32 = 500;
+pub const MAX_AUDIO_FADE_MS: u32 = 2000;
 
 /// Daemon-wide layout defaults applied to displays that have no
 /// `[displays.<name>]` override.
@@ -157,6 +159,8 @@ pub struct GlobalSettings {
     pub queue_mode: String,
     /// Auto-rotation interval in seconds; `0` = disabled.
     pub rotation_secs: u32,
+    /// Fade duration shared by mute and unmute control messages.
+    pub audio_fade_ms: u32,
     /// Default layout used when a display has no override.
     /// Drives daemon-side projection.
     pub layout: LayoutDefaults,
@@ -203,6 +207,7 @@ impl Default for GlobalSettings {
             last_wallpaper: None,
             queue_mode: "sequential".to_string(),
             rotation_secs: 0,
+            audio_fade_ms: DEFAULT_AUDIO_FADE_MS,
             layout: LayoutDefaults::default(),
             auto_replay: None,
             wallpaper_filter: WallpaperFilterState::default(),
@@ -218,6 +223,10 @@ impl Default for GlobalSettings {
 impl GlobalSettings {
     pub fn effective_auto_replay(&self) -> AutoReplayPolicy {
         self.auto_replay.unwrap_or_default()
+    }
+
+    pub fn effective_audio_fade_ms(&self) -> u32 {
+        self.audio_fade_ms.min(MAX_AUDIO_FADE_MS)
     }
 
     /// Filter rules and logic for the queue.
@@ -921,7 +930,15 @@ mod tests {
     fn default_roundtrip() {
         let s: Settings = toml::from_str("").unwrap();
         assert!(s.global.last_wallpaper.is_none());
+        assert_eq!(s.global.audio_fade_ms, DEFAULT_AUDIO_FADE_MS);
         assert!(s.plugins.is_empty());
+    }
+
+    #[test]
+    fn audio_fade_ms_is_clamped_for_runtime() {
+        let mut g = GlobalSettings::default();
+        g.audio_fade_ms = MAX_AUDIO_FADE_MS + 1;
+        assert_eq!(g.effective_audio_fade_ms(), MAX_AUDIO_FADE_MS);
     }
 
     #[test]

@@ -970,6 +970,9 @@ message GlobalSettings {
 
   // Canonical automatic replay policy.
   AutoReplayPolicy auto_replay = 16;
+
+  // Fade duration used for both mute and unmute control messages.
+  uint32 audio_fade_ms = 17;
 }
 
 enum AutoAction {

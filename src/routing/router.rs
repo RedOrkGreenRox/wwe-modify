@@ -385,6 +385,13 @@ impl Router {
         s.resolved_auto_replay(&info.name)
     }
 
+    fn resolved_audio_fade_ms(&self) -> u32 {
+        self.settings
+            .get()
+            .map(|s| s.global().effective_audio_fade_ms())
+            .unwrap_or(crate::settings::DEFAULT_AUDIO_FADE_MS)
+    }
+
     /// Set or clear per-display layout fields. `None` for a field
     /// means "no change"; explicit clear flags unset persisted fields.
     pub async fn set_display_layout(
@@ -1833,6 +1840,7 @@ impl Router {
     /// Compute the current Pause/Play diff and dispatch control
     /// messages outside the inner lock after lifecycle mutations.
     async fn reconcile_lifecycle(self: &Arc<Self>) {
+        let audio_fade_ms = self.resolved_audio_fade_ms();
         let actions: Vec<(RendererId, ControlMsg, &'static str)> = {
             let mut inner = self.inner.lock().await;
             let mut out: Vec<(RendererId, ControlMsg, &'static str)> = Vec::new();
@@ -1893,7 +1901,13 @@ impl Router {
                     if was_paused {
                         out.push((rid, ControlMsg::Play, cause));
                     } else if was_muted {
-                        out.push((rid, ControlMsg::Unmute { fade_ms: 0 }, cause));
+                        out.push((
+                            rid,
+                            ControlMsg::Unmute {
+                                fade_ms: audio_fade_ms,
+                            },
+                            cause,
+                        ));
                     }
                 } else if should_pause && !was_paused {
                     inner
@@ -1918,7 +1932,13 @@ impl Router {
                     } else {
                         "ref-count"
                     };
-                    out.push((rid, ControlMsg::Mute { fade_ms: 0 }, cause));
+                    out.push((
+                        rid,
+                        ControlMsg::Mute {
+                            fade_ms: audio_fade_ms,
+                        },
+                        cause,
+                    ));
                 }
             }
             out
@@ -3263,6 +3283,43 @@ mod tests {
                 muted: false,
             }
         );
+    }
+
+    #[tokio::test]
+    async fn manual_mute_uses_global_audio_fade() {
+        let mgr = Arc::new(RendererManager::new_default());
+        let router = Router::new(mgr.clone());
+        let settings = test_settings_store().await;
+        settings.update(|s| {
+            s.global.audio_fade_ms = 750;
+        });
+        router.attach_settings(settings);
+
+        let (r, peer) = RendererHandle::test_stub_with_peer("r1", "scene");
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let reader = std::thread::spawn(move || {
+            let mut got = Vec::new();
+            while got.len() < 2 {
+                let (msg, _fds) = crate::ipc::uds::recv_control(&peer).expect("recv control");
+                match msg {
+                    ControlMsg::Mute { fade_ms } => got.push(("mute", fade_ms)),
+                    ControlMsg::Unmute { fade_ms } => got.push(("unmute", fade_ms)),
+                    _ => {}
+                }
+            }
+            got
+        });
+
+        mgr.register_test_handle(r.clone()).await;
+        router.register_renderer(r.clone()).await;
+        let _h = router.register_display(reg("HDMI-A-1", 1920, 1080)).await;
+
+        router.set_manual_mute(true).await;
+        router.set_manual_mute(false).await;
+
+        let got = reader.join().expect("reader joined");
+        assert_eq!(got, vec![("mute", 750), ("unmute", 750)]);
     }
 
     #[tokio::test]

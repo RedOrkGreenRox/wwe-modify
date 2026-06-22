@@ -41,9 +41,7 @@ import nlohmann.json;
 namespace
 {
 
-constexpr uint32_t SLOT_COUNT      = 3;
-constexpr uint32_t DEFAULT_FADE_MS = 500;
-constexpr uint32_t MAX_FADE_MS     = 2000;
+constexpr uint32_t SLOT_COUNT = 3;
 
 using Clock = std::chrono::steady_clock;
 
@@ -110,7 +108,7 @@ bool parse_color_wire(const char* raw, ClearColor& out) {
 }
 
 // SPAWN_VERSION 3: video path arrives via `--path`; everything else
-// (loop_file, hwdec, render_node, fps, volume, fade) rides on Init.settings
+// (loop_file, hwdec, render_node, fps, volume) rides on Init.settings
 // kv. Keep `--no-loop` / `--render-node` as standalone-debug escape
 // hatches (set them before init; daemon doesn't emit them).
 Options parse_args(int argc, char** argv) {
@@ -151,17 +149,6 @@ const char* kv_get(const ww_kv_list_t& kv, const char* key) {
     return nullptr;
 }
 
-uint32_t parse_u32_clamped(const char* v, uint32_t fallback, uint32_t max) {
-    if (! v || ! *v) return fallback;
-    while (*v && std::isspace(static_cast<unsigned char>(*v))) ++v;
-    if (*v == '-') return fallback;
-    char*         end = nullptr;
-    unsigned long n   = std::strtoul(v, &end, 10);
-    if (end == v) return fallback;
-    if (n > max) n = max;
-    return static_cast<uint32_t>(n);
-}
-
 struct HostState {
     int               sock { -1 };
     ww_pool_t*        pool { nullptr };
@@ -191,17 +178,13 @@ struct HostState {
     std::atomic<bool>     volume_pending { false };
     std::atomic<bool>     pending_enable_audio { true };
     std::atomic<bool>     enable_audio_pending { false };
-    std::atomic<uint32_t> pending_fade_in_ms { DEFAULT_FADE_MS };
-    std::atomic<uint32_t> pending_fade_out_ms { DEFAULT_FADE_MS };
-    std::atomic<bool>     fade_pending { false };
+    std::atomic<uint32_t> mute_fade_ms { 0 };
     ClearColor            scheme_color {};
 };
 
 struct AudioRuntime {
     uint32_t          volume_pct { 100 };
     bool              enabled { true };
-    uint32_t          fade_in_ms { DEFAULT_FADE_MS };
-    uint32_t          fade_out_ms { DEFAULT_FADE_MS };
     bool              muted { false };
     bool              device_muted { false };
     float             current_gain { 1.0f };
@@ -296,8 +279,14 @@ void apply_control(HostState& host, ww_bridge_control_t& c) {
         host.neg_cv.notify_all();
         break;
     case WW_EVT_IN_PAUSE: host.paused.store(true, std::memory_order_release); break;
-    case WW_EVT_IN_UNMUTE: host.muted.store(false, std::memory_order_release); break;
-    case WW_EVT_IN_MUTE: host.muted.store(true, std::memory_order_release); break;
+    case WW_EVT_IN_UNMUTE:
+        host.mute_fade_ms.store(c.u.unmute.fade_ms, std::memory_order_release);
+        host.muted.store(false, std::memory_order_release);
+        break;
+    case WW_EVT_IN_MUTE:
+        host.mute_fade_ms.store(c.u.mute.fade_ms, std::memory_order_release);
+        host.muted.store(true, std::memory_order_release);
+        break;
     case WW_EVT_IN_SET_FPS:
     case WW_EVT_IN_POINTER_MOTION:
     case WW_EVT_IN_POINTER_BUTTON:
@@ -328,14 +317,6 @@ void apply_control(HostState& host, ww_bridge_control_t& c) {
                             std::strcmp(val, "no") == 0);
                 host.pending_enable_audio.store(v, std::memory_order_release);
                 host.enable_audio_pending.store(true, std::memory_order_release);
-            } else if (std::strcmp(key, "fade_in_ms") == 0) {
-                host.pending_fade_in_ms.store(parse_u32_clamped(val, DEFAULT_FADE_MS, MAX_FADE_MS),
-                                              std::memory_order_release);
-                host.fade_pending.store(true, std::memory_order_release);
-            } else if (std::strcmp(key, "fade_out_ms") == 0) {
-                host.pending_fade_out_ms.store(parse_u32_clamped(val, DEFAULT_FADE_MS, MAX_FADE_MS),
-                                               std::memory_order_release);
-                host.fade_pending.store(true, std::memory_order_release);
             } else if (std::strcmp(key, kSchemeColorKey) == 0) {
                 set_scheme_color(host, val, true);
             } else {
@@ -385,7 +366,7 @@ void sync_audio_pause(wavsen::audio::AvPlayer* av_player, bool paused) {
 }
 
 void sync_audio_mute(wavsen::audio::AvPlayer* av_player, AudioRuntime& audio, bool muted,
-                     Clock::time_point now) {
+                     uint32_t fade_ms, Clock::time_point now) {
     if (! av_player) return;
     if (! audio.enabled) {
         audio.fade_active  = false;
@@ -409,7 +390,7 @@ void sync_audio_mute(wavsen::audio::AvPlayer* av_player, AudioRuntime& audio, bo
         audio.muted       = muted;
         audio.start_gain  = audio.current_gain;
         audio.target_gain = muted ? 0.0f : 1.0f;
-        audio.fade_ms     = muted ? audio.fade_out_ms : audio.fade_in_ms;
+        audio.fade_ms     = fade_ms;
         audio.fade_start  = now;
         audio.fade_active = audio.fade_ms > 0 && audio.start_gain != audio.target_gain;
         if (! audio.fade_active) audio.current_gain = audio.target_gain;
@@ -700,8 +681,6 @@ int main(int argc, char** argv) {
     }
     bool     enable_audio = true;
     uint32_t volume_pct   = 100;
-    uint32_t fade_in_ms   = DEFAULT_FADE_MS;
-    uint32_t fade_out_ms  = DEFAULT_FADE_MS;
     if (const char* v = kv_get(init.settings, "enable_audio")) {
         enable_audio = ! (std::strcmp(v, "false") == 0 || std::strcmp(v, "0") == 0 ||
                           std::strcmp(v, "no") == 0);
@@ -712,16 +691,8 @@ int main(int argc, char** argv) {
         if (n > 100) n = 100;
         volume_pct = static_cast<uint32_t>(n);
     }
-    if (const char* v = kv_get(init.settings, "fade_in_ms")) {
-        fade_in_ms = parse_u32_clamped(v, DEFAULT_FADE_MS, MAX_FADE_MS);
-    }
-    if (const char* v = kv_get(init.settings, "fade_out_ms")) {
-        fade_out_ms = parse_u32_clamped(v, DEFAULT_FADE_MS, MAX_FADE_MS);
-    }
     host.pending_volume.store(volume_pct, std::memory_order_release);
     host.pending_enable_audio.store(enable_audio, std::memory_order_release);
-    host.pending_fade_in_ms.store(fade_in_ms, std::memory_order_release);
-    host.pending_fade_out_ms.store(fade_out_ms, std::memory_order_release);
     int32_t resolution = static_cast<int32_t>(WW_RESOLUTION_ORIGIN);
     if (const char* v = kv_get(init.settings, "resolution"); v && *v) {
         char* end  = nullptr;
@@ -807,10 +778,8 @@ int main(int argc, char** argv) {
         }
     }
     AudioRuntime audio_runtime {
-        .volume_pct  = volume_pct,
-        .enabled     = enable_audio,
-        .fade_in_ms  = fade_in_ms,
-        .fade_out_ms = fade_out_ms,
+        .volume_pct = volume_pct,
+        .enabled    = enable_audio,
     };
 
     ww_bridge_vk_dt_t vdt {};
@@ -966,16 +935,12 @@ int main(int argc, char** argv) {
             audio_runtime.current_gain = audio_runtime.muted ? 0.0f : 1.0f;
             audio_runtime.target_gain  = audio_runtime.current_gain;
         }
-        if (host.fade_pending.exchange(false, std::memory_order_acq_rel)) {
-            audio_runtime.fade_in_ms  = host.pending_fade_in_ms.load(std::memory_order_acquire);
-            audio_runtime.fade_out_ms = host.pending_fade_out_ms.load(std::memory_order_acquire);
-        }
-
         const bool paused_now = host.paused.load(std::memory_order_acquire);
         sync_audio_pause(av_player.get(), paused_now);
 
-        const bool muted_now = host.muted.load(std::memory_order_acquire);
-        sync_audio_mute(av_player.get(), audio_runtime, muted_now, Clock::now());
+        const bool     muted_now = host.muted.load(std::memory_order_acquire);
+        const uint32_t fade_ms   = host.mute_fade_ms.load(std::memory_order_acquire);
+        sync_audio_mute(av_player.get(), audio_runtime, muted_now, fade_ms, Clock::now());
 
         /* hwdec change requested — apply at this loop boundary by
          * tearing down + reopening the decoder. The reopen runs the

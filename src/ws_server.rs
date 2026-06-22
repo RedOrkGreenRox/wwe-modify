@@ -523,6 +523,7 @@ fn global_to_pb(g: &crate::settings::GlobalSettings) -> pb::GlobalSettings {
         auto_replay: Some(auto_replay_to_pb(&g.effective_auto_replay())),
         queue_mode: g.queue_mode.clone(),
         rotation_secs: g.rotation_secs,
+        audio_fade_ms: g.effective_audio_fade_ms(),
         wallpaper_skip_types: g.wallpaper_skip_types.clone(),
         wallpaper_filter_tags: g.wallpaper_filter_tags.clone(),
         wallpaper_skip_content_ratings: g.wallpaper_skip_content_ratings.clone(),
@@ -2173,6 +2174,8 @@ async fn dispatch_inner(
                         s.global.queue_mode = g.queue_mode.clone();
                     }
                     s.global.rotation_secs = g.rotation_secs;
+                    s.global.audio_fade_ms =
+                        g.audio_fade_ms.min(crate::settings::MAX_AUDIO_FADE_MS);
                 }
                 s.plugins = new_plugins.clone();
             });
