@@ -462,19 +462,27 @@ uint32_t ww_evt_in_setting_changed_expected_fds(const ww_evt_in_setting_changed_
 }
 
 int ww_evt_in_play_encode(const ww_evt_in_play_t *m, ww_buf_t *out) {
-    (void)m; (void)out;
+    int rc;
+    (void)m;
+    if ((rc = w_u32(out, m->fade_ms))) return rc;
     return WW_OK;
 }
 
 int ww_evt_in_play_decode(const uint8_t *buf, size_t len, ww_evt_in_play_t *out) {
     memset(out, 0, sizeof(*out));
     ww_rd_t r = { buf, 0, len };
-    (void)r;
+    int rc;
+    if ((rc = rd_u32(&r, &out->fade_ms))) goto fail;
     if (r.pos != r.len) {
-        /* empty message; no allocations to release */
+        int rc2 = WW_ERR_TRAILING;
+        (void)rc2;
+        ww_evt_in_play_free(out);
         return WW_ERR_TRAILING;
     }
     return WW_OK;
+fail:
+    ww_evt_in_play_free(out);
+    return rc;
 }
 
 void ww_evt_in_play_free(ww_evt_in_play_t *m) {
@@ -487,19 +495,27 @@ uint32_t ww_evt_in_play_expected_fds(const ww_evt_in_play_t *m) {
 }
 
 int ww_evt_in_pause_encode(const ww_evt_in_pause_t *m, ww_buf_t *out) {
-    (void)m; (void)out;
+    int rc;
+    (void)m;
+    if ((rc = w_u32(out, m->fade_ms))) return rc;
     return WW_OK;
 }
 
 int ww_evt_in_pause_decode(const uint8_t *buf, size_t len, ww_evt_in_pause_t *out) {
     memset(out, 0, sizeof(*out));
     ww_rd_t r = { buf, 0, len };
-    (void)r;
+    int rc;
+    if ((rc = rd_u32(&r, &out->fade_ms))) goto fail;
     if (r.pos != r.len) {
-        /* empty message; no allocations to release */
+        int rc2 = WW_ERR_TRAILING;
+        (void)rc2;
+        ww_evt_in_pause_free(out);
         return WW_ERR_TRAILING;
     }
     return WW_OK;
+fail:
+    ww_evt_in_pause_free(out);
+    return rc;
 }
 
 void ww_evt_in_pause_free(ww_evt_in_pause_t *m) {

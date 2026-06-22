@@ -1922,7 +1922,13 @@ impl Router {
                         inner
                             .renderer_states
                             .insert(rid.clone(), PausedRendererStatus::Paused);
-                        out.push((rid, ControlMsg::Pause, pause_cause));
+                        out.push((
+                            rid,
+                            ControlMsg::Pause {
+                                fade_ms: audio_fade_ms,
+                            },
+                            pause_cause,
+                        ));
                     }
                     (
                         RendererStatus::Playing,
@@ -1944,7 +1950,13 @@ impl Router {
                         RendererStatus::Playing,
                     ) => {
                         inner.renderer_states.remove(&rid);
-                        out.push((rid, ControlMsg::Play, clear_cause));
+                        out.push((
+                            rid,
+                            ControlMsg::Play {
+                                fade_ms: audio_fade_ms,
+                            },
+                            clear_cause,
+                        ));
                     }
                     (
                         RendererStatus::Paused(PausedRendererStatus::Muted),
@@ -1967,7 +1979,7 @@ impl Router {
                             .renderer_states
                             .insert(rid.clone(), PausedRendererStatus::Muted);
                         out.push((rid.clone(), ControlMsg::Mute { fade_ms: 0 }, mute_cause));
-                        out.push((rid, ControlMsg::Play, "state-switch"));
+                        out.push((rid, ControlMsg::Play { fade_ms: 0 }, "state-switch"));
                     }
                     (
                         RendererStatus::Paused(PausedRendererStatus::Muted),
@@ -1976,7 +1988,7 @@ impl Router {
                         inner
                             .renderer_states
                             .insert(rid.clone(), PausedRendererStatus::Paused);
-                        out.push((rid.clone(), ControlMsg::Pause, pause_cause));
+                        out.push((rid.clone(), ControlMsg::Pause { fade_ms: 0 }, pause_cause));
                         out.push((rid, ControlMsg::Unmute { fade_ms: 0 }, "state-switch"));
                     }
                     _ => {}
@@ -1992,8 +2004,8 @@ impl Router {
         }
         for (id, msg, cause) in actions {
             let label = match msg {
-                ControlMsg::Pause => "pause",
-                ControlMsg::Play => "play",
+                ControlMsg::Pause { .. } => "pause",
+                ControlMsg::Play { .. } => "play",
                 _ => "ctl",
             };
             if let Err(e) = self.mgr.send_control(&id, msg).await {
@@ -3415,8 +3427,8 @@ mod tests {
             while got.len() < 4 {
                 let (msg, _fds) = crate::ipc::uds::recv_control(&peer).expect("recv control");
                 match msg {
-                    ControlMsg::Pause => got.push(("pause", 0)),
-                    ControlMsg::Play => got.push(("play", 0)),
+                    ControlMsg::Pause { fade_ms } => got.push(("pause", fade_ms)),
+                    ControlMsg::Play { fade_ms } => got.push(("play", fade_ms)),
                     ControlMsg::Mute { fade_ms } => got.push(("mute", fade_ms)),
                     ControlMsg::Unmute { fade_ms } => got.push(("unmute", fade_ms)),
                     _ => {}
@@ -3449,7 +3461,7 @@ mod tests {
         let got = reader.join().expect("reader joined");
         assert_eq!(
             got,
-            vec![("pause", 0), ("mute", 0), ("play", 0), ("unmute", 750)]
+            vec![("pause", 750), ("mute", 0), ("play", 0), ("unmute", 750)]
         );
     }
 
@@ -3479,8 +3491,8 @@ mod tests {
             while got.len() < 4 {
                 let (msg, _fds) = crate::ipc::uds::recv_control(&peer).expect("recv control");
                 match msg {
-                    ControlMsg::Pause => got.push(("pause", 0)),
-                    ControlMsg::Play => got.push(("play", 0)),
+                    ControlMsg::Pause { fade_ms } => got.push(("pause", fade_ms)),
+                    ControlMsg::Play { fade_ms } => got.push(("play", fade_ms)),
                     ControlMsg::Mute { fade_ms } => got.push(("mute", fade_ms)),
                     ControlMsg::Unmute { fade_ms } => got.push(("unmute", fade_ms)),
                     _ => {}
@@ -3513,7 +3525,7 @@ mod tests {
         let got = reader.join().expect("reader joined");
         assert_eq!(
             got,
-            vec![("mute", 640), ("pause", 0), ("unmute", 0), ("play", 0)]
+            vec![("mute", 640), ("pause", 0), ("unmute", 0), ("play", 640)]
         );
     }
 

@@ -14,9 +14,9 @@ use uuid::Uuid;
 use crate::ipc::proto::{ControlMsg, EventMsg};
 use crate::ipc::uds::{recv_event, send_control, CodecError};
 
-/// Spawn-time `Init` payload version the daemon currently emits. Bump
-/// this when the wire shape of `ControlMsg::Init` changes.
-pub const SPAWN_VERSION: u32 = 5;
+/// Renderer IPC compatibility version the daemon currently emits. Bump
+/// this when the daemon/renderer wire contract changes.
+pub const SPAWN_VERSION: u32 = 6;
 use crate::plugin::renderer_registry::{RendererDef, RendererRegistry};
 use crate::routing::Router;
 use crate::wallpaper::types::WallpaperType;

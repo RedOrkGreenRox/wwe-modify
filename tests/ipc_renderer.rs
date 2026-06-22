@@ -385,8 +385,10 @@ mod lifecycle {
 
         // Push a few control messages. Each one is a fire-and-forget round
         // trip on the unix socket; success means the host's reader thread
-        mgr.send_control(&id, ControlMsg::Play).await.expect("Play");
-        mgr.send_control(&id, ControlMsg::Pause)
+        mgr.send_control(&id, ControlMsg::Play { fade_ms: 0 })
+            .await
+            .expect("Play");
+        mgr.send_control(&id, ControlMsg::Pause { fade_ms: 0 })
             .await
             .expect("Pause");
         mgr.send_control(
@@ -418,7 +420,7 @@ mod lifecycle {
 
         // send_control on a killed renderer must error.
         let err = mgr
-            .send_control(&id, ControlMsg::Play)
+            .send_control(&id, ControlMsg::Play { fade_ms: 0 })
             .await
             .expect_err("send to dead renderer should error");
         assert!(err.to_string().contains("unknown renderer"));

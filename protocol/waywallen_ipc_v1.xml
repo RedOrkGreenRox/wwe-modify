@@ -195,8 +195,17 @@
     <arg name="settings" type="kv_list"/>
   </event_in>
 
-  <event_in name="play" opcode="3"/>
-  <event_in name="pause" opcode="4"/>
+  <!--
+    Play/pause carry the same audio fade duration used by mute/unmute.
+    Renderers may apply it to their audio output independently from
+    visual playback state.
+  -->
+  <event_in name="play" opcode="3">
+    <arg name="fade_ms" type="u32"/>
+  </event_in>
+  <event_in name="pause" opcode="4">
+    <arg name="fade_ms" type="u32"/>
+  </event_in>
 
   <!--
     Opcode 12 and 13 are for mute/unmute functionality added in the

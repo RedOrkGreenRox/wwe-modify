@@ -286,7 +286,7 @@ mod tests {
     fn roundtrip_init() {
         let (a, b) = pair();
         let sent = EventIn::Init {
-            spawn_version: 5,
+            spawn_version: 6,
             settings: vec![("fps".into(), "60".into()), ("volume".into(), "1.0".into())],
             user_properties: String::new(),
         };
@@ -300,8 +300,8 @@ mod tests {
     fn roundtrip_play_pause_shutdown() {
         let (a, b) = pair();
         for msg in [
-            EventIn::Play,
-            EventIn::Pause,
+            EventIn::Play { fade_ms: 750 },
+            EventIn::Pause { fade_ms: 750 },
             EventIn::Mute { fade_ms: 750 },
             EventIn::Unmute { fade_ms: 750 },
             EventIn::Shutdown,
@@ -388,18 +388,18 @@ mod tests {
     fn fd_limit_enforced() {
         let (a, _b) = pair();
         let fds: Vec<RawFd> = (0..(MAX_FDS_PER_MSG + 1) as i32).collect();
-        let err = send_control(&a, &EventIn::Play, &fds).unwrap_err();
+        let err = send_control(&a, &EventIn::Play { fade_ms: 0 }, &fds).unwrap_err();
         assert!(matches!(err, CodecError::TooManyFds(_)));
     }
 
     #[test]
     fn back_to_back_frames() {
         let (a, b) = pair();
-        send_control(&a, &EventIn::Play, &[]).unwrap();
+        send_control(&a, &EventIn::Play { fade_ms: 0 }, &[]).unwrap();
         send_control(&a, &EventIn::SetFps { fps: 60 }, &[]).unwrap();
         let (r1, _) = recv_control(&b).unwrap();
         let (r2, _) = recv_control(&b).unwrap();
-        assert_eq!(r1, EventIn::Play);
+        assert_eq!(r1, EventIn::Play { fade_ms: 0 });
         assert_eq!(r2, EventIn::SetFps { fps: 60 });
     }
 

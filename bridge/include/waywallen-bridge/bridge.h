@@ -418,11 +418,11 @@ void ww_bridge_control_free(ww_bridge_control_t* msg);
  *   ww_bridge_init_free(&init);
  * ----------------------------------------------------------------------- */
 
-/* Spawn-payload version this build of the bridge handles. Bump when
- * the wire shape of `ww_evt_in_init_t` (or `ww_bridge_init_t`) changes;
- * `ww_bridge_recv_init` validates the value sent by the daemon
- * matches and returns -EPROTO otherwise. */
-#define WW_BRIDGE_SUPPORTED_SPAWN_VERSION 5u
+/* Renderer IPC compatibility version this build of the bridge handles.
+ * Bump when the daemon/renderer wire contract changes; `ww_bridge_recv_init`
+ * validates the value sent by the daemon matches and returns -EPROTO
+ * otherwise. */
+#define WW_BRIDGE_SUPPORTED_SPAWN_VERSION 6u
 
 /* Caller-friendly view of the typed Init payload. The kv list is
  * heap-owned (transferred from the underlying `ww_evt_in_init_t`

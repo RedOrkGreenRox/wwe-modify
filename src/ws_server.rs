@@ -1102,17 +1102,19 @@ async fn dispatch_inner(
         }
 
         Req::RendererPlay(r) => {
+            let fade_ms = state.settings.global().effective_audio_fade_ms();
             state
                 .renderer_manager
-                .send_control(&r.renderer_id, ControlMsg::Play)
+                .send_control(&r.renderer_id, ControlMsg::Play { fade_ms })
                 .await?;
             Res::RendererPlay(pb::Empty {})
         }
 
         Req::RendererPause(r) => {
+            let fade_ms = state.settings.global().effective_audio_fade_ms();
             state
                 .renderer_manager
-                .send_control(&r.renderer_id, ControlMsg::Pause)
+                .send_control(&r.renderer_id, ControlMsg::Pause { fade_ms })
                 .await?;
             Res::RendererPause(pb::Empty {})
         }

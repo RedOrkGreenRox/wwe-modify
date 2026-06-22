@@ -126,11 +126,11 @@ typedef struct ww_evt_in_setting_changed_t {
 } ww_evt_in_setting_changed_t;
 
 typedef struct ww_evt_in_play_t {
-    int _empty; /* C forbids empty structs */
+    uint32_t fade_ms;
 } ww_evt_in_play_t;
 
 typedef struct ww_evt_in_pause_t {
-    int _empty; /* C forbids empty structs */
+    uint32_t fade_ms;
 } ww_evt_in_pause_t;
 
 typedef struct ww_evt_in_mute_t {
