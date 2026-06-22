@@ -17,7 +17,14 @@ pub async fn restore_all(app: &Arc<AppState>) {
         let key = d.instance_id.clone().unwrap_or_else(|| d.name.clone());
         let pid = resolve_pid(app, &key);
         if let Some(pid) = pid {
-            if let Err(e) = Engine::activate_resuming(app, &[d.id], pid).await {
+            if let Err(e) = Engine::activate_resuming_with_first_frame_timeout(
+                app,
+                &[d.id],
+                pid,
+                crate::control::APPLY_FIRST_FRAME_TIMEOUT,
+            )
+            .await
+            {
                 log::warn!("restore playlist {pid} on display {} failed: {e:#}", d.id);
             }
         }
@@ -51,7 +58,14 @@ pub async fn watch_hotplug(app: Arc<AppState>) {
                             continue;
                         }
                         if let Some(pid) = resolve_pid(&app, &key) {
-                            if let Err(e) = Engine::activate_resuming(&app, &[s.id], pid).await {
+                            if let Err(e) = Engine::activate_resuming_with_first_frame_timeout(
+                                &app,
+                                &[s.id],
+                                pid,
+                                crate::control::APPLY_FIRST_FRAME_TIMEOUT,
+                            )
+                            .await
+                            {
                                 log::warn!("hotplug activate playlist {pid} failed: {e:#}");
                             }
                         }
@@ -69,7 +83,15 @@ pub async fn watch_hotplug(app: Arc<AppState>) {
                             }
                             let key = d.instance_id.clone().unwrap_or_else(|| d.name.clone());
                             if let Some(pid) = resolve_pid(&app, &key) {
-                                if let Err(e) = Engine::activate_resuming(&app, &[d.id], pid).await {
+                                if let Err(e) =
+                                    Engine::activate_resuming_with_first_frame_timeout(
+                                        &app,
+                                        &[d.id],
+                                        pid,
+                                        crate::control::APPLY_FIRST_FRAME_TIMEOUT,
+                                    )
+                                    .await
+                                {
                                     log::warn!("lag-recover activate playlist {pid} failed: {e:#}");
                                 }
                             }

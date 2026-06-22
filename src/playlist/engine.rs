@@ -61,7 +61,7 @@ impl Engine {
         display_ids: &[DisplayId],
         playlist_id: i64,
     ) -> Result<()> {
-        Self::activate_inner(app, display_ids, playlist_id, false).await
+        Self::activate_inner(app, display_ids, playlist_id, false, None).await
     }
 
     pub async fn activate_resuming(
@@ -69,7 +69,16 @@ impl Engine {
         display_ids: &[DisplayId],
         playlist_id: i64,
     ) -> Result<()> {
-        Self::activate_inner(app, display_ids, playlist_id, true).await
+        Self::activate_inner(app, display_ids, playlist_id, true, None).await
+    }
+
+    pub async fn activate_resuming_with_first_frame_timeout(
+        app: &Arc<AppState>,
+        display_ids: &[DisplayId],
+        playlist_id: i64,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        Self::activate_inner(app, display_ids, playlist_id, true, Some(timeout)).await
     }
 
     async fn activate_inner(
@@ -77,6 +86,7 @@ impl Engine {
         display_ids: &[DisplayId],
         playlist_id: i64,
         resume: bool,
+        first_frame_timeout: Option<std::time::Duration>,
     ) -> Result<()> {
         let pl = plrepo::get(&app.db, playlist_id)
             .await?
@@ -102,8 +112,17 @@ impl Engine {
         };
 
         for did in targets {
-            Self::activate_one(app, did, playlist_id, mode, interval, items.clone(), resume)
-                .await?;
+            Self::activate_one(
+                app,
+                did,
+                playlist_id,
+                mode,
+                interval,
+                items.clone(),
+                resume,
+                first_frame_timeout,
+            )
+            .await?;
             persist_assignment(app, did, Some(playlist_id)).await;
         }
         app.events
@@ -119,6 +138,7 @@ impl Engine {
         interval: u32,
         items: Vec<String>,
         resume: bool,
+        first_frame_timeout: Option<std::time::Duration>,
     ) -> Result<()> {
         {
             app.playlists.inner.lock().await.remove(&display_id);
@@ -156,7 +176,21 @@ impl Engine {
             }
         };
         if let Some(id) = first {
-            let _ = crate::control::apply_wallpaper_to_displays(app, &id, &[display_id]).await;
+            match first_frame_timeout {
+                Some(timeout) => {
+                    crate::control::apply_wallpaper_to_displays_with_first_frame_timeout(
+                        app,
+                        &id,
+                        &[display_id],
+                        timeout,
+                    )
+                    .await?;
+                }
+                None => {
+                    let _ =
+                        crate::control::apply_wallpaper_to_displays(app, &id, &[display_id]).await;
+                }
+            }
         }
 
         let task = tokio::spawn(run_display_rotator(

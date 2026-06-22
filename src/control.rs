@@ -13,6 +13,8 @@ use crate::scheduler::DisplayId;
 use crate::wallpaper::types::WallpaperEntry;
 use crate::AppState;
 
+pub const APPLY_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// Re-export so callers that already wrote `control::QueueState`
 /// don't have to chase the move into the `playlist` module.
 pub use crate::queue::QueueState;
@@ -56,13 +58,27 @@ pub async fn apply_wallpaper_to_displays(
             "apply_wallpaper_to_displays: empty target"
         )));
     }
-    apply_wallpaper_core(app, id, Some(target)).await
+    apply_wallpaper_core(app, id, Some(target), None).await
+}
+
+pub async fn apply_wallpaper_to_displays_with_first_frame_timeout(
+    app: &Arc<AppState>,
+    id: &str,
+    target: &[DisplayId],
+    timeout: Duration,
+) -> Result<ApplyResult> {
+    if target.is_empty() {
+        return Err(Error::Internal(anyhow!(
+            "apply_wallpaper_to_displays: empty target"
+        )));
+    }
+    apply_wallpaper_core(app, id, Some(target), Some(timeout)).await
 }
 
 /// The actual apply work — spawn renderer, relink displays, kill old
 /// renderers, update playlist. Caller is the unique apply task.
 async fn apply_wallpaper_inner(app: &Arc<AppState>, id: &str) -> Result<ApplyResult> {
-    apply_wallpaper_core(app, id, None).await
+    apply_wallpaper_core(app, id, None, None).await
 }
 
 pub struct PortalApplyResult {
@@ -186,6 +202,7 @@ async fn apply_wallpaper_core(
     app: &Arc<AppState>,
     id: &str,
     target: Option<&[DisplayId]>,
+    first_frame_timeout: Option<Duration>,
 ) -> Result<ApplyResult> {
     let entry = match id.parse::<i64>() {
         Ok(iid) => repo::get_entry(&app.db, iid).await?,
@@ -259,6 +276,18 @@ async fn apply_wallpaper_core(
     match target {
         None => app.router.relink_all_displays_to(&renderer_id).await,
         Some(ids) => app.router.relink_displays_to(ids, &renderer_id).await,
+    }
+
+    if let Some(timeout) = first_frame_timeout {
+        if let Err(e) = app
+            .renderer_manager
+            .wait_for_first_frame(&renderer_id, timeout)
+            .await
+        {
+            app.router.unregister_renderer(&renderer_id).await;
+            let _ = app.renderer_manager.kill(&renderer_id).await;
+            return Err(e);
+        }
     }
 
     {

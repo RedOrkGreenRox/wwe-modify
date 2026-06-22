@@ -12,8 +12,6 @@ use crate::control;
 use crate::control_proto as pb;
 use crate::error::{ok_response, Error};
 use crate::events::GlobalEvent;
-
-const APPLY_FIRST_FRAME_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 use crate::ipc::proto::ControlMsg;
 use crate::model::repo;
 use crate::plugin::source_manager::DiscoverDownload;
@@ -2012,7 +2010,7 @@ async fn dispatch_inner(
 
             if let Err(e) = state
                 .renderer_manager
-                .wait_for_first_frame(&renderer_id, APPLY_FIRST_FRAME_TIMEOUT)
+                .wait_for_first_frame(&renderer_id, control::APPLY_FIRST_FRAME_TIMEOUT)
                 .await
             {
                 state.router.unregister_renderer(&renderer_id).await;

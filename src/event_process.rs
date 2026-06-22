@@ -120,10 +120,14 @@ fn spawn_wallpaper_recall(state: Arc<AppState>) {
                                         "wallpaper recall: applying {wp_id} to {} display(s)",
                                         ids.len()
                                     );
-                                    if let Err(e) = crate::control::apply_wallpaper_to_displays(
-                                        &state2, &wp_id, &ids,
-                                    )
-                                    .await
+                                    if let Err(e) =
+                                        crate::control::apply_wallpaper_to_displays_with_first_frame_timeout(
+                                            &state2,
+                                            &wp_id,
+                                            &ids,
+                                            crate::control::APPLY_FIRST_FRAME_TIMEOUT,
+                                        )
+                                        .await
                                     {
                                         log::warn!(
                                             "wallpaper recall failed for {wp_id}: {e:#}"
