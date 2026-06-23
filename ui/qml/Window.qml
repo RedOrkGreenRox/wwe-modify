@@ -36,6 +36,23 @@ MD.ApplicationWindow {
         id: healthQuery
     }
 
+    W.HotkeyRuntime {
+        id: hotkeys
+    }
+
+    function openHotkeysPopup() {
+        MD.Util.showPopup('waywallen.ui/PagePopup', {
+            source: 'waywallen.ui/HotkeysSettingsPage',
+            fillWidth: true,
+            fillHeight: true
+        }, win);
+    }
+
+    function reloadCurrentPage() {
+        m_content.switchTo(pageComponents[currentPage], {}, pageCacheable[currentPage]);
+        m_content.forceActiveFocus();
+    }
+
     Connections {
         target: W.Notify
         function onDaemonReady() {
@@ -60,6 +77,13 @@ MD.ApplicationWindow {
 
     onCurrentPageChanged: {
         m_content.switchTo(pageComponents[currentPage], {}, pageCacheable[currentPage]);
+        // Qt.WidgetWithChildrenShortcut and in-grid Keys.onPressed handlers
+        // both require active focus to lie inside the page subtree. The
+        // PageContainer does not forward focus on switch by itself, so do
+        // it here. Without this the grid arrow/WASD keys go silently
+        // ignored until the user clicks somewhere inside the page — and
+        // even clicking the background is not enough.
+        m_content.forceActiveFocus();
     }
 
     Component.onCompleted: {
@@ -103,6 +127,34 @@ MD.ApplicationWindow {
     }
 
     W.DaemonNotRunDialog {}
+
+    // Top-level navigation shortcuts. Application scope so they keep
+    // working regardless of which sub-widget has the focus.
+    Shortcut {
+        sequences: hotkeys.sequences("open_wallpapers")
+        context: Qt.ApplicationShortcut
+        onActivated: win.currentPage = 0
+    }
+    Shortcut {
+        sequences: hotkeys.sequences("open_displays")
+        context: Qt.ApplicationShortcut
+        onActivated: win.currentPage = 1
+    }
+    Shortcut {
+        sequences: hotkeys.sequences("open_status")
+        context: Qt.ApplicationShortcut
+        onActivated: win.currentPage = 2
+    }
+    Shortcut {
+        sequences: hotkeys.sequences("open_hotkeys")
+        context: Qt.ApplicationShortcut
+        onActivated: win.openHotkeysPopup()
+    }
+    Shortcut {
+        sequences: hotkeys.sequences("reload_ui")
+        context: Qt.ApplicationShortcut
+        onActivated: win.reloadCurrentPage()
+    }
 
     ColumnLayout {
         anchors.fill: parent

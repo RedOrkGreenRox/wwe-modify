@@ -413,6 +413,45 @@ MD.Page {
                     }
                 }
             }
+
+            SettingHeader { text: qsTr("Keyboard") }
+
+            SettingItem {
+                first: true
+                last: true
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        MD.Text {
+                            text: qsTr("Keyboard shortcuts")
+                            typescale: MD.Token.typescale.body_medium
+                        }
+                        MD.Text {
+                            text: qsTr("Configure navigation and wallpaper shortcuts.")
+                            typescale: MD.Token.typescale.label_small
+                            color: MD.Token.color.on_surface_variant
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+                    }
+
+                    MD.Button {
+                        text: qsTr("Open")
+                        icon.name: MD.Token.icon.keyboard
+                        mdState.type: MD.Enum.BtFilledTonal
+                        onClicked: MD.Util.showPopup('waywallen.ui/PagePopup', {
+                            source: 'waywallen.ui/HotkeysSettingsPage',
+                            fillWidth: true,
+                            fillHeight: true
+                        }, root)
+                    }
+                }
+            }
         }
     }
 }

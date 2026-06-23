@@ -178,6 +178,8 @@ set(QML_FILES
   qml/page/AddLibraryPage.qml
   qml/page/AboutPage.qml
   qml/page/PluginSettingsPage.qml
+  qml/page/HotkeysSettingsPage.qml
+  qml/component/HotkeyRuntime.qml
 )
 set(RESOURCES
   assets/waywallen-ui.svg

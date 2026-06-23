@@ -31,6 +31,37 @@ MD.Page {
         id: scanQuery
     }
 
+    W.HotkeyRuntime {
+        id: hotkeys
+    }
+
+    // Page-level shortcuts. Window scope (not Application) so they only
+    // fire while the Wallpapers page is the active page.
+    Shortcut {
+        sequences: hotkeys.sequences("refresh_scan")
+        context: Qt.WindowShortcut
+        enabled: root.visible
+        onActivated: if (!W.Notify.scanInProgress) scanQuery.reload()
+    }
+    Shortcut {
+        sequences: hotkeys.sequences("apply_wallpaper")
+        context: Qt.WindowShortcut
+        enabled: root.visible && m_grid_view.currentIndex >= 0
+        onActivated: {
+            const item = wallpaperQuery.data ? wallpaperQuery.data.item(m_grid_view.currentIndex) : null;
+            if (item) root.selectedWallpaper = item;
+        }
+    }
+    Shortcut {
+        sequences: hotkeys.sequences("cancel")
+        context: Qt.WindowShortcut
+        enabled: root.visible
+        onActivated: {
+            root.selectedWallpaper = null;
+            if (m_grid_view) m_grid_view.forceActiveFocus();
+        }
+    }
+
     W.PlaylistListQuery {
         id: playlistListQuery
     }
@@ -194,6 +225,15 @@ MD.Page {
         applySort();
         if (W.Notify.daemonPhase === W.Notify.DaemonPhase.Ready)
             reloadAll();
+        // Grab focus on the grid so the grid-local Keys.onPressed handler
+        // (arrow keys, WASD, Home/End, Return/Enter, Space, etc.) fires
+        // immediately on app start. The page-level Shortcuts already use
+        // Qt.ApplicationShortcut and don't need this, but the in-grid
+        // bindings do — and the focus-grab is what makes "press F5 right
+        // after launch" match user expectation rather than waiting for a
+        // click on the page background.
+        if (m_grid_view)
+            m_grid_view.forceActiveFocus();
     }
 
     MD.Action {
@@ -971,6 +1011,68 @@ MD.Page {
                         cellHeight: _fillCell ? _displayItemHeight : wallpaperTweakState.itemHeight
 
                         model: wallpaperQuery.data
+
+                        // Custom keyboard navigation. We resolve every key
+                        // through HotkeyRuntime so user rebindings apply,
+                        // and so WASD / HJKL alternatives work alongside
+                        // the arrow keys (also under Cyrillic layouts).
+                        Keys.onPressed: event => {
+                            const cols = Math.max(1, m_grid_view._cols);
+                            const count = m_grid_view.count;
+                            if (count <= 0)
+                                return;
+
+                            const cur = m_grid_view.currentIndex < 0 ? 0 : m_grid_view.currentIndex;
+                            let next = cur;
+
+                            // 1-cell movement
+                            if (hotkeys.eventMatches("navigate_left", event)) {
+                                next = (cur % cols === 0) ? cur : cur - 1;
+                            } else if (hotkeys.eventMatches("navigate_right", event)) {
+                                next = ((cur + 1) % cols === 0 || cur === count - 1) ? cur : cur + 1;
+                            } else if (hotkeys.eventMatches("navigate_up", event)) {
+                                next = (cur < cols) ? cur : cur - cols;
+                            } else if (hotkeys.eventMatches("navigate_down", event)) {
+                                next = (cur + cols >= count) ? cur : cur + cols;
+                            }
+                            // Jump to row edges / column edges
+                            else if (hotkeys.eventMatches("jump_left", event)) {
+                                next = cur - (cur % cols);
+                            } else if (hotkeys.eventMatches("jump_right", event)) {
+                                const rowEnd = cur - (cur % cols) + cols - 1;
+                                next = Math.min(count - 1, rowEnd);
+                            } else if (hotkeys.eventMatches("jump_up", event)) {
+                                next = cur % cols;
+                            } else if (hotkeys.eventMatches("jump_down", event)) {
+                                const colIdx = cur % cols;
+                                const lastRow = Math.floor((count - 1) / cols);
+                                next = Math.min(count - 1, lastRow * cols + colIdx);
+                            }
+                            // First / last
+                            else if (hotkeys.eventMatches("home", event)) {
+                                next = cur - (cur % cols);
+                            } else if (hotkeys.eventMatches("end", event)) {
+                                next = Math.min(count - 1, cur - (cur % cols) + cols - 1);
+                            } else if (hotkeys.eventMatches("home_all", event)) {
+                                next = 0;
+                            } else if (hotkeys.eventMatches("end_all", event)) {
+                                next = count - 1;
+                            }
+                            // Page step (approximate, by visible rows)
+                            else if (hotkeys.eventMatches("page_up", event)) {
+                                const rowsPerPage = Math.max(1, Math.floor(m_grid_view.height / Math.max(1, m_grid_view.cellHeight)));
+                                next = Math.max(0, cur - rowsPerPage * cols);
+                            } else if (hotkeys.eventMatches("page_down", event)) {
+                                const rowsPerPage = Math.max(1, Math.floor(m_grid_view.height / Math.max(1, m_grid_view.cellHeight)));
+                                next = Math.min(count - 1, cur + rowsPerPage * cols);
+                            } else {
+                                return; // not our key
+                            }
+
+                            m_grid_view.currentIndex = next;
+                            m_grid_view.positionViewAtIndex(next, GridView.Contain);
+                            event.accepted = true;
+                        }
 
                         delegate: WallpaperCard {
                             selected: model.selected ?? false
