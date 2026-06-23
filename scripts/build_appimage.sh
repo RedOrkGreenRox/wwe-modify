@@ -266,7 +266,7 @@ export LD_LIBRARY_PATH="$HERE/usr/lib:${LD_LIBRARY_PATH:-}"
 export QT_PLUGIN_PATH="$HERE/usr/plugins:${QT_PLUGIN_PATH:-}"
 export QML2_IMPORT_PATH="$HERE/usr/qml:${QML2_IMPORT_PATH:-}"
 export QML_IMPORT_PATH="$QML2_IMPORT_PATH"
-exec "$HERE/usr/bin/waywallen" "$@"
+exec "$HERE/usr/bin/waywallen" --replace "$@"
 APPEOF
 chmod +x "$APPRUN_TMP"
 

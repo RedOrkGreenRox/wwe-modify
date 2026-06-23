@@ -274,9 +274,12 @@ void DaemonDBusClient::on_ready() {
 }
 
 void DaemonDBusClient::on_shutting_down() {
-    qDebug("DaemonDBusClient: ShuttingDown signal received");
+    qDebug("DaemonDBusClient: ShuttingDown signal received; closing UI");
     set_status(Disconnected);
-    // Keep m_ws_port until NameOwnerChanged confirms the unregister.
+    // This UI instance belongs to the daemon that emitted ShuttingDown.
+    // In replacement flows the new daemon will spawn a fresh UI, so the
+    // old window should not remain open and reconnect to the new daemon.
+    QCoreApplication::quit();
 }
 
 void DaemonDBusClient::on_properties_changed(const QString& iface, const QVariantMap& changed,
