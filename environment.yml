@@ -4,9 +4,13 @@ channels:
   - conda-forge
   - nodefaults
 dependencies:
-  # Qt6 >= 6.10 (UI uses Quick / DBus / Protobuf)
+  # Qt6 >= 6.10 (UI uses Quick / DBus / Protobuf).
+  # QtWebEngine is needed by the Full AppImage's embedded Workshop browser.
+  # Lite builds still pass WAYWALLEN_ENABLE_WEBENGINE=OFF, so WebEngine is not
+  # linked into or bundled in the Lite AppImage.
   - qt6-main>=6.10
   - qt6-wayland>=6.10
+  - qt6-webengine>=6.10
   - freetype
   - expat
 

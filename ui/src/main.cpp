@@ -1,6 +1,10 @@
 #include <QGuiApplication>
+#include <QCoreApplication>
 #include <QCommandLineParser>
 #include <QtQml/QQmlExtensionPlugin>
+#ifdef WAYWALLEN_HAS_WEBENGINE
+#    include <QtWebEngineQuick/QtWebEngineQuick>
+#endif
 Q_IMPORT_QML_PLUGIN(waywallen_uiPlugin)
 
 import ncrequest;
@@ -8,6 +12,10 @@ import waywallen;
 
 int main(int argc, char** argv) {
     ncrequest::global_init();
+#ifdef WAYWALLEN_HAS_WEBENGINE
+    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+    QtWebEngineQuick::initialize();
+#endif
     QGuiApplication gui_app(argc, argv);
     gui_app.setDesktopFileName(APP_ID);
     gui_app.setOrganizationName("waywallen");

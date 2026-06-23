@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Build waywallen end-to-end and produce a single-file AppImage at:
-#     <repo>/waywallen-x86_64.AppImage
+#     <repo>/waywallen-<version>-lite-x86_64.AppImage
+# or, with WAYWALLEN_APPIMAGE_WEBENGINE=ON:
+#     <repo>/waywallen-<version>-full-x86_64.AppImage
 #
 # Audience: users unfamiliar with cmake / cargo / linuxdeploy.
 # Prerequisites:
@@ -12,12 +14,19 @@
 #
 # Optional environment variables:
 #   WAYWALLEN_CONDA_ENV     conda env name, default "waywallen"
+#   WAYWALLEN_APPIMAGE_WEBENGINE  ON for embedded QtWebEngine Workshop browser, OFF for external-only, default OFF
 #   OWE_PLUGIN_ZIP          prebuilt OWE plugin zip path or URL
 #   WAYWALLEN_DISPLAY_REPO  layer-shell source repo URL
 #   WAYWALLEN_DISPLAY_REF   layer-shell source git ref
 #   WAYWALLEN_DISPLAY_SRC   layer-shell source cache dir
 
 set -euo pipefail
+
+# The strip binary bundled with linuxdeploy can be older than the host/conda
+# toolchain and may fail on ELF RELR sections (.relr.dyn), common on newer
+# distros/toolchains. Skipping strip makes AppImage packaging reliable; the
+# resulting file is larger, but Lite/Full behavior stays unchanged.
+export NO_STRIP="${NO_STRIP:-true}"
 
 # Script lives in <repo>/scripts/, so PROJECT_DIR is one level up.
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -35,6 +44,21 @@ PLUGINS_DIR="$INSTALL_DIR/share/waywallen/plugins"
 OWE_PLUGIN_DIR="$PLUGINS_DIR/$OWE_PLUGIN_ID"
 TOOLS_DIR="$PROJECT_DIR/build/_tools"
 WAYWALLEN_DISPLAY_SRC="${WAYWALLEN_DISPLAY_SRC:-$TMP_DIR/waywallen-display-src}"
+WAYWALLEN_APPIMAGE_WEBENGINE="${WAYWALLEN_APPIMAGE_WEBENGINE:-OFF}"
+case "${WAYWALLEN_APPIMAGE_WEBENGINE,,}" in
+    1|on|true|yes|full|web|webengine)
+        WAYWALLEN_APPIMAGE_WEBENGINE=ON
+        WAYWALLEN_APPIMAGE_FLAVOR=full
+        ;;
+    0|off|false|no|lite|minimal)
+        WAYWALLEN_APPIMAGE_WEBENGINE=OFF
+        WAYWALLEN_APPIMAGE_FLAVOR=lite
+        ;;
+    *)
+        printf '\033[1;31mERROR:\033[0m invalid WAYWALLEN_APPIMAGE_WEBENGINE=%s (use ON or OFF)\n' "$WAYWALLEN_APPIMAGE_WEBENGINE" >&2
+        exit 1
+        ;;
+esac
 
 step() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 fail() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -46,6 +70,21 @@ append_unique_path() {
         [[ "$existing" == "$path" ]] && return
     done
     paths_ref+=("$path")
+}
+
+find_first_file() {
+    local file="$1"
+    shift
+    local dir candidate
+    for dir in "$@"; do
+        [[ -n "$dir" && -e "$dir" ]] || continue
+        candidate="$(find "$dir" -type f -name "$file" -print -quit 2>/dev/null || true)"
+        if [[ -n "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # ---- Compute the version string baked into the AppImage filename ----
@@ -75,8 +114,8 @@ fi
 # Clean APPDIR
 rm -rf "$APPDIR"
 
-APPIMAGE_OUT="$PROJECT_DIR/waywallen-$BUILD_TAG-x86_64.AppImage"
-step "Building AppImage tagged as $BUILD_TAG"
+APPIMAGE_OUT="$PROJECT_DIR/waywallen-$BUILD_TAG-$WAYWALLEN_APPIMAGE_FLAVOR-x86_64.AppImage"
+step "Building $WAYWALLEN_APPIMAGE_FLAVOR AppImage tagged as $BUILD_TAG (WebEngine=$WAYWALLEN_APPIMAGE_WEBENGINE)"
 
 # ---- Check required tools ----
 command -v conda >/dev/null \
@@ -162,7 +201,9 @@ cmake -S "$PROJECT_DIR" --preset clang-release \
     -DWAYWALLEN_BUILD_UI=ON \
     -DWAYWALLEN_BUILD_PLUGINS=ON \
     -DWAYWALLEN_BUILD_IMAGE_PLUGIN=ON \
-    -DWAYWALLEN_BUILD_VIDEO_PLUGIN=ON
+    -DWAYWALLEN_BUILD_VIDEO_PLUGIN=ON \
+    -DWAYWALLEN_ENABLE_WEBENGINE="$WAYWALLEN_APPIMAGE_WEBENGINE" \
+    -DWAYWALLEN_REQUIRE_WEBENGINE="$WAYWALLEN_APPIMAGE_WEBENGINE"
 
 step "Compiling)"
 cmake --build build/clang-release --parallel
@@ -227,6 +268,71 @@ if compgen -G "$OWE_PLUGIN_DIR/bin/weweb/*.so" >/dev/null; then
     strip "$OWE_PLUGIN_DIR/bin/weweb"/*.so || true
 fi
 
+if [[ "$WAYWALLEN_APPIMAGE_WEBENGINE" == "ON" ]]; then
+    # ---- Bundle QtWebEngine for the embedded Steam Workshop page ----
+    step "Bundling QtWebEngine runtime"
+    QT_INSTALL_LIBEXECS="$("$CONDA_PREFIX/bin/qmake6" -query QT_INSTALL_LIBEXECS 2>/dev/null || true)"
+    QT_INSTALL_DATA="$("$CONDA_PREFIX/bin/qmake6" -query QT_INSTALL_DATA 2>/dev/null || true)"
+    QT_INSTALL_TRANSLATIONS="$("$CONDA_PREFIX/bin/qmake6" -query QT_INSTALL_TRANSLATIONS 2>/dev/null || true)"
+    QT_INSTALL_QML="$("$CONDA_PREFIX/bin/qmake6" -query QT_INSTALL_QML 2>/dev/null || true)"
+
+    WEBENGINE_PROCESS="$(find_first_file QtWebEngineProcess \
+        "$QT_INSTALL_LIBEXECS" \
+        "$CONDA_PREFIX/libexec" \
+        "$CONDA_PREFIX/lib/qt6/libexec" \
+        "$CONDA_PREFIX" || true)"
+    [[ -n "$WEBENGINE_PROCESS" ]] || fail "QtWebEngineProcess not found. Install Qt6 WebEngine in the conda env or build the lite AppImage."
+    install -Dm755 "$WEBENGINE_PROCESS" "$INSTALL_DIR/libexec/QtWebEngineProcess"
+    cat > "$INSTALL_DIR/libexec/qt.conf" <<'QTC_EOF'
+[Paths]
+Prefix=..
+Libraries=lib
+Plugins=plugins
+Qml2Imports=qml
+Data=.
+Translations=translations
+QTC_EOF
+
+    mkdir -p "$INSTALL_DIR/resources" "$INSTALL_DIR/translations/qtwebengine_locales"
+    for resource_file in \
+        qtwebengine_resources.pak \
+        qtwebengine_devtools_resources.pak \
+        qtwebengine_resources_100p.pak \
+        qtwebengine_resources_200p.pak \
+        icudtl.dat
+    do
+        resource_path="$(find_first_file "$resource_file" \
+            "$QT_INSTALL_DATA/resources" \
+            "$CONDA_PREFIX/resources" \
+            "$CONDA_PREFIX/share/qt6/resources" \
+            "$CONDA_PREFIX" || true)"
+        [[ -n "$resource_path" ]] || fail "QtWebEngine resource not found: $resource_file"
+        cp -v "$resource_path" "$INSTALL_DIR/resources/"
+    done
+
+    WEBENGINE_LOCALES_DIR=""
+    for candidate in \
+        "$QT_INSTALL_TRANSLATIONS/qtwebengine_locales" \
+        "$CONDA_PREFIX/translations/qtwebengine_locales" \
+        "$CONDA_PREFIX/share/qt6/translations/qtwebengine_locales" \
+        "$CONDA_PREFIX/lib/qt6/translations/qtwebengine_locales"
+    do
+        if [[ -d "$candidate" ]]; then
+            WEBENGINE_LOCALES_DIR="$candidate"
+            break
+        fi
+    done
+    [[ -n "$WEBENGINE_LOCALES_DIR" ]] || fail "qtwebengine_locales directory not found"
+    cp -rv "$WEBENGINE_LOCALES_DIR"/*.pak "$INSTALL_DIR/translations/qtwebengine_locales/"
+
+    if [[ -n "$QT_INSTALL_QML" && -d "$QT_INSTALL_QML/QtWebEngine" ]]; then
+        mkdir -p "$INSTALL_DIR/qml"
+        cp -rv "$QT_INSTALL_QML/QtWebEngine" "$INSTALL_DIR/qml/"
+    fi
+else
+    step "Skipping QtWebEngine runtime bundle (lite AppImage)"
+fi
+
 # # ---- Fetch linuxdeploy / appimagetool (cached on first run under build/_tools) ----
 mkdir -p "$TOOLS_DIR"
 LINUXDEPLOY="$TOOLS_DIR/linuxdeploy-x86_64.AppImage"
@@ -266,6 +372,25 @@ export LD_LIBRARY_PATH="$HERE/usr/lib:${LD_LIBRARY_PATH:-}"
 export QT_PLUGIN_PATH="$HERE/usr/plugins:${QT_PLUGIN_PATH:-}"
 export QML2_IMPORT_PATH="$HERE/usr/qml:${QML2_IMPORT_PATH:-}"
 export QML_IMPORT_PATH="$QML2_IMPORT_PATH"
+
+# Persistent Steam Workshop login/cache for the optional embedded QtWebEngine browser.
+# Lite AppImages do not bundle QtWebEngineProcess, so keep the environment clean
+# unless the Full runtime is actually present.
+if [[ -x "$HERE/usr/libexec/QtWebEngineProcess" ]]; then
+    WAYWALLEN_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/waywallen"
+    WAYWALLEN_STEAM_WEBENGINE_HOME="$WAYWALLEN_DATA_HOME/steam-workshop-webengine"
+    mkdir -p \
+        "$WAYWALLEN_STEAM_WEBENGINE_HOME/profile" \
+        "$WAYWALLEN_STEAM_WEBENGINE_HOME/cache" \
+        "$WAYWALLEN_STEAM_WEBENGINE_HOME/chromium-user-data" \
+        "$WAYWALLEN_STEAM_WEBENGINE_HOME/chromium-cache"
+    export WAYWALLEN_STEAM_WEBENGINE_HOME
+    export QTWEBENGINEPROCESS_PATH="$HERE/usr/libexec/QtWebEngineProcess"
+    export QTWEBENGINE_RESOURCES_PATH="$HERE/usr/resources"
+    export QTWEBENGINE_LOCALES_PATH="$HERE/usr/translations/qtwebengine_locales"
+    export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:-} --password-store=basic --user-data-dir=$WAYWALLEN_STEAM_WEBENGINE_HOME/chromium-user-data --disk-cache-dir=$WAYWALLEN_STEAM_WEBENGINE_HOME/chromium-cache"
+fi
+
 exec "$HERE/usr/bin/waywallen" "$@"
 APPEOF
 chmod +x "$APPRUN_TMP"
@@ -288,6 +413,9 @@ LINUXDEPLOY_EXECUTABLE_ARGS=(
     --executable "$INSTALL_DIR/bin/waywallen-ui"
     --executable "$INSTALL_DIR/bin/waywallen-video-renderer"
 )
+if [[ "$WAYWALLEN_APPIMAGE_WEBENGINE" == "ON" ]]; then
+    LINUXDEPLOY_EXECUTABLE_ARGS+=(--executable "$INSTALL_DIR/libexec/QtWebEngineProcess")
+fi
 for renderer_path in "${OWE_RENDERER_BINS[@]}"; do
     LINUXDEPLOY_EXECUTABLE_ARGS+=(--executable "$renderer_path")
 done

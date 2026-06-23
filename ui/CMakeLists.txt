@@ -14,6 +14,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(BUILD_SHARED_LIBS OFF)
 
 find_package(Qt6 REQUIRED COMPONENTS Quick DBus Protobuf ProtobufQuick ProtobufWellKnownTypes QuickPrivate)
+
+option(WAYWALLEN_ENABLE_WEBENGINE "Enable the embedded Workshop browser when QtWebEngineQuick is available" ON)
+option(WAYWALLEN_REQUIRE_WEBENGINE "Require QtWebEngineQuick for the embedded Workshop browser" OFF)
+if(WAYWALLEN_ENABLE_WEBENGINE)
+  find_package(Qt6 COMPONENTS WebEngineQuick QUIET)
+endif()
+if(WAYWALLEN_REQUIRE_WEBENGINE AND NOT TARGET Qt6::WebEngineQuick)
+  message(FATAL_ERROR "WAYWALLEN_REQUIRE_WEBENGINE=ON, but Qt6::WebEngineQuick was not found")
+endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SplitMocFiles.cmake)
 
 if(QT_KNOWN_POLICY_QTP0004)
@@ -178,7 +187,13 @@ set(QML_FILES
   qml/page/AddLibraryPage.qml
   qml/page/AboutPage.qml
   qml/page/PluginSettingsPage.qml
+  qml/page/WorkshopPage.qml
 )
+
+if(TARGET Qt6::WebEngineQuick)
+  list(APPEND QML_FILES qml/component/EmbeddedWorkshop.qml)
+endif()
+
 set(RESOURCES
   assets/waywallen-ui.svg
 )
@@ -267,6 +282,11 @@ target_link_libraries(waywallen-qml
     qextra
     wavsen::decode
 )
+
+if(TARGET Qt6::WebEngineQuick)
+  target_link_libraries(waywallen-qml PUBLIC Qt6::WebEngineQuick)
+  target_compile_definitions(waywallen-qml PUBLIC WAYWALLEN_HAS_WEBENGINE=1)
+endif()
 
 qt_add_executable(${PROJECT_NAME} MANUAL_FINALIZATION src/main.cpp)
 set_target_properties(${PROJECT_NAME} PROPERTIES 
