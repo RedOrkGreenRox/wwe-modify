@@ -1,6 +1,7 @@
 #include <QGuiApplication>
 #include <QCommandLineParser>
 #include <QtQml/QQmlExtensionPlugin>
+#include <QIcon>
 Q_IMPORT_QML_PLUGIN(waywallen_uiPlugin)
 
 import ncrequest;
@@ -14,6 +15,14 @@ int main(int argc, char** argv) {
     gui_app.setOrganizationDomain("waywallen.org");
     gui_app.setApplicationName(APP_NAME);
     gui_app.setApplicationVersion(APP_VERSION);
+
+    // Set the window/app icon for Wayland / X11.
+    // The QML module resource prefix moved between Qt versions, so try both.
+    QIcon app_icon(QStringLiteral(":/qt/qml/waywallen/ui/assets/waywallen-ui.svg"));
+    if (app_icon.isNull()) {
+        app_icon = QIcon(QStringLiteral(":/waywallen/ui/assets/waywallen-ui.svg"));
+    }
+    gui_app.setWindowIcon(app_icon);
 
     QCommandLineParser parser;
     parser.addHelpOption();
