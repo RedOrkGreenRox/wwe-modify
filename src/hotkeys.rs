@@ -21,8 +21,6 @@ use std::collections::BTreeMap;
 )]
 pub enum HotkeyAction {
     // --- Global (any page) ---
-    /// Quit the application. Default: Ctrl+Q.
-    Quit,
     /// Open Wallpapers tab. Default: Ctrl+1.
     OpenWallpapers,
     /// Open Workshop tab. Default: Ctrl+2.
@@ -39,8 +37,6 @@ pub enum HotkeyAction {
     OpenHotkeys,
     /// Reload UI (recreates QML). Default: Ctrl+Shift+R.
     ReloadUi,
-    /// Toggle hotkey cheatsheet overlay. Default: Ctrl+Shift+Slash.
-    Cheatsheet,
 
     // --- WallpaperPage: grid navigation + selection ---
     /// Move grid selection left. Default: Left.
@@ -77,7 +73,7 @@ pub enum HotkeyAction {
     RefreshScan,
     /// Focus the search field. Default: Ctrl+F.
     FocusSearch,
-    /// Select all wallpapers in current view. Default: Ctrl+A.
+    /// Select all wallpapers in current view. Default: Ctrl+Alt+A.
     SelectAll,
     /// Clear selection OR close detail panel. Default: Delete, Backspace, Escape.
     Cancel,
@@ -91,40 +87,16 @@ pub enum HotkeyAction {
     // --- WorkshopPage ---
     /// Reload Workshop (reloads WebEngine). Default: F5, Ctrl+R.
     WorkshopReload,
-    /// Open current URL in Steam. Default: none.
-    WorkshopOpenInSteam,
-    /// Open current URL in browser. Default: Ctrl+O.
-    WorkshopOpenInBrowser,
     /// Clear WebEngine cookies / cache. Default: Ctrl+Shift+Delete.
     WorkshopClearSession,
-    /// Retry loading Workshop after failure. Default: Ctrl+Shift+R.
-    WorkshopRetry,
-
-    // --- DisplaysPage ---
-    /// Refresh displays. Default: F5.
-    DisplaysRefresh,
-    /// Rename the focused display. Default: F2.
-    DisplaysRename,
-    /// Layout settings for the focused display. Default: F4.
-    DisplaysLayout,
 
     // --- StatusPage ---
     /// Refresh status. Default: F5.
     StatusRefresh,
 
-    // --- PluginsPage ---
-    /// Refresh installed plugin list. Default: F5.
-    PluginsRefresh,
-    /// Install a plugin from a zip file. Default: Ctrl+I.
-    PluginsInstall,
-    /// Enable / disable the focused plugin. Default: Space.
-    PluginsToggle,
-
     // --- SettingsPage ---
     /// Save pending settings. Default: Ctrl+S.
     SettingsSave,
-    /// Reset current tab to defaults. Default: none.
-    SettingsResetTab,
 }
 
 impl HotkeyAction {
@@ -133,7 +105,6 @@ impl HotkeyAction {
     pub fn as_str(&self) -> &'static str {
         match self {
             // Global
-            Self::Quit => "quit",
             Self::OpenWallpapers => "open_wallpapers",
             Self::OpenWorkshop => "open_workshop",
             Self::OpenDisplays => "open_displays",
@@ -142,7 +113,6 @@ impl HotkeyAction {
             Self::OpenSettings => "open_settings",
             Self::OpenHotkeys => "open_hotkeys",
             Self::ReloadUi => "reload_ui",
-            Self::Cheatsheet => "cheatsheet",
             // Grid nav
             Self::NavigateLeft => "navigate_left",
             Self::NavigateRight => "navigate_right",
@@ -168,23 +138,11 @@ impl HotkeyAction {
             Self::ToggleFilters => "toggle_filters",
             // Workshop
             Self::WorkshopReload => "workshop_reload",
-            Self::WorkshopOpenInSteam => "workshop_open_in_steam",
-            Self::WorkshopOpenInBrowser => "workshop_open_in_browser",
             Self::WorkshopClearSession => "workshop_clear_session",
-            Self::WorkshopRetry => "workshop_retry",
-            // Displays
-            Self::DisplaysRefresh => "displays_refresh",
-            Self::DisplaysRename => "displays_rename",
-            Self::DisplaysLayout => "displays_layout",
             // Status
             Self::StatusRefresh => "status_refresh",
-            // Plugins
-            Self::PluginsRefresh => "plugins_refresh",
-            Self::PluginsInstall => "plugins_install",
-            Self::PluginsToggle => "plugins_toggle",
             // Settings
             Self::SettingsSave => "settings_save",
-            Self::SettingsResetTab => "settings_reset_tab",
         }
     }
 
@@ -192,7 +150,6 @@ impl HotkeyAction {
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
             // Global
-            "quit" => Self::Quit,
             "open_wallpapers" => Self::OpenWallpapers,
             "open_workshop" => Self::OpenWorkshop,
             "open_displays" => Self::OpenDisplays,
@@ -201,7 +158,6 @@ impl HotkeyAction {
             "open_settings" => Self::OpenSettings,
             "open_hotkeys" => Self::OpenHotkeys,
             "reload_ui" => Self::ReloadUi,
-            "cheatsheet" => Self::Cheatsheet,
             // Grid nav
             "navigate_left" => Self::NavigateLeft,
             "navigate_right" => Self::NavigateRight,
@@ -227,23 +183,10 @@ impl HotkeyAction {
             "toggle_filters" => Self::ToggleFilters,
             // Workshop
             "workshop_reload" => Self::WorkshopReload,
-            "workshop_open_in_steam" => Self::WorkshopOpenInSteam,
-            "workshop_open_in_browser" => Self::WorkshopOpenInBrowser,
             "workshop_clear_session" => Self::WorkshopClearSession,
-            "workshop_retry" => Self::WorkshopRetry,
-            // Displays
-            "displays_refresh" => Self::DisplaysRefresh,
-            "displays_rename" => Self::DisplaysRename,
-            "displaysRename" => Self::DisplaysRename,
-            "displays_layout" => Self::DisplaysLayout,
             "status_refresh" => Self::StatusRefresh,
-            // Plugins
-            "plugins_refresh" => Self::PluginsRefresh,
-            "plugins_install" => Self::PluginsInstall,
-            "plugins_toggle" => Self::PluginsToggle,
             // Settings
             "settings_save" => Self::SettingsSave,
-            "settings_reset_tab" => Self::SettingsResetTab,
             _ => return None,
         })
     }
@@ -251,16 +194,14 @@ impl HotkeyAction {
     /// Section label for the UI (translated at render time).
     pub fn section(&self) -> &'static str {
         match self {
-            Self::Quit
-            | Self::OpenWallpapers
+            Self::OpenWallpapers
             | Self::OpenWorkshop
             | Self::OpenDisplays
             | Self::OpenStatus
             | Self::OpenPlugins
             | Self::OpenSettings
             | Self::OpenHotkeys
-            | Self::ReloadUi
-            | Self::Cheatsheet => "Global",
+            | Self::ReloadUi => "Global",
             Self::NavigateLeft
             | Self::NavigateRight
             | Self::NavigateUp
@@ -282,22 +223,15 @@ impl HotkeyAction {
             | Self::ApplyWallpaper
             | Self::ToggleSelection
             | Self::ToggleFilters => "Wallpaper actions",
-            Self::WorkshopReload
-            | Self::WorkshopOpenInSteam
-            | Self::WorkshopOpenInBrowser
-            | Self::WorkshopClearSession
-            | Self::WorkshopRetry => "Workshop",
-            Self::DisplaysRefresh | Self::DisplaysRename | Self::DisplaysLayout => "Displays",
+            Self::WorkshopReload | Self::WorkshopClearSession => "Workshop",
             Self::StatusRefresh => "Status",
-            Self::PluginsRefresh | Self::PluginsInstall | Self::PluginsToggle => "Plugins",
-            Self::SettingsSave | Self::SettingsResetTab => "Settings",
+            Self::SettingsSave => "Settings",
         }
     }
 
     /// Human-readable label (translated at render time).
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Quit => "Quit application",
             Self::OpenWallpapers => "Open Wallpapers tab",
             Self::OpenWorkshop => "Open Workshop tab",
             Self::OpenDisplays => "Open Displays tab",
@@ -306,7 +240,6 @@ impl HotkeyAction {
             Self::OpenSettings => "Open Settings tab",
             Self::OpenHotkeys => "Open Hotkeys tab",
             Self::ReloadUi => "Reload UI",
-            Self::Cheatsheet => "Toggle cheatsheet",
             Self::NavigateLeft => "Navigate left",
             Self::NavigateRight => "Navigate right",
             Self::NavigateUp => "Navigate up",
@@ -329,19 +262,9 @@ impl HotkeyAction {
             Self::ToggleSelection => "Toggle selection of focused wallpaper",
             Self::ToggleFilters => "Open filters dialog",
             Self::WorkshopReload => "Reload Workshop",
-            Self::WorkshopOpenInSteam => "Open current URL in Steam",
-            Self::WorkshopOpenInBrowser => "Open current URL in browser",
             Self::WorkshopClearSession => "Clear Workshop session",
-            Self::WorkshopRetry => "Retry Workshop load",
-            Self::DisplaysRefresh => "Refresh displays",
-            Self::DisplaysRename => "Rename focused display",
-            Self::DisplaysLayout => "Edit focused display layout",
             Self::StatusRefresh => "Refresh status",
-            Self::PluginsRefresh => "Refresh plugin list",
-            Self::PluginsInstall => "Install plugin from zip",
-            Self::PluginsToggle => "Enable / disable focused plugin",
             Self::SettingsSave => "Save settings",
-            Self::SettingsResetTab => "Reset current tab to defaults",
         }
     }
 }
@@ -431,7 +354,6 @@ pub fn default_bindings() -> BTreeMap<String, Vec<String>> {
         );
     };
     // Global
-    set(&mut m, A::Quit, &["Ctrl+Q"]);
     set(&mut m, A::OpenWallpapers, &["Ctrl+1"]);
     set(&mut m, A::OpenWorkshop, &["Ctrl+2"]);
     set(&mut m, A::OpenDisplays, &["Ctrl+3"]);
@@ -440,16 +362,15 @@ pub fn default_bindings() -> BTreeMap<String, Vec<String>> {
     set(&mut m, A::OpenSettings, &["Ctrl+6"]);
     set(&mut m, A::OpenHotkeys, &["Ctrl+7"]);
     set(&mut m, A::ReloadUi, &["Ctrl+Shift+R"]);
-    set(&mut m, A::Cheatsheet, &["Ctrl+?"]);
     // Grid nav
-    set(&mut m, A::NavigateLeft, &["Left"]);
-    set(&mut m, A::NavigateRight, &["Right"]);
-    set(&mut m, A::NavigateUp, &["Up"]);
-    set(&mut m, A::NavigateDown, &["Down"]);
-    set(&mut m, A::JumpLeft, &["Ctrl+Left"]);
-    set(&mut m, A::JumpRight, &["Ctrl+Right"]);
-    set(&mut m, A::JumpUp, &["Ctrl+Up"]);
-    set(&mut m, A::JumpDown, &["Ctrl+Down"]);
+    set(&mut m, A::NavigateLeft, &["Left", "A"]);
+    set(&mut m, A::NavigateRight, &["Right", "D"]);
+    set(&mut m, A::NavigateUp, &["Up", "W"]);
+    set(&mut m, A::NavigateDown, &["Down", "S"]);
+    set(&mut m, A::JumpLeft, &["Ctrl+Left", "Ctrl+A"]);
+    set(&mut m, A::JumpRight, &["Ctrl+Right", "Ctrl+D"]);
+    set(&mut m, A::JumpUp, &["Ctrl+Up", "Ctrl+W"]);
+    set(&mut m, A::JumpDown, &["Ctrl+Down", "Ctrl+S"]);
     set(&mut m, A::Home, &["Home"]);
     set(&mut m, A::End, &["End"]);
     set(&mut m, A::HomeAll, &["Ctrl+Home"]);
@@ -459,30 +380,18 @@ pub fn default_bindings() -> BTreeMap<String, Vec<String>> {
     // Wallpaper actions
     set(&mut m, A::RefreshScan, &["F5", "Ctrl+R"]);
     set(&mut m, A::FocusSearch, &["Ctrl+F"]);
-    set(&mut m, A::SelectAll, &["Ctrl+A"]);
+    set(&mut m, A::SelectAll, &["Ctrl+Alt+A"]);
     set(&mut m, A::Cancel, &["Delete", "Backspace", "Escape"]);
     set(&mut m, A::ApplyWallpaper, &["Enter", "Return"]);
     set(&mut m, A::ToggleSelection, &["Space"]);
     set(&mut m, A::ToggleFilters, &["Ctrl+Shift+F"]);
     // Workshop
     set(&mut m, A::WorkshopReload, &["F5", "Ctrl+R"]);
-    set(&mut m, A::WorkshopOpenInSteam, &[]);
-    set(&mut m, A::WorkshopOpenInBrowser, &["Ctrl+O"]);
     set(&mut m, A::WorkshopClearSession, &["Ctrl+Shift+Delete"]);
-    set(&mut m, A::WorkshopRetry, &["Ctrl+Shift+R"]);
-    // Displays
-    set(&mut m, A::DisplaysRefresh, &["F5"]);
-    set(&mut m, A::DisplaysRename, &["F2"]);
-    set(&mut m, A::DisplaysLayout, &["F4"]);
     // Status
     set(&mut m, A::StatusRefresh, &["F5"]);
-    // Plugins
-    set(&mut m, A::PluginsRefresh, &["F5"]);
-    set(&mut m, A::PluginsInstall, &["Ctrl+I"]);
-    set(&mut m, A::PluginsToggle, &["Space"]);
     // Settings
     set(&mut m, A::SettingsSave, &["Ctrl+S"]);
-    set(&mut m, A::SettingsResetTab, &[]);
     m
 }
 
@@ -525,19 +434,16 @@ mod tests {
     #[test]
     fn actions_for_sequence_lists_every_match() {
         let mut s = HotkeySettings::default();
-        // F5 is bound to RefreshScan, WorkshopReload, DisplaysRefresh,
-        // StatusRefresh, PluginsRefresh — five hits.
+        // F5 is bound to RefreshScan, WorkshopReload, StatusRefresh — three hits.
         let hits = s.actions_for_sequence("F5");
         assert!(hits.contains(&HotkeyAction::RefreshScan));
         assert!(hits.contains(&HotkeyAction::WorkshopReload));
-        assert!(hits.contains(&HotkeyAction::DisplaysRefresh));
         assert!(hits.contains(&HotkeyAction::StatusRefresh));
-        assert!(hits.contains(&HotkeyAction::PluginsRefresh));
-        assert_eq!(hits.len(), 5);
+        assert_eq!(hits.len(), 3);
         // A sequence we did not bind is empty.
-        s.set(HotkeyAction::WorkshopOpenInSteam, vec!["Ctrl+Alt+S".into()]);
+        s.set(HotkeyAction::WorkshopClearSession, vec!["Ctrl+Alt+S".into()]);
         let steam_hits = s.actions_for_sequence("Ctrl+Alt+S");
-        assert_eq!(steam_hits, vec![HotkeyAction::WorkshopOpenInSteam]);
+        assert_eq!(steam_hits, vec![HotkeyAction::WorkshopClearSession]);
     }
 
     #[test]
@@ -559,7 +465,6 @@ mod tests {
 
     fn all_actions() -> Vec<HotkeyAction> {
         vec![
-            HotkeyAction::Quit,
             HotkeyAction::OpenWallpapers,
             HotkeyAction::OpenWorkshop,
             HotkeyAction::OpenDisplays,
@@ -568,7 +473,6 @@ mod tests {
             HotkeyAction::OpenSettings,
             HotkeyAction::OpenHotkeys,
             HotkeyAction::ReloadUi,
-            HotkeyAction::Cheatsheet,
             HotkeyAction::NavigateLeft,
             HotkeyAction::NavigateRight,
             HotkeyAction::NavigateUp,
@@ -591,19 +495,9 @@ mod tests {
             HotkeyAction::ToggleSelection,
             HotkeyAction::ToggleFilters,
             HotkeyAction::WorkshopReload,
-            HotkeyAction::WorkshopOpenInSteam,
-            HotkeyAction::WorkshopOpenInBrowser,
             HotkeyAction::WorkshopClearSession,
-            HotkeyAction::WorkshopRetry,
-            HotkeyAction::DisplaysRefresh,
-            HotkeyAction::DisplaysRename,
-            HotkeyAction::DisplaysLayout,
             HotkeyAction::StatusRefresh,
-            HotkeyAction::PluginsRefresh,
-            HotkeyAction::PluginsInstall,
-            HotkeyAction::PluginsToggle,
             HotkeyAction::SettingsSave,
-            HotkeyAction::SettingsResetTab,
         ]
     }
 }

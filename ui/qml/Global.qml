@@ -8,6 +8,13 @@ QtObject {
     id: root
 
     property bool sidebarAutoExpand: true
+    property string workshopRequestUrl: ""
+    property int workshopRequestNonce: 0
+
+    function requestWorkshopUrl(url) {
+        root.workshopRequestUrl = String(url || "")
+        root.workshopRequestNonce += 1
+    }
 
     readonly property Settings _generalSettings: Settings {
         property alias sidebarAutoExpand: root.sidebarAutoExpand

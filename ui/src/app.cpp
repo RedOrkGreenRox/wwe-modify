@@ -2,6 +2,10 @@ module;
 #include "waywallen/app.moc.h"
 #undef assert
 #include <rstd/macro.hpp>
+#include <QtCore/QCoreApplication>
+#include <QtCore/QProcess>
+#include <QtCore/QTimer>
+#include <QtQuick/QQuickWindow>
 
 module waywallen;
 import :app;
@@ -15,6 +19,48 @@ using namespace waywallen;
 using namespace Qt::Literals::StringLiterals;
 
 namespace proto = waywallen::control::v1;
+
+namespace {
+
+QQuickWindow* find_main_window(const QObjectList& roots) {
+    for (auto* el : roots) {
+        if (auto* win = qobject_cast<QQuickWindow*>(el)) {
+            return win;
+        }
+    }
+    return nullptr;
+}
+
+bool restart_ui_process(const char* reason) {
+    bool ok = false;
+    int restart_count = qEnvironmentVariableIntValue("WAYWALLEN_UI_RESTART_COUNT", &ok);
+    if (!ok) restart_count = 0;
+    if (restart_count >= 2) {
+        qCritical("ui recovery: restart budget exhausted after failure: %s", reason);
+        return false;
+    }
+
+    qputenv("WAYWALLEN_UI_RESTART_COUNT", QByteArray::number(restart_count + 1));
+    QStringList args = QCoreApplication::arguments();
+    if (!args.isEmpty()) args.removeFirst();
+    const bool started = QProcess::startDetached(QCoreApplication::applicationFilePath(), args);
+    qCritical("ui recovery: %s; restart attempt %d -> %s",
+              reason,
+              restart_count + 1,
+              started ? "started" : "failed");
+    return started;
+}
+
+QQuickWindow* make_fallback_window() {
+    auto* win = new QQuickWindow();
+    win->setTitle(QStringLiteral("waywallen-ui recovery"));
+    win->resize(960, 640);
+    win->setColor(QColor(QStringLiteral("#202124")));
+    win->show();
+    return win;
+}
+
+} // namespace
 
 auto app_instance(waywallen::App* in = nullptr) -> waywallen::App* {
     static waywallen::App* instance { in };
@@ -181,14 +227,23 @@ void App::init() {
 
     // Load the main window from the QML module.
     engine->loadFromModule("waywallen.ui", "Window");
+    d->m_main_win = find_main_window(engine->rootObjects());
 
-    for (auto el : engine->rootObjects()) {
-        if (auto win = qobject_cast<QQuickWindow*>(el)) {
-            d->m_main_win = win;
-        }
+    if (!d->m_main_win) {
+        qCritical("ui recovery: main window missing after initial QML load; retrying once");
+        engine->clearComponentCache();
+        engine->loadFromModule("waywallen.ui", "Window");
+        d->m_main_win = find_main_window(engine->rootObjects());
     }
 
-    rstd_assert(d->m_main_win, "main window must exist");
+    if (!d->m_main_win) {
+        if (restart_ui_process("main window missing after QML load")) {
+            QTimer::singleShot(0, QGuiApplication::instance(), &QCoreApplication::quit);
+            return;
+        }
+        qCritical("ui recovery: keeping process alive with fallback window");
+        d->m_main_win = make_fallback_window();
+    }
 }
 
 auto App::engine() const -> QQmlApplicationEngine* {

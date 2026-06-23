@@ -36,10 +36,36 @@ MD.ApplicationWindow {
         id: healthQuery
     }
 
+    W.HotkeyRuntime {
+        id: hotkeys
+    }
+
+    function openHotkeysPopup() {
+        if (win.currentPage !== 5)
+            win.currentPage = 5;
+        MD.Util.showPopup('waywallen.ui/PagePopup', {
+            source: 'waywallen.ui/HotkeysSettingsPage',
+            fillWidth: true,
+            fillHeight: true
+        }, win);
+    }
+
+    function reloadCurrentPage() {
+        m_content.switchTo(pageComponents[currentPage], {}, false);
+        m_content.forceActiveFocus();
+    }
+
     Connections {
         target: W.Notify
         function onDaemonReady() {
             healthQuery.reload();
+        }
+    }
+
+    Connections {
+        target: W.Global
+        function onWorkshopRequestNonceChanged() {
+            win.currentPage = 1
         }
     }
 
@@ -118,6 +144,54 @@ MD.ApplicationWindow {
     }
 
     W.DaemonNotRunDialog {}
+
+    Shortcut {
+        sequences: hotkeys.sequences("open_wallpapers")
+        context: Qt.ApplicationShortcut
+        onActivated: win.currentPage = 0
+    }
+
+    Shortcut {
+        sequences: hotkeys.sequences("open_workshop")
+        context: Qt.ApplicationShortcut
+        onActivated: win.currentPage = 1
+    }
+
+    Shortcut {
+        sequences: hotkeys.sequences("open_displays")
+        context: Qt.ApplicationShortcut
+        onActivated: win.currentPage = 2
+    }
+
+    Shortcut {
+        sequences: hotkeys.sequences("open_status")
+        context: Qt.ApplicationShortcut
+        onActivated: win.currentPage = 3
+    }
+
+    Shortcut {
+        sequences: hotkeys.sequences("open_plugins")
+        context: Qt.ApplicationShortcut
+        onActivated: win.currentPage = 4
+    }
+
+    Shortcut {
+        sequences: hotkeys.sequences("open_settings")
+        context: Qt.ApplicationShortcut
+        onActivated: win.currentPage = 5
+    }
+
+    Shortcut {
+        sequences: hotkeys.sequences("open_hotkeys")
+        context: Qt.ApplicationShortcut
+        onActivated: win.openHotkeysPopup()
+    }
+
+    Shortcut {
+        sequences: hotkeys.sequences("reload_ui")
+        context: Qt.ApplicationShortcut
+        onActivated: win.reloadCurrentPage()
+    }
 
     ColumnLayout {
         anchors.fill: parent

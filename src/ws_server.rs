@@ -1480,7 +1480,7 @@ async fn dispatch_inner(
                     String::from("offline")
                 }
             };
-            log::debug!(
+            log::info!(
                 "WallpaperPropertySet: {}={} on {} persist={} push={}",
                 r.key,
                 r.value,
@@ -1508,6 +1508,12 @@ async fn dispatch_inner(
                 Some(resolved_layout_from_pb(layout))
             };
             repo::set_wallpaper_layout_override(&state.db, entry.item_id, layout).await?;
+            log::info!(
+                "WallpaperLayoutSet: wallpaper={} clear={} live_renderer_candidate={}",
+                r.wallpaper_id,
+                r.clear,
+                entry.resource
+            );
 
             let live_renderer = state
                 .renderer_manager

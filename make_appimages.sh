@@ -31,17 +31,17 @@ build_full() {
 }
 
 case "$MODE" in
-    lite|Lite|LITE)
+    (lite|Lite|LITE)
         build_lite
         ;;
-    full|Full|FULL|web|Web|WEB)
+    (full|Full|FULL|web|Web|WEB)
         build_full
         ;;
-    both|Both|BOTH|all|All|ALL)
+    (both|Both|BOTH|all|All|ALL)
         build_lite
         build_full
         ;;
-    *)
+    (*)
         fail "unknown mode '$MODE'. Use: ./make_appimages.sh [lite|full|both]"
         ;;
 esac

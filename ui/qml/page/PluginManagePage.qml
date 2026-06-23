@@ -48,13 +48,6 @@ MD.Page {
             pluginListQuery.reload();
     }
 
-    Shortcut {
-        sequences: [StandardKey.Refresh, "F5", "Ctrl+R"]
-        context: Qt.WidgetWithChildrenShortcut
-        enabled: root.visible && !installQuery.querying
-        onActivated: pluginListQuery.reload()
-    }
-
     MD.FileDialog {
         id: zipDialog
         title: qsTr("Choose plugin package")

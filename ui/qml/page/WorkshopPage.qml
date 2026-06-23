@@ -23,6 +23,48 @@ Item {
     // Current URL inside the embedded browser (empty for Lite).
     property string currentEmbeddedUrl: ""
     property Item embeddedBrowser: null
+    property string activeWorkshopUrl: root.workshopUrl
+
+    W.HotkeyRuntime {
+        id: hotkeys
+    }
+
+    function retryEmbeddedLoad() {
+        root.embeddedBrowser = null;
+        root.workshopState = "idle";
+        root.tryOpenEmbedded();
+    }
+
+    function navigateToWorkshopUrl(url) {
+        const target = String(url || "").trim()
+        root.activeWorkshopUrl = target.length > 0 ? target : root.workshopUrl
+        root.currentEmbeddedUrl = root.activeWorkshopUrl
+        if (root.embeddedBrowser && root.embeddedBrowser.openUrl) {
+            root.embeddedBrowser.openUrl(root.activeWorkshopUrl)
+            root.workshopState = "embeddedReady"
+            root.statusText = ""
+            return
+        }
+        if (root.workshopState === "externalOnly") {
+            root.openWithSystemBrowser(root.activeWorkshopUrl)
+        } else {
+            root.tryOpenEmbedded()
+        }
+    }
+
+    Shortcut {
+        sequences: hotkeys.sequences("workshop_clear_session")
+        context: Qt.ApplicationShortcut
+        enabled: root.visible
+        onActivated: root.clearWorkshopCache()
+    }
+
+    Connections {
+        target: W.Global
+        function onWorkshopRequestNonceChanged() {
+            root.navigateToWorkshopUrl(W.Global.workshopRequestUrl)
+        }
+    }
 
     // -----------------------------------------------------------------------
     // Actions
@@ -33,13 +75,13 @@ Item {
     }
 
     function openWithSystemBrowser(url) {
-        MD.Util.openUrlExternally(url || root.workshopUrl);
+        MD.Util.openUrlExternally(url || root.activeWorkshopUrl || root.workshopUrl);
     }
 
     function openCurrentPageExternally() {
         const url = root.currentEmbeddedUrl.length > 0
             ? root.currentEmbeddedUrl
-            : root.workshopUrl;
+            : root.activeWorkshopUrl;
         root.openWithSystemBrowser(url);
     }
 
@@ -105,7 +147,7 @@ Item {
     }
 
     function createEmbedded(component) {
-        const object = component.createObject(root, { "workshopUrl": root.workshopUrl });
+        const object = component.createObject(root, { "workshopUrl": root.activeWorkshopUrl });
         if (!object) {
             root._onEmbeddedUnavailable("createObject returned null");
             return false;
@@ -142,7 +184,10 @@ Item {
     Component.onCompleted: {
         // Full build: try embedded browser immediately.
         // Lite build: EmbeddedWorkshop.qml is absent → falls to externalOnly.
-        root.tryOpenEmbedded();
+        if ((W.Global.workshopRequestUrl || "").length > 0)
+            root.navigateToWorkshopUrl(W.Global.workshopRequestUrl)
+        else
+            root.tryOpenEmbedded();
     }
 
     // -----------------------------------------------------------------------
@@ -215,11 +260,7 @@ Item {
             MD.Button {
                 visible: root.workshopState === "embeddedFailed"
                 text: qsTr("Retry")
-                onClicked: {
-                    root.embeddedBrowser = null;
-                    root.workshopState = "idle";
-                    root.tryOpenEmbedded();
-                }
+                onClicked: root.retryEmbeddedLoad()
             }
         }
 

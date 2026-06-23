@@ -38,11 +38,13 @@ export NO_STRIP="${NO_STRIP:-true}"
 #   WAYWALLEN_DEV           1 = no LTO, no AppImage pack; 0 = full build (default)
 #   WAYWALLEN_FAST_TOOLS    1 = skip linuxdeploy re-extract if done; 0 = always (default)
 #   WAYWALLEN_FAST_CONDA    1 = skip conda update when env.yml unchanged; 0 = always (default)
+#   WAYWALLEN_BUILD_JOBS    total build parallelism budget; leave empty for auto
 # ---------------------------------------------------------------------------
 WAYWALLEN_INCREMENTAL="${WAYWALLEN_INCREMENTAL:-0}"
 WAYWALLEN_DEV="${WAYWALLEN_DEV:-0}"
 WAYWALLEN_FAST_TOOLS="${WAYWALLEN_FAST_TOOLS:-0}"
 WAYWALLEN_FAST_CONDA="${WAYWALLEN_FAST_CONDA:-0}"
+WAYWALLEN_BUILD_JOBS="${WAYWALLEN_BUILD_JOBS:-}"
 
 
 # Script lives in <repo>/scripts/, so PROJECT_DIR is one level up.
@@ -89,6 +91,22 @@ append_unique_path() {
     done
     paths_ref+=("$path")
 }
+
+detect_cpu_count() {
+    getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 4
+}
+
+compute_default_jobs() {
+    local cpus="$1"
+    if (( cpus <= 2 )); then
+        echo 1
+    elif (( cpus <= 4 )); then
+        echo $((cpus - 1))
+    else
+        echo $((cpus - 2))
+    fi
+}
+
 find_first_file() {
     local file="$1"
     shift
@@ -282,6 +300,26 @@ fi
 
 APPIMAGE_OUT="$PROJECT_DIR/waywallen-$BUILD_TAG-$WAYWALLEN_APPIMAGE_FLAVOR-x86_64.AppImage"
 step "Building $WAYWALLEN_APPIMAGE_FLAVOR AppImage tagged as $BUILD_TAG (WebEngine=$WAYWALLEN_APPIMAGE_WEBENGINE)"
+
+CPU_COUNT="$(detect_cpu_count)"
+if [[ -z "$WAYWALLEN_BUILD_JOBS" ]]; then
+    WAYWALLEN_BUILD_JOBS="$(compute_default_jobs "$CPU_COUNT")"
+fi
+if ! [[ "$WAYWALLEN_BUILD_JOBS" =~ ^[0-9]+$ ]] || (( WAYWALLEN_BUILD_JOBS < 1 )); then
+    fail "invalid WAYWALLEN_BUILD_JOBS=$WAYWALLEN_BUILD_JOBS"
+fi
+CMAKE_BUILD_JOBS="$WAYWALLEN_BUILD_JOBS"
+DISPLAY_BUILD_JOBS="$WAYWALLEN_BUILD_JOBS"
+if (( WAYWALLEN_BUILD_JOBS >= 2 )); then
+    CMAKE_BUILD_JOBS=$(((WAYWALLEN_BUILD_JOBS * 2 + 2) / 3))
+    DISPLAY_BUILD_JOBS=$((WAYWALLEN_BUILD_JOBS - CMAKE_BUILD_JOBS))
+    (( DISPLAY_BUILD_JOBS < 1 )) && DISPLAY_BUILD_JOBS=1
+fi
+export WAYWALLEN_BUILD_JOBS
+export CMAKE_BUILD_PARALLEL_LEVEL="$CMAKE_BUILD_JOBS"
+export CARGO_BUILD_JOBS="$DISPLAY_BUILD_JOBS"
+export MAKEFLAGS="-j$WAYWALLEN_BUILD_JOBS"
+step "Build parallelism budget: total=$WAYWALLEN_BUILD_JOBS (cpu=$CPU_COUNT, cmake=$CMAKE_BUILD_JOBS, display=$DISPLAY_BUILD_JOBS)"
 
 # ---- Check/bootstrap required tools ----
 need_cmd curl || fail "curl not found; install curl first, then re-run"
@@ -496,13 +534,22 @@ CMAKE_PID=$!
 
 if [[ "$DISPLAY_NEEDS_BUILD" == "true" ]]; then
     DISPLAY_LOG="$PROJECT_DIR/build/_tools/display-build.log"
+    mkdir -p "$(dirname "$DISPLAY_LOG")"
+    : > "$DISPLAY_LOG"
     (
-        cargo build \
-            --manifest-path "$WAYWALLEN_DISPLAY_SRC/Cargo.toml" \
-            --bin waywallen-layer-shell \
-            --release \
-            --locked \
-            > "$DISPLAY_LOG" 2>&1
+        {
+            echo "==> waywallen-layer-shell build log"
+            echo "repo: $WAYWALLEN_DISPLAY_SRC"
+            echo "ref:  $WAYWALLEN_DISPLAY_REF"
+            echo "jobs: $DISPLAY_BUILD_JOBS"
+            echo
+            cargo build \
+                --manifest-path "$WAYWALLEN_DISPLAY_SRC/Cargo.toml" \
+                --bin waywallen-layer-shell \
+                --release \
+                --locked \
+                --jobs "$DISPLAY_BUILD_JOBS"
+        } > "$DISPLAY_LOG" 2>&1
     ) &
     DISPLAY_PID=$!
 else
@@ -520,7 +567,11 @@ if [[ -n "$DISPLAY_PID" ]]; then
     if ! wait "$DISPLAY_PID"; then
         BUILD_FAIL=1
         err "waywallen-layer-shell build failed — see $DISPLAY_LOG"
-        cat "$DISPLAY_LOG" >&2
+        if [[ -f "$DISPLAY_LOG" ]]; then
+            cat "$DISPLAY_LOG" >&2
+        else
+            err "display build log was not created; cargo/subshell likely failed before logging"
+        fi
     else
         ok "waywallen-layer-shell built"
         mkdir -p "$(dirname "$DISPLAY_STAMP")"

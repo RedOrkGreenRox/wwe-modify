@@ -78,13 +78,17 @@ MD.Page {
         }
     }
 
+    W.HotkeyRuntime {
+        id: hotkeys
+    }
+
     Component.onCompleted: {
         if (W.Notify.daemonPhase === W.Notify.DaemonPhase.Ready)
             reloadAll();
     }
 
     Shortcut {
-        sequences: [StandardKey.Refresh, "F5", "Ctrl+R"]
+        sequences: hotkeys.sequences("status_refresh")
         context: Qt.WidgetWithChildrenShortcut
         enabled: root.visible
         onActivated: reloadAll()

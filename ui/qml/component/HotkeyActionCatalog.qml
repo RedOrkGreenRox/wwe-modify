@@ -14,8 +14,6 @@ QtObject {
 
     readonly property var all: [
         // ----- Global -----
-        { id: "quit", section: qsTr("Global"), label: qsTr("Quit application"),
-          defaults: ["Ctrl+Q"] },
         { id: "open_wallpapers", section: qsTr("Global"), label: qsTr("Open Wallpapers tab"),
           defaults: ["Ctrl+1"] },
         { id: "open_workshop", section: qsTr("Global"), label: qsTr("Open Workshop tab"),
@@ -32,26 +30,24 @@ QtObject {
           defaults: ["Ctrl+7"] },
         { id: "reload_ui", section: qsTr("Global"), label: qsTr("Reload UI"),
           defaults: ["Ctrl+Shift+R"] },
-        { id: "cheatsheet", section: qsTr("Global"), label: qsTr("Toggle cheatsheet"),
-          defaults: ["Ctrl+?"] },
 
         // ----- Wallpaper grid navigation -----
         { id: "navigate_left", section: qsTr("Wallpaper grid navigation"),
-          label: qsTr("Navigate left"), defaults: ["Left"] },
+          label: qsTr("Navigate left"), defaults: ["Left", "A"] },
         { id: "navigate_right", section: qsTr("Wallpaper grid navigation"),
-          label: qsTr("Navigate right"), defaults: ["Right"] },
+          label: qsTr("Navigate right"), defaults: ["Right", "D"] },
         { id: "navigate_up", section: qsTr("Wallpaper grid navigation"),
-          label: qsTr("Navigate up"), defaults: ["Up"] },
+          label: qsTr("Navigate up"), defaults: ["Up", "W"] },
         { id: "navigate_down", section: qsTr("Wallpaper grid navigation"),
-          label: qsTr("Navigate down"), defaults: ["Down"] },
+          label: qsTr("Navigate down"), defaults: ["Down", "S"] },
         { id: "jump_left", section: qsTr("Wallpaper grid navigation"),
-          label: qsTr("Jump to row/col boundary (left)"), defaults: ["Ctrl+Left"] },
+          label: qsTr("Jump to row/col boundary (left)"), defaults: ["Ctrl+Left", "Ctrl+A"] },
         { id: "jump_right", section: qsTr("Wallpaper grid navigation"),
-          label: qsTr("Jump to row/col boundary (right)"), defaults: ["Ctrl+Right"] },
+          label: qsTr("Jump to row/col boundary (right)"), defaults: ["Ctrl+Right", "Ctrl+D"] },
         { id: "jump_up", section: qsTr("Wallpaper grid navigation"),
-          label: qsTr("Jump to row/col boundary (up)"), defaults: ["Ctrl+Up"] },
+          label: qsTr("Jump to row/col boundary (up)"), defaults: ["Ctrl+Up", "Ctrl+W"] },
         { id: "jump_down", section: qsTr("Wallpaper grid navigation"),
-          label: qsTr("Jump to row/col boundary (down)"), defaults: ["Ctrl+Down"] },
+          label: qsTr("Jump to row/col boundary (down)"), defaults: ["Ctrl+Down", "Ctrl+S"] },
         { id: "home", section: qsTr("Wallpaper grid navigation"),
           label: qsTr("First item in row"), defaults: ["Home"] },
         { id: "end", section: qsTr("Wallpaper grid navigation"),
@@ -71,7 +67,7 @@ QtObject {
         { id: "focus_search", section: qsTr("Wallpaper actions"),
           label: qsTr("Focus search"), defaults: ["Ctrl+F"] },
         { id: "select_all", section: qsTr("Wallpaper actions"),
-          label: qsTr("Select all wallpapers"), defaults: ["Ctrl+A"] },
+          label: qsTr("Select all wallpapers"), defaults: ["Ctrl+Alt+A"] },
         { id: "cancel", section: qsTr("Wallpaper actions"),
           label: qsTr("Cancel selection / close detail"),
           defaults: ["Delete", "Backspace", "Escape"] },
@@ -88,40 +84,16 @@ QtObject {
         // ----- Workshop -----
         { id: "workshop_reload", section: qsTr("Workshop"),
           label: qsTr("Reload Workshop"), defaults: ["F5", "Ctrl+R"] },
-        { id: "workshop_open_in_steam", section: qsTr("Workshop"),
-          label: qsTr("Open current URL in Steam"), defaults: [] },
-        { id: "workshop_open_in_browser", section: qsTr("Workshop"),
-          label: qsTr("Open current URL in browser"), defaults: ["Ctrl+O"] },
         { id: "workshop_clear_session", section: qsTr("Workshop"),
           label: qsTr("Clear Workshop session"), defaults: ["Ctrl+Shift+Delete"] },
-        { id: "workshop_retry", section: qsTr("Workshop"),
-          label: qsTr("Retry Workshop load"), defaults: ["Ctrl+Shift+R"] },
-
-        // ----- Displays -----
-        { id: "displays_refresh", section: qsTr("Displays"),
-          label: qsTr("Refresh displays"), defaults: ["F5"] },
-        { id: "displays_rename", section: qsTr("Displays"),
-          label: qsTr("Rename focused display"), defaults: ["F2"] },
-        { id: "displays_layout", section: qsTr("Displays"),
-          label: qsTr("Edit focused display layout"), defaults: ["F4"] },
 
         // ----- Status -----
         { id: "status_refresh", section: qsTr("Status"),
           label: qsTr("Refresh status"), defaults: ["F5"] },
 
-        // ----- Plugins -----
-        { id: "plugins_refresh", section: qsTr("Plugins"),
-          label: qsTr("Refresh plugin list"), defaults: ["F5"] },
-        { id: "plugins_install", section: qsTr("Plugins"),
-          label: qsTr("Install plugin from zip"), defaults: ["Ctrl+I"] },
-        { id: "plugins_toggle", section: qsTr("Plugins"),
-          label: qsTr("Enable / disable focused plugin"), defaults: ["Space"] },
-
         // ----- Settings -----
         { id: "settings_save", section: qsTr("Settings"),
           label: qsTr("Save settings"), defaults: ["Ctrl+S"] },
-        { id: "settings_reset_tab", section: qsTr("Settings"),
-          label: qsTr("Reset current tab to defaults"), defaults: [] },
     ]
 
     /// Look up an action by id; returns null if not found.

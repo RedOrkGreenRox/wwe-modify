@@ -46,6 +46,10 @@ MD.Page {
         id: setQ
     }
 
+    W.HotkeyRuntime {
+        id: hotkeys
+    }
+
     Connections {
         target: W.Notify
         function onDaemonReady() {
@@ -62,10 +66,21 @@ MD.Page {
     }
 
     Shortcut {
-        sequences: [StandardKey.Refresh, "F5", "Ctrl+R"]
+        sequences: hotkeys.sequences("settings_save")
         context: Qt.WidgetWithChildrenShortcut
         enabled: root.visible
-        onActivated: getQ.reload()
+        onActivated: {
+            const g = m_pending.nextGlobal;
+            if (g) {
+                setQ.global = g;
+                setQ.plugins = getQ.plugins;
+                setQ.reload();
+                m_pending.nextGlobal = null;
+                m_flush.stop();
+            } else {
+                getQ.reload();
+            }
+        }
     }
 
     // Same pattern as WallpaperPage._persistGlobalChange but routed

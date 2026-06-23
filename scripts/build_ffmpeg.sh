@@ -13,6 +13,7 @@
 # Tunables (env vars):
 #   FFMPEG_VERSION   git tag to check out, default n8.1
 #   FORCE            set to 1 to rebuild even if the pkg-config stamp exists
+#   WAYWALLEN_BUILD_JOBS  parallel make jobs; defaults to all CPUs if unset
 
 set -euo pipefail
 
@@ -24,6 +25,7 @@ set -euo pipefail
 FFMPEG_VERSION="${FFMPEG_VERSION:-n8.1}"
 FFMPEG_SRC="$CONDA_PREFIX/.ffmpeg-src"
 PKG_STAMP="$CONDA_PREFIX/lib/pkgconfig/libavcodec.pc"
+BUILD_JOBS="${WAYWALLEN_BUILD_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 4)}"
 
 step() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 
@@ -160,7 +162,7 @@ for x in "${HWACCELS[@]}";  do CFG_ARGS+=( "--enable-hwaccel=$x"  ); done
     cd "$FFMPEG_SRC"
     make distclean >/dev/null 2>&1 || true
     ./configure "${CFG_ARGS[@]}"
-    make -j"$(nproc)"
+    make -j"$BUILD_JOBS"
     make install
 )
 

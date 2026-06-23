@@ -204,6 +204,7 @@ set(QML_FILES
   qml/page/HotkeysSettingsPage.qml
   qml/component/HotkeyActionCatalog.qml
   qml/component/HotkeyActionRow.qml
+  qml/component/HotkeyRuntime.qml
   qml/component/BindingChip.qml
 )
 

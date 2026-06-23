@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 import QtCore
 import QtQuick
 import QtWebEngine
+import waywallen.ui as W
 
 Item {
     id: root
@@ -22,8 +23,18 @@ Item {
     readonly property string profileCachePath: profileBasePath + "/cache"
     property bool loginSignalEmitted: false
 
+    W.HotkeyRuntime {
+        id: hotkeys
+    }
+
     function reload() {
         web.reload();
+    }
+
+    function openUrl(url) {
+        if (!url || String(url).length === 0)
+            return;
+        web.url = url;
     }
 
     function focusWorkshopSearch() {
@@ -128,10 +139,13 @@ Item {
         settings.localStorageEnabled: true
 
         Keys.onPressed: event => {
-            if (event.key === Qt.Key_F5 || (event.key === Qt.Key_R && (event.modifiers & Qt.ControlModifier))) {
+            const txt = (event.text || "").toLowerCase();
+            const hasCtrl = (event.modifiers & Qt.ControlModifier) !== 0;
+
+            if (hotkeys.eventMatches("workshop_reload", event)) {
                 web.reload();
                 event.accepted = true;
-            } else if (event.key === Qt.Key_F && (event.modifiers & Qt.ControlModifier)) {
+            } else if ((event.key === Qt.Key_F && hasCtrl) || (hasCtrl && (event.key === Qt.Key_F || txt === 'а'))) {
                 root.focusWorkshopSearch();
                 event.accepted = true;
             } else if (event.key === Qt.Key_Back || (event.key === Qt.Key_Left && (event.modifiers & Qt.AltModifier))) {
