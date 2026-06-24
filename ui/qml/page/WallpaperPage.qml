@@ -60,6 +60,24 @@ MD.Page {
         onActivated: if (!W.Notify.scanInProgress) scanQuery.reload()
     }
     Shortcut {
+        sequences: hotkeys.sequences("focus_search")
+        context: Qt.WindowShortcut
+        enabled: root.visible
+        onActivated: m_search_field.focusInput()
+    }
+    Shortcut {
+        sequences: hotkeys.sequences("select_all")
+        context: Qt.WindowShortcut
+        enabled: root.visible && m_grid_view && m_grid_view.count > 0
+        onActivated: root.selectAllWallpapers()
+    }
+    Shortcut {
+        sequences: hotkeys.sequences("toggle_filters")
+        context: Qt.WindowShortcut
+        enabled: root.visible
+        onActivated: MD.Util.showPopup(filterDialogComponent, {}, root.Window.window)
+    }
+    Shortcut {
         sequences: hotkeys.sequences("apply_wallpaper")
         context: Qt.WindowShortcut
         enabled: root.visible && m_grid_view.currentIndex >= 0
@@ -684,6 +702,93 @@ MD.Page {
         root.syncWallpaperSelectSheet();
     }
 
+    function closeWallpaperDetail() {
+        root.selectedWallpaper = null;
+        if (m_grid_view)
+            m_grid_view.currentIndex = -1;
+    }
+
+    function selectAllWallpapers() {
+        if (!m_grid_view || m_grid_view.count <= 0)
+            return;
+        const select = root.interactionWallpaperSelect();
+        root.enterWallpaperSelect(select);
+        select.clear();
+        select.selectRange(0, m_grid_view.count - 1, true);
+        select.selectionMode = true;
+        select.anchorIndex = 0;
+        root.selectedWallpaper = null;
+        m_grid_view.currentIndex = 0;
+        m_grid_view.positionViewAtIndex(0, GridView.Beginning);
+        m_grid_view.forceActiveFocus();
+        root.syncWallpaperSelectSheet();
+    }
+
+    function gridCurrentIndex() {
+        return m_grid_view && m_grid_view.currentIndex >= 0 ? m_grid_view.currentIndex : 0;
+    }
+
+    function gridCoords(index) {
+        const cols = Math.max(1, m_grid_view ? m_grid_view._cols : 1);
+        const safe = Math.max(0, Number(index) || 0);
+        return { row: Math.floor(safe / cols), col: safe % cols };
+    }
+
+    function currentSelectionAnchor(fallbackIndex) {
+        const select = root.interactionWallpaperSelect();
+        if (select && select.anchorIndex >= 0)
+            return select.anchorIndex;
+        if (m_grid_view && m_grid_view.currentIndex >= 0)
+            return m_grid_view.currentIndex;
+        return fallbackIndex === undefined ? 0 : Number(fallbackIndex);
+    }
+
+    function moveGridCurrentTo(index, mode) {
+        if (!m_grid_view || m_grid_view.count <= 0)
+            return;
+        const next = Math.max(0, Math.min(m_grid_view.count - 1, index));
+        m_grid_view.currentIndex = next;
+        m_grid_view.positionViewAtIndex(next, mode === undefined ? GridView.Contain : mode);
+        m_grid_view.forceActiveFocus();
+    }
+
+    function selectWallpaperRectangle(anchorIndex, cursorIndex) {
+        if (!m_grid_view || m_grid_view.count <= 0)
+            return;
+        const select = root.interactionWallpaperSelect();
+        root.enterWallpaperSelect(select);
+        const count = m_grid_view.count;
+        const cols = Math.max(1, m_grid_view._cols);
+        const anchor = Math.max(0, Math.min(count - 1, Number(anchorIndex) || 0));
+        const cursor = Math.max(0, Math.min(count - 1, Number(cursorIndex) || 0));
+        const a = root.gridCoords(anchor);
+        const c = root.gridCoords(cursor);
+        const rowMin = Math.min(a.row, c.row);
+        const rowMax = Math.max(a.row, c.row);
+        const colMin = Math.min(a.col, c.col);
+        const colMax = Math.max(a.col, c.col);
+        select.clear();
+        select.anchorIndex = anchor;
+        select.selectionMode = true;
+        for (let row = rowMin; row <= rowMax; ++row) {
+            const start = row * cols + colMin;
+            const end = Math.min(count - 1, row * cols + colMax);
+            if (start < count && start <= end)
+                select.selectRange(start, end, true);
+        }
+        root.selectedWallpaper = null;
+        root.syncWallpaperSelectSheet();
+    }
+
+    function gridPageStep() {
+        if (!m_grid_view)
+            return 1;
+        const cols = Math.max(1, m_grid_view._cols);
+        const rows = Math.max(1, Math.floor(Math.max(1, m_grid_view.height - m_grid_view.topMargin - m_grid_view.bottomMargin)
+                                            / Math.max(1, m_grid_view.cellHeight)) - 1);
+        return Math.max(cols, rows * cols);
+    }
+
     function selectedWallpaperIds() {
         return root.currentWallpaperSelect ? root.currentWallpaperSelect.selectedWallpaperIds() : [];
     }
@@ -1053,94 +1158,187 @@ MD.Page {
                         // and so WASD / HJKL alternatives work alongside
                         // the arrow keys (also under Cyrillic layouts).
                         Keys.onPressed: event => {
-                            const cols = Math.max(1, m_grid_view._cols);
+                            function navigateActionDir(extraShift) {
+                                const opts = extraShift ? { extraShift: true } : {};
+                                if (hotkeys.eventMatches("navigate_left", event, opts)) return Qt.Key_Left;
+                                if (hotkeys.eventMatches("navigate_right", event, opts)) return Qt.Key_Right;
+                                if (hotkeys.eventMatches("navigate_up", event, opts)) return Qt.Key_Up;
+                                if (hotkeys.eventMatches("navigate_down", event, opts)) return Qt.Key_Down;
+                                return 0;
+                            }
+
+                            function jumpActionDir(extraShift) {
+                                const opts = extraShift ? { extraShift: true } : {};
+                                if (hotkeys.eventMatches("jump_left", event, opts)) return Qt.Key_Left;
+                                if (hotkeys.eventMatches("jump_right", event, opts)) return Qt.Key_Right;
+                                if (hotkeys.eventMatches("jump_up", event, opts)) return Qt.Key_Up;
+                                if (hotkeys.eventMatches("jump_down", event, opts)) return Qt.Key_Down;
+                                return 0;
+                            }
+
+                            function navDir(count, curs, d) {
+                                if (count <= 0) return curs;
+                                const cols = Math.max(1, m_grid_view._cols);
+                                const row = Math.floor(curs / cols);
+                                const col = curs % cols;
+                                const lastRow = Math.floor((count - 1) / cols);
+                                function lastIndexInColumn(targetCol) {
+                                    for (let r = lastRow; r >= 0; --r) {
+                                        const idx = r * cols + targetCol;
+                                        if (idx < count)
+                                            return idx;
+                                    }
+                                    return Math.min(targetCol, count - 1);
+                                }
+                                let n = curs;
+                                if (d === Qt.Key_Left) {
+                                    n = col === 0 ? Math.min(count - 1, row * cols + cols - 1) : curs - 1;
+                                } else if (d === Qt.Key_Right) {
+                                    const rEnd = Math.min(count - 1, row * cols + cols - 1);
+                                    n = curs >= rEnd ? row * cols : curs + 1;
+                                } else if (d === Qt.Key_Up) {
+                                    n = row === 0 ? lastIndexInColumn(col) : curs - cols;
+                                } else if (d === Qt.Key_Down) {
+                                    const colBottom = lastIndexInColumn(col);
+                                    n = curs >= colBottom ? col : curs + cols;
+                                }
+                                return n;
+                            }
+
+                            function jumpDir(count, curs, d) {
+                                if (count <= 0) return curs;
+                                const cols = Math.max(1, m_grid_view._cols);
+                                const row = Math.floor(curs / cols);
+                                const col = curs % cols;
+                                const lastRow = Math.floor((count - 1) / cols);
+                                const rowEnd = Math.min(count - 1, row * cols + cols - 1);
+                                let n = curs;
+                                if (d === Qt.Key_Left) {
+                                    if (curs === row * cols)
+                                        n = row > 0 ? Math.min(count - 1, (row - 1) * cols + cols - 1)
+                                                    : Math.min(count - 1, lastRow * cols + cols - 1);
+                                    else
+                                        n = row * cols;
+                                } else if (d === Qt.Key_Right) {
+                                    if (curs >= rowEnd)
+                                        n = row === lastRow ? 0 : (row + 1) * cols;
+                                    else
+                                        n = rowEnd;
+                                } else if (d === Qt.Key_Up) {
+                                    let colBottom = col;
+                                    for (let r = lastRow; r >= 0; r--) {
+                                        const idx = r * cols + col;
+                                        if (idx < count) { colBottom = idx; break; }
+                                    }
+                                    n = curs === col ? colBottom : col;
+                                } else if (d === Qt.Key_Down) {
+                                    let colBottom = col;
+                                    for (let r = lastRow; r >= 0; r--) {
+                                        const idx = r * cols + col;
+                                        if (idx < count) { colBottom = idx; break; }
+                                    }
+                                    n = curs >= colBottom ? (col + 1 >= cols ? 0 : col + 1) : colBottom;
+                                }
+                                return n;
+                            }
+
                             const count = m_grid_view.count;
-                            if (count <= 0)
-                                return;
+                            const cur = root.gridCurrentIndex();
+                            const plainDir = navigateActionDir(false);
+                            const shiftDir = navigateActionDir(true);
+                            const jumpPlainDir = jumpActionDir(false);
+                            const jumpShiftDir = jumpActionDir(true);
 
-                            const cur = m_grid_view.currentIndex < 0 ? 0 : m_grid_view.currentIndex;
-                            let next = cur;
-
-                            const col = cur % cols;
-                            const rowStart = cur - col;
-                            const rowEnd = Math.min(count - 1, rowStart + cols - 1);
-                            const lastRow = Math.floor((count - 1) / cols);
-                            function lastIndexInColumn(column) {
-                                let candidate = lastRow * cols + column;
-                                while (candidate >= count && candidate >= cols)
-                                    candidate -= cols;
-                                return Math.max(0, Math.min(count - 1, candidate));
-                            }
-
-                            // Plain movement wraps inside the same row/column.
-                            if (hotkeys.eventMatches("navigate_left", event)) {
-                                next = (cur === rowStart) ? rowEnd : cur - 1;
-                            } else if (hotkeys.eventMatches("navigate_right", event)) {
-                                next = (cur === rowEnd) ? rowStart : cur + 1;
-                            } else if (hotkeys.eventMatches("navigate_up", event)) {
-                                next = (cur < cols) ? lastIndexInColumn(col) : cur - cols;
-                            } else if (hotkeys.eventMatches("navigate_down", event)) {
-                                next = (cur + cols >= count) ? col : cur + cols;
-                            }
-                            // Ctrl movement crosses to the neighbouring row/column when it hits a boundary.
-                            else if (hotkeys.eventMatches("jump_left", event)) {
-                                next = Math.max(0, cur - 1);
-                            } else if (hotkeys.eventMatches("jump_right", event)) {
-                                next = Math.min(count - 1, cur + 1);
-                            } else if (hotkeys.eventMatches("jump_up", event)) {
-                                if (cur >= cols) {
-                                    next = cur - cols;
-                                } else if (col > 0) {
-                                    next = lastIndexInColumn(col - 1);
-                                } else {
-                                    next = 0;
-                                }
-                            } else if (hotkeys.eventMatches("jump_down", event)) {
-                                if (cur + cols < count) {
-                                    next = cur + cols;
-                                } else if (col + 1 < cols && col + 1 < count) {
-                                    next = col + 1;
-                                } else {
-                                    next = count - 1;
-                                }
-                            } else if (hotkeys.eventMatches("apply_wallpaper", event)) {
-                                root.applyWallpaperAt(cur);
+                            if (hotkeys.eventMatches("refresh_scan", event)) {
+                                if (!W.Notify.scanInProgress)
+                                    scanQuery.reload();
                                 event.accepted = true;
-                                return;
-                            } else if (hotkeys.eventMatches("toggle_selection", event)) {
-                                const select = root.interactionWallpaperSelect();
-                                root.enterWallpaperSelect(select);
-                                select.toggleSelected(cur);
-                                select.anchorIndex = cur;
-                                root.selectedWallpaper = null;
-                                root.syncWallpaperSelectSheet();
+                            } else if (hotkeys.eventMatches("focus_search", event)) {
+                                m_search_field.focusInput();
                                 event.accepted = true;
-                                return;
+                            } else if (hotkeys.eventMatches("select_all", event) && count > 0) {
+                                root.selectAllWallpapers();
+                                event.accepted = true;
+                            } else if (hotkeys.eventMatches("toggle_filters", event)) {
+                                MD.Util.showPopup(filterDialogComponent, {}, root.Window.window);
+                                event.accepted = true;
+                            } else if (shiftDir && count > 0) {
+                                const next = navDir(count, cur, shiftDir);
+                                const anchor = root.currentSelectionAnchor(cur);
+                                root.selectWallpaperRectangle(anchor, next);
+                                root.moveGridCurrentTo(next, GridView.Contain);
+                                event.accepted = true;
+                            } else if (jumpShiftDir && count > 0) {
+                                const next = jumpDir(count, cur, jumpShiftDir);
+                                const anchor = root.currentSelectionAnchor(cur);
+                                root.selectWallpaperRectangle(anchor, next);
+                                root.moveGridCurrentTo(next, GridView.Contain);
+                                event.accepted = true;
+                            } else if (jumpPlainDir && count > 0) {
+                                if (root.selectionActive)
+                                    root.clearWallpaperSelection();
+                                const next = jumpDir(count, cur, jumpPlainDir);
+                                userWallpaperSelect.anchorIndex = next;
+                                root.moveGridCurrentTo(next, GridView.Contain);
+                                event.accepted = true;
+                            } else if (plainDir && count > 0) {
+                                if (root.selectionActive)
+                                    root.clearWallpaperSelection();
+                                const next = navDir(count, cur, plainDir);
+                                userWallpaperSelect.anchorIndex = next;
+                                root.moveGridCurrentTo(next, GridView.Contain);
+                                event.accepted = true;
+                            } else if (hotkeys.eventMatches("home_all", event) && count > 0) {
+                                if (root.selectionActive)
+                                    root.clearWallpaperSelection();
+                                userWallpaperSelect.anchorIndex = 0;
+                                root.moveGridCurrentTo(0, GridView.Beginning);
+                                event.accepted = true;
+                            } else if (hotkeys.eventMatches("home", event) && count > 0) {
+                                if (root.selectionActive)
+                                    root.clearWallpaperSelection();
+                                const cols = Math.max(1, m_grid_view._cols);
+                                const r = Math.floor(cur / cols);
+                                const target = r * cols;
+                                userWallpaperSelect.anchorIndex = target;
+                                root.moveGridCurrentTo(target, GridView.Contain);
+                                event.accepted = true;
+                            } else if (hotkeys.eventMatches("end_all", event) && count > 0) {
+                                if (root.selectionActive)
+                                    root.clearWallpaperSelection();
+                                userWallpaperSelect.anchorIndex = count - 1;
+                                root.moveGridCurrentTo(count - 1, GridView.End);
+                                event.accepted = true;
+                            } else if (hotkeys.eventMatches("end", event) && count > 0) {
+                                if (root.selectionActive)
+                                    root.clearWallpaperSelection();
+                                const cols = Math.max(1, m_grid_view._cols);
+                                const r = Math.floor(cur / cols);
+                                const target = Math.min(count - 1, r * cols + cols - 1);
+                                userWallpaperSelect.anchorIndex = target;
+                                root.moveGridCurrentTo(target, GridView.Contain);
+                                event.accepted = true;
+                            } else if (hotkeys.eventMatches("page_down", event) && count > 0) {
+                                if (root.selectionActive)
+                                    root.clearWallpaperSelection();
+                                const target = root.gridCurrentIndex() + root.gridPageStep();
+                                userWallpaperSelect.anchorIndex = target;
+                                root.moveGridCurrentTo(target, GridView.Contain);
+                                event.accepted = true;
+                            } else if (hotkeys.eventMatches("page_up", event) && count > 0) {
+                                if (root.selectionActive)
+                                    root.clearWallpaperSelection();
+                                const target = root.gridCurrentIndex() - root.gridPageStep();
+                                userWallpaperSelect.anchorIndex = target;
+                                root.moveGridCurrentTo(target, GridView.Contain);
+                                event.accepted = true;
+                            } else if (hotkeys.eventMatches("apply_wallpaper", event) && m_grid_view.currentIndex >= 0) {
+                                root.applyWallpaperAt(m_grid_view.currentIndex);
+                                event.accepted = true;
+                            } else if (hotkeys.eventMatches("toggle_selection", event) && m_grid_view.currentIndex >= 0) {
+                                root.requestWallpaperSelection(m_grid_view.currentIndex);
+                                event.accepted = true;
                             }
-                            // First / last
-                            else if (hotkeys.eventMatches("home", event)) {
-                                next = cur - (cur % cols);
-                            } else if (hotkeys.eventMatches("end", event)) {
-                                next = Math.min(count - 1, cur - (cur % cols) + cols - 1);
-                            } else if (hotkeys.eventMatches("home_all", event)) {
-                                next = 0;
-                            } else if (hotkeys.eventMatches("end_all", event)) {
-                                next = count - 1;
-                            }
-                            // Page step (approximate, by visible rows)
-                            else if (hotkeys.eventMatches("page_up", event)) {
-                                const rowsPerPage = Math.max(1, Math.floor(m_grid_view.height / Math.max(1, m_grid_view.cellHeight)));
-                                next = Math.max(0, cur - rowsPerPage * cols);
-                            } else if (hotkeys.eventMatches("page_down", event)) {
-                                const rowsPerPage = Math.max(1, Math.floor(m_grid_view.height / Math.max(1, m_grid_view.cellHeight)));
-                                next = Math.min(count - 1, cur + rowsPerPage * cols);
-                            } else {
-                                return; // not our key
-                            }
-
-                            m_grid_view.currentIndex = next;
-                            m_grid_view.positionViewAtIndex(next, GridView.Contain);
-                            event.accepted = true;
                         }
 
                         delegate: WallpaperCard {

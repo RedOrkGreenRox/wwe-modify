@@ -9,6 +9,10 @@ import waywallen.ui as W
 
 MD.Page {
     id: root
+
+    W.HotkeyRuntime {
+        id: hotkeys
+    }
     padding: 0
     showHeader: true
     showBackground: false
@@ -69,6 +73,13 @@ MD.Page {
         }
     }
 
+    Shortcut {
+        sequences: hotkeys.sequences("settings_save")
+        context: Qt.WindowShortcut
+        enabled: root.visible && !!m_pending.nextGlobal
+        onActivated: root.flushPendingNow()
+    }
+
     Connections {
         target: W.Notify
         function onDaemonReady() {
@@ -97,15 +108,18 @@ MD.Page {
         id: m_flush
         interval: 200
         repeat: false
-        onTriggered: {
-            const g = m_pending.nextGlobal;
-            if (!g) return;
-            setQ.global = g;
-            setQ.plugins = getQ.plugins;
-            setQ.reload();
-            m_pending.submittedGlobal = g;
-            m_pending.nextGlobal = null;
-        }
+        onTriggered: root.flushPendingNow()
+    }
+
+    function flushPendingNow() {
+        const g = m_pending.nextGlobal;
+        if (!g) return;
+        m_flush.stop();
+        setQ.global = g;
+        setQ.plugins = getQ.plugins;
+        setQ.reload();
+        m_pending.submittedGlobal = g;
+        m_pending.nextGlobal = null;
     }
 
     function _mut(fn) {
@@ -207,6 +221,18 @@ MD.Page {
         });
     }
 
+    readonly property var kWorkshopOpenModes: [
+        { value: "embedded", label: qsTr("App browser") },
+        { value: "steam",    label: qsTr("Steam app") },
+        { value: "browser",  label: qsTr("System browser") }
+    ]
+
+    function _workshopOpenModeIndex(v) {
+        for (let i = 0; i < kWorkshopOpenModes.length; ++i)
+            if (kWorkshopOpenModes[i].value === v) return i;
+        return 0;
+    }
+
     readonly property var kQueueModes: [
         { value: "sequential", label: qsTr("Sequential") },
         { value: "shuffle",    label: qsTr("Shuffle") },
@@ -264,7 +290,7 @@ MD.Page {
 
             SettingItem {
                 first: false
-                last: true
+                last: false
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -293,6 +319,43 @@ MD.Page {
                             fillWidth: true,
                             fillHeight: true
                         }, root)
+                    }
+                }
+            }
+
+            SettingItem {
+                first: false
+                last: true
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+
+                        FieldLabel { text: qsTr("Workshop opening") }
+
+                        MD.Text {
+                            text: qsTr("Choose what happens when the Workshop page is opened or activated again.")
+                            typescale: MD.Token.typescale.body_small
+                            color: MD.Token.color.on_surface_variant
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+                    }
+
+                    MD.ComboBox {
+                        id: m_workshop_open_mode
+                        Layout.preferredWidth: 180
+                        model: root.kWorkshopOpenModes.map(o => o.label)
+                        onActivated: idx => W.Global.workshopOpenMode = root.kWorkshopOpenModes[idx].value
+                    }
+                    Binding {
+                        target: m_workshop_open_mode
+                        property: "currentIndex"
+                        value: root._workshopOpenModeIndex(W.Global.workshopOpenMode)
                     }
                 }
             }

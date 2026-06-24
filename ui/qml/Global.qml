@@ -8,9 +8,19 @@ QtObject {
     id: root
 
     property bool sidebarAutoExpand: true
+    // Preferred Workshop opening strategy: embedded, steam, or browser.
+    property string workshopOpenMode: "embedded"
+    property string workshopRequestUrl: ""
+    property int workshopRequestNonce: 0
+
+    function requestWorkshopUrl(url) {
+        root.workshopRequestUrl = String(url || "")
+        root.workshopRequestNonce += 1
+    }
 
     readonly property Settings _generalSettings: Settings {
         property alias sidebarAutoExpand: root.sidebarAutoExpand
+        property alias workshopOpenMode: root.workshopOpenMode
     }
 
     // Per-vendor Material color schemes, seeded from each GPU vendor's brand

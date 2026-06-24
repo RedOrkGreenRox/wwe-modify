@@ -49,6 +49,10 @@ QtObject {
         "cancel": ["Delete", "Backspace", "Escape"],
         "select_all": ["Ctrl+Alt+A"],
         "toggle_filters": ["Ctrl+Shift+F"],
+        "workshop_reload": ["F5", "Ctrl+R"],
+        "workshop_clear_session": ["Ctrl+Shift+Delete"],
+        "status_refresh": ["F5"],
+        "settings_save": ["Ctrl+S"],
 
         "navigate_left": ["Left", "A"],
         "navigate_right": ["Right", "D"],
@@ -84,6 +88,10 @@ QtObject {
         "cancel": qsTr("Cancel / clear selection"),
         "select_all": qsTr("Select all wallpapers"),
         "toggle_filters": qsTr("Toggle filters panel"),
+        "workshop_reload": qsTr("Reload Workshop"),
+        "workshop_clear_session": qsTr("Clear Workshop session"),
+        "status_refresh": qsTr("Refresh status"),
+        "settings_save": qsTr("Save settings"),
 
         "navigate_left": qsTr("Cursor left"),
         "navigate_right": qsTr("Cursor right"),
@@ -119,6 +127,10 @@ QtObject {
         "cancel": qsTr("Wallpapers"),
         "select_all": qsTr("Wallpapers"),
         "toggle_filters": qsTr("Wallpapers"),
+        "workshop_reload": qsTr("Workshop"),
+        "workshop_clear_session": qsTr("Workshop"),
+        "status_refresh": qsTr("Status"),
+        "settings_save": qsTr("Settings"),
 
         "navigate_left": qsTr("Grid"),
         "navigate_right": qsTr("Grid"),

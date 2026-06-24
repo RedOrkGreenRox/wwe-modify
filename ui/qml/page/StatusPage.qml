@@ -49,6 +49,10 @@ MD.Page {
         backgroundColor: MD.MProp.color.surface
     }
 
+    W.HotkeyRuntime {
+        id: hotkeys
+    }
+
     W.HealthQuery {
         id: healthQuery
     }
@@ -82,6 +86,13 @@ MD.Page {
     Component.onCompleted: {
         if (W.Notify.daemonPhase === W.Notify.DaemonPhase.Ready)
             reloadAll();
+    }
+
+    Shortcut {
+        sequences: hotkeys.sequences("status_refresh")
+        context: Qt.WindowShortcut
+        enabled: root.visible
+        onActivated: root.reloadAll()
     }
 
     function reloadAll() {

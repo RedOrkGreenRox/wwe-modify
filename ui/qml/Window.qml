@@ -84,7 +84,11 @@ MD.ApplicationWindow {
             console.warn("Window: invalid page index", index);
             return false;
         }
+        const page = win.pages[idx];
+        const repeated = win.currentPage === idx;
         win.currentPage = idx;
+        if (repeated && page && page.id === "workshop")
+            W.Global.requestWorkshopUrl("");
         return true;
     }
 
