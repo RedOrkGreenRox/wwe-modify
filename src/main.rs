@@ -617,7 +617,7 @@ async fn async_main() -> anyhow::Result<()> {
     }
 
     // Bind the WS control plane (port 0 = OS picks an available port).
-    let bind_addr = format!("0.0.0.0:{}", cli.ws_port);
+    let bind_addr = format!("127.0.0.1:{}", cli.ws_port);
     let (local_addr, ws_fut) = ws_server::bind(state.clone(), &bind_addr).await?;
     let ws_port = local_addr.port();
     state
