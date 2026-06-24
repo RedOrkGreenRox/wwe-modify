@@ -235,14 +235,33 @@ MD.ApplicationWindow {
 
                     // Logo + a menu-toggle button (the rail's default header
                     // is just the toggle; we add branding alongside it).
+                    //
+                    // NOTE: implicitHeight is computed from *constants* rather
+                    // than from m_logo.y / m_logo.height. Qcm.Material's
+                    // NavigationRail places this header inside a
+                    // VerticalFlickable whose contentHeight tracks the
+                    // header's implicitHeight. If implicitHeight depends on a
+                    // child whose y depends on a sibling that is itself laid
+                    // out inside the flickable (m_logo.y = m_menu_btn.y +
+                    // m_menu_btn.height + 16), Qt 6.8's loop detector fires
+                    // the VerticalFlickable.qml:9 binding loop seen in the
+                    // logs. Hard-coding the geometry breaks the cycle without
+                    // changing the visible layout.
                     header: Item {
+                        readonly property int menuBtnY: 4
+                        readonly property int menuBtnHeight: 40
+                        readonly property int logoGap: 16
+                        readonly property int logoSize: 32
+                        readonly property int bottomPad: 12
+                        readonly property int logoY: menuBtnY + menuBtnHeight + logoGap
+
                         implicitWidth: m_rail.useLarge ? m_rail.expandedWidth : m_rail.collapsedWidth
-                        implicitHeight: m_logo.y + m_logo.height + 12
+                        implicitHeight: logoY + logoSize + bottomPad
 
                         MD.StandardIconButton {
                             id: m_menu_btn
                             x: m_rail.useLarge ? (32 - (width - 24) / 2) : (m_rail.collapsedWidth - width) / 2
-                            y: 4
+                            y: parent.menuBtnY
                             icon.name: m_rail.useLarge ? MD.Token.icon.menu_open : MD.Token.icon.menu
                             onClicked: m_rail.toggle()
 
@@ -256,10 +275,10 @@ MD.ApplicationWindow {
 
                         Image {
                             id: m_logo
-                            width: 32
-                            height: 32
+                            width: parent.logoSize
+                            height: parent.logoSize
                             x: m_rail.useLarge ? 32 : (m_rail.collapsedWidth - width) / 2
-                            y: m_menu_btn.y + m_menu_btn.height + 16
+                            y: parent.logoY
                             source: "qrc:/waywallen/ui/assets/waywallen-ui.svg"
                             fillMode: Image.PreserveAspectFit
                             sourceSize.width: 64

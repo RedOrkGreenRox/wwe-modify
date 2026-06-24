@@ -463,9 +463,33 @@ int ww_bridge_pool_apply_directive(ww_pool_t* pool, int sock,
 }
 
 int ww_bridge_pool_acquire_slot(ww_pool_t* pool, uint32_t slot_index, ww_pool_slot_t* out_slot) {
-    if (! pool || ! out_slot) return -EINVAL;
-    if (! pool->has_directive) return -EINVAL;
-    if (slot_index >= pool->n_slots) return -EINVAL;
+    if (! pool || ! out_slot) {
+        ww_bridge_logf(WW_BRIDGE_LOG_WARN,
+                       "ww_pool: acquire_slot(%u) rejected: null %s",
+                       slot_index,
+                       !pool ? "pool" : "out_slot");
+        return -EINVAL;
+    }
+    /* Most common cause of "BridgeProducerCore: acquire_slot(N) failed: -22"
+     * in the wild: the renderer plugin (e.g. open-wallpaper-engine's
+     * owe::vulkan::StagingBuffer) tries to draw before the daemon-side
+     * dmabuf pool has been configured via `apply_directive`. Log the
+     * distinction so users can tell a startup race apart from a stale
+     * slot index. */
+    if (! pool->has_directive) {
+        ww_bridge_logf(WW_BRIDGE_LOG_WARN,
+                       "ww_pool: acquire_slot(%u) rejected: directive not yet applied "
+                       "(renderer is producing frames before negotiate_buffers completed)",
+                       slot_index);
+        return -EINVAL;
+    }
+    if (slot_index >= pool->n_slots) {
+        ww_bridge_logf(WW_BRIDGE_LOG_WARN,
+                       "ww_pool: acquire_slot(%u) rejected: out of range (n_slots=%u)",
+                       slot_index,
+                       pool->n_slots);
+        return -EINVAL;
+    }
 
     memset(out_slot, 0, sizeof(*out_slot));
     out_slot->index  = slot_index;

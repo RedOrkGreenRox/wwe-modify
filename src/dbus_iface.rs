@@ -318,8 +318,16 @@ pub async fn emit_shutting_down(conn: &Connection) -> zbus::Result<()> {
 
 /// Snapshot of the dbus connection from `AppState`. Callers can take
 /// it across an await without holding the std::sync::Mutex.
+///
+/// Tolerates a poisoned mutex: the connection itself is just an
+/// `Arc<Connection>`, so a poisoned guard still hands back a valid
+/// snapshot. Falling over here would crash the daemon on every signal
+/// emit after an unrelated panic elsewhere, which is strictly worse.
 fn live_conn(app: &AppState) -> Option<Arc<Connection>> {
-    app.dbus_conn.lock().unwrap().clone()
+    match app.dbus_conn.lock() {
+        Ok(g) => g.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
 }
 
 pub async fn notify_queue_mode_changed(app: &AppState) {
