@@ -1,6 +1,11 @@
 #include <QGuiApplication>
+#include <QCoreApplication>
 #include <QCommandLineParser>
 #include <QtQml/QQmlExtensionPlugin>
+#include <QIcon>
+#ifdef WAYWALLEN_HAS_WEBENGINE
+#    include <QtWebEngineQuick/QtWebEngineQuick>
+#endif
 Q_IMPORT_QML_PLUGIN(waywallen_uiPlugin)
 
 import ncrequest;
@@ -8,12 +13,24 @@ import waywallen;
 
 int main(int argc, char** argv) {
     ncrequest::global_init();
+#ifdef WAYWALLEN_HAS_WEBENGINE
+    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+    QtWebEngineQuick::initialize();
+#endif
     QGuiApplication gui_app(argc, argv);
     gui_app.setDesktopFileName(APP_ID);
     gui_app.setOrganizationName("waywallen");
     gui_app.setOrganizationDomain("waywallen.org");
     gui_app.setApplicationName(APP_NAME);
     gui_app.setApplicationVersion(APP_VERSION);
+
+    // Set the window/app icon for Wayland / X11.
+    // The QML module resource prefix moved between Qt versions, so try both.
+    QIcon app_icon(QStringLiteral(":/qt/qml/waywallen/ui/assets/waywallen-ui.svg"));
+    if (app_icon.isNull()) {
+        app_icon = QIcon(QStringLiteral(":/waywallen/ui/assets/waywallen-ui.svg"));
+    }
+    gui_app.setWindowIcon(app_icon);
 
     QCommandLineParser parser;
     parser.addHelpOption();

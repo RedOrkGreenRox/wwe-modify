@@ -7,6 +7,9 @@ dependencies:
   # Qt6 >= 6.10 (UI uses Quick / DBus / Protobuf)
   - qt6-main>=6.10
   - qt6-wayland>=6.10
+  # Optional embedded Workshop browser. CMake still builds Lite mode if the
+  # package is absent unless WAYWALLEN_REQUIRE_WEBENGINE=ON.
+  - qt6-webengine>=6.10
   - freetype
   - expat
 

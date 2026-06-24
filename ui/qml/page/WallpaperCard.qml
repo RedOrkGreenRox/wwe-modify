@@ -12,6 +12,9 @@ Item {
     property bool selected: false
     property real itemWidth: width
     property real itemHeight: height
+    property int waveNonce: 0
+    property int waveOriginIndex: -1
+    property int waveColumns: 1
 
     width: GridView.view ? GridView.view.cellWidth : 0
     height: GridView.view ? GridView.view.cellHeight : 0
@@ -20,6 +23,7 @@ Item {
 
     signal clicked(int modifiers)
     signal selectionRequested(int modifiers)
+    signal applyRequested()
 
     readonly property int _baseRadius: MD.Token.shape.corner.extra_small
     readonly property int _selectedRadius: MD.Token.shape.corner.large
@@ -27,6 +31,18 @@ Item {
     readonly property real _selectedInset: root._selectedRadius / 2
     readonly property real cardWidth: Math.min(root.itemWidth, root.width)
     readonly property real cardHeight: Math.min(root.itemHeight, root.height)
+    readonly property int _waveCols: Math.max(1, root.waveColumns)
+    readonly property int _waveOriginRow: root.waveOriginIndex >= 0 ? Math.floor(root.waveOriginIndex / root._waveCols) : 0
+    readonly property int _waveOriginCol: root.waveOriginIndex >= 0 ? root.waveOriginIndex % root._waveCols : 0
+    readonly property int _waveRow: Math.floor(root.index / root._waveCols)
+    readonly property int _waveCol: root.index % root._waveCols
+    readonly property real _waveDistance: Math.sqrt(Math.pow(root._waveRow - root._waveOriginRow, 2)
+                                                   + Math.pow(root._waveCol - root._waveOriginCol, 2))
+
+    onWaveNonceChanged: {
+        if (root.waveOriginIndex >= 0)
+            m_apply_wave.restart();
+    }
 
     Rectangle {
         anchors.fill: parent
@@ -70,6 +86,36 @@ Item {
                 }
             }
 
+            Rectangle {
+                id: m_apply_wave_overlay
+                anchors.fill: m_thumb
+                radius: root._radius
+                color: MD.Token.color.primary
+                opacity: 0
+            }
+
+            SequentialAnimation {
+                id: m_apply_wave
+                running: false
+                PauseAnimation { duration: Math.min(700, Math.round(root._waveDistance * 70)) }
+                NumberAnimation {
+                    target: m_apply_wave_overlay
+                    property: "opacity"
+                    from: 0
+                    to: 0.38
+                    duration: 120
+                    easing.type: Easing.OutCubic
+                }
+                NumberAnimation {
+                    target: m_apply_wave_overlay
+                    property: "opacity"
+                    from: 0.38
+                    to: 0
+                    duration: 520
+                    easing.type: Easing.OutCubic
+                }
+            }
+
             MD.Text {
                 id: m_title
                 anchors.left  : parent.left
@@ -91,7 +137,7 @@ Item {
                 property bool selectionRequestedByHold: false
 
                 anchors.fill: parent
-                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
                 cursorShape: Qt.PointingHandCursor
                 onPressed: selectionRequestedByHold = false
                 onCanceled: selectionRequestedByHold = false
@@ -108,6 +154,10 @@ Item {
                     }
                     if (mouse.button === Qt.RightButton) {
                         root.selectionRequested(mouse.modifiers);
+                        return;
+                    }
+                    if (mouse.button === Qt.MiddleButton) {
+                        root.applyRequested();
                         return;
                     }
                     root.clicked(mouse.modifiers);

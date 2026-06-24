@@ -14,6 +14,21 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(BUILD_SHARED_LIBS OFF)
 
 find_package(Qt6 REQUIRED COMPONENTS Quick DBus Protobuf ProtobufQuick ProtobufWellKnownTypes QuickPrivate)
+
+option(WAYWALLEN_ENABLE_WEBENGINE "Enable the embedded Workshop browser when QtWebEngineQuick is available" ON)
+option(WAYWALLEN_REQUIRE_WEBENGINE "Require QtWebEngineQuick for the embedded Workshop browser" OFF)
+if(WAYWALLEN_ENABLE_WEBENGINE)
+  find_package(Qt6 COMPONENTS WebEngineQuick QUIET)
+endif()
+if(WAYWALLEN_REQUIRE_WEBENGINE AND NOT TARGET Qt6::WebEngineQuick)
+  message(FATAL_ERROR "WAYWALLEN_REQUIRE_WEBENGINE=ON, but Qt6::WebEngineQuick was not found")
+endif()
+if(TARGET Qt6::WebEngineQuick)
+  message(STATUS "waywallen: QtWebEngineQuick found — building Full Workshop UI")
+else()
+  message(STATUS "waywallen: QtWebEngineQuick not found — Workshop will use external Lite mode")
+endif()
+
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SplitMocFiles.cmake)
 
 if(QT_KNOWN_POLICY_QTP0004)
@@ -33,8 +48,8 @@ if("${QT_INSTALL_QML}" STREQUAL "")
 endif()
 
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
-include(${CMAKE_SOURCE_DIR}/cmake/FetchDeps.cmake)
-fetchdeps(${CMAKE_SOURCE_DIR}/deps.json)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/FetchDeps.cmake)
+fetchdeps(${CMAKE_CURRENT_SOURCE_DIR}/../deps.json)
 
 qt_standard_project_setup()
 
@@ -132,7 +147,8 @@ set(MODULES
     src/query/mod.cppm
 )
 
-set(QML_FILES
+set(CORE_QML_FILES
+  qml/PageRegistry.qml
   qml/Window.qml
   qml/Global.qml
   qml/component/StatusDot.qml
@@ -155,6 +171,12 @@ set(QML_FILES
   qml/dialog/DaemonNotRunDialog.qml
   qml/dialog/WallpaperFilterDialog.qml
   qml/dialog/RemoteFilterDialog.qml
+)
+
+set(PAGE_QML_FILES
+  qml/page/WorkshopPage.qml
+  qml/page/HotkeysSettingsPage.qml
+  qml/component/HotkeyRuntime.qml
   qml/page/WallpaperPage.qml
   qml/page/PlaylistDetailPanel.qml
   qml/page/WallpaperDetailPanel.qml
@@ -179,11 +201,19 @@ set(QML_FILES
   qml/page/AboutPage.qml
   qml/page/PluginSettingsPage.qml
 )
+
+if(TARGET Qt6::WebEngineQuick)
+  list(APPEND PAGE_QML_FILES qml/component/EmbeddedWorkshop.qml)
+endif()
+
+set(QML_FILES ${CORE_QML_FILES} ${PAGE_QML_FILES})
+
 set(RESOURCES
   assets/waywallen-ui.svg
 )
 
 set_source_files_properties(qml/Global.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(qml/PageRegistry.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 set(QML_REG_INCLUDE_DIRS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/waywallen/register"
@@ -267,6 +297,11 @@ target_link_libraries(waywallen-qml
     qextra
     wavsen::decode
 )
+
+if(TARGET Qt6::WebEngineQuick)
+  target_link_libraries(waywallen-qml PUBLIC Qt6::WebEngineQuick)
+  target_compile_definitions(waywallen-qml PUBLIC WAYWALLEN_HAS_WEBENGINE=1)
+endif()
 
 qt_add_executable(${PROJECT_NAME} MANUAL_FINALIZATION src/main.cpp)
 set_target_properties(${PROJECT_NAME} PROPERTIES 

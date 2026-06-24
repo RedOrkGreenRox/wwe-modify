@@ -233,7 +233,7 @@ MD.Page {
 
             SettingItem {
                 first: true
-                last: true
+                last: false
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -258,6 +258,41 @@ MD.Page {
                         id: m_sidebar_auto_expand
                         checked: W.Global.sidebarAutoExpand
                         onToggled: W.Global.sidebarAutoExpand = checked
+                    }
+                }
+            }
+
+            SettingItem {
+                first: false
+                last: true
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+
+                        FieldLabel { text: qsTr("Keyboard shortcuts") }
+
+                        MD.Text {
+                            text: qsTr("Edit navigation and wallpaper-grid shortcuts.")
+                            typescale: MD.Token.typescale.body_small
+                            color: MD.Token.color.on_surface_variant
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+                    }
+
+                    MD.Button {
+                        text: qsTr("Configure")
+                        mdState.type: MD.Enum.BtFilledTonal
+                        onClicked: MD.Util.showPopup('waywallen.ui/PagePopup', {
+                            source: 'waywallen.ui/HotkeysSettingsPage',
+                            fillWidth: true,
+                            fillHeight: true
+                        }, root)
                     }
                 }
             }

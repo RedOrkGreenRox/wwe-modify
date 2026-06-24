@@ -36,6 +36,10 @@ MD.ApplicationWindow {
         id: healthQuery
     }
 
+    W.HotkeyRuntime {
+        id: hotkeys
+    }
+
     Connections {
         target: W.Notify
         function onDaemonReady() {
@@ -43,23 +47,91 @@ MD.ApplicationWindow {
         }
     }
 
+    Connections {
+        target: W.PageRegistry
+        function onPagesChanged() {
+            if (win.currentPage >= win.pages.length)
+                win.currentPage = Math.max(0, win.pages.length - 1);
+        }
+    }
+
     property int currentPage: 0
 
     readonly property bool isCompact: MD.MProp.size.isCompact
 
-    readonly property var pageModel: [
-        { icon: MD.Token.icon.wallpaper, name: "Wallpapers" },
-        { icon: MD.Token.icon.monitor, name: "Displays" },
-        { icon: MD.Token.icon.monitor_heart, name: "Status" }
-    ]
+    // Frontend modules register page descriptors into PageRegistry.  Window.qml
+    // consumes only the generic descriptor shape and does not hard-code concrete
+    // pages anymore.
+    readonly property var pages: W.PageRegistry.pages
 
+    readonly property var pageModel: pages.map(function(p, i) {
+        return {
+            index: i,
+            id: p.id,
+            name: p.name,
+            icon: win.resolveIcon(p.icon),
+            openAction: p.openAction || ""
+        };
+    })
 
-    readonly property var pageComponents: ["qrc:/waywallen/ui/qml/page/WallpaperPage.qml", "qrc:/waywallen/ui/qml/page/DisplaysPage.qml", "qrc:/waywallen/ui/qml/page/StatusPage.qml"]
+    function resolveIcon(iconName) {
+        return MD.Token.icon[iconName] || MD.Token.icon.help || iconName;
+    }
 
-    readonly property var pageCacheable: [true, false, false]
+    function setCurrentPageIndex(index) {
+        const idx = Number(index);
+        if (!Number.isInteger(idx) || idx < 0 || idx >= win.pages.length) {
+            console.warn("Window: invalid page index", index);
+            return false;
+        }
+        win.currentPage = idx;
+        return true;
+    }
+
+    function setCurrentPageId(id) {
+        return win.setCurrentPageIndex(W.PageRegistry.indexOf(id));
+    }
+
+    function setCurrentPageByAction(actionId) {
+        const action = String(actionId || "");
+        for (let i = 0; i < win.pages.length; ++i) {
+            if ((win.pages[i].openAction || "") === action)
+                return win.setCurrentPageIndex(i);
+        }
+        console.warn("Window: no page for action", actionId);
+        return false;
+    }
+
+    function reloadCurrentPage() {
+        if (win.currentPage < 0 || win.currentPage >= win.pages.length)
+            return;
+        const page = win.pages[win.currentPage];
+        m_content.switchTo(page.component, {}, false);
+        m_content.forceActiveFocus();
+    }
+
+    function openHotkeysPopup() {
+        // Hotkeys are settings, not a top-level module page.  Jump to Settings
+        // first so the popup feels like a settings subwindow even when invoked
+        // from the global shortcut.
+        win.setCurrentPageId("settings");
+        MD.Util.showPopup('waywallen.ui/PagePopup', {
+            source: 'waywallen.ui/HotkeysSettingsPage',
+            fillWidth: true,
+            fillHeight: true
+        }, win);
+    }
 
     onCurrentPageChanged: {
-        m_content.switchTo(pageComponents[currentPage], {}, pageCacheable[currentPage]);
+        if (currentPage < 0 || currentPage >= pages.length) {
+            console.warn("Window: currentPage out of range", currentPage);
+            return;
+        }
+        const page = pages[currentPage];
+        m_content.switchTo(page.component, {}, page.cacheable === true);
+        // Keyboard shortcuts and in-page Keys handlers need focus inside the
+        // current page subtree after navigation.
+        m_content.forceActiveFocus();
     }
 
     Component.onCompleted: {
@@ -71,6 +143,28 @@ MD.ApplicationWindow {
         if (W.Notify.daemonPhase === W.Notify.DaemonPhase.Ready) {
             healthQuery.reload();
         }
+    }
+
+    Instantiator {
+        model: win.pageModel
+        delegate: Shortcut {
+            required property var modelData
+            sequences: modelData.openAction.length > 0 ? hotkeys.sequences(modelData.openAction) : []
+            context: Qt.ApplicationShortcut
+            onActivated: win.setCurrentPageIndex(modelData.index)
+        }
+    }
+
+    Shortcut {
+        sequences: hotkeys.sequences("open_hotkeys")
+        context: Qt.ApplicationShortcut
+        onActivated: win.openHotkeysPopup()
+    }
+
+    Shortcut {
+        sequences: hotkeys.sequences("reload_ui")
+        context: Qt.ApplicationShortcut
+        onActivated: win.reloadCurrentPage()
     }
 
     MD.SnakeView {
@@ -132,7 +226,7 @@ MD.ApplicationWindow {
                     onAutoExpandChanged: if (autoExpand) expanded = useEmbed
 
                     onClicked: function (model) {
-                        win.currentPage = model.index;
+                        win.setCurrentPageIndex(model.index);
                     }
 
                     // Logo + a menu-toggle button (the rail's default header
@@ -244,8 +338,8 @@ MD.ApplicationWindow {
                                 anchors.bottomMargin: 16
                                 icon.name: parent.modelData.icon
                                 text: parent.modelData.name
-                                checked: win.currentPage === parent.index
-                                onClicked: win.currentPage = parent.index
+                                checked: win.currentPage === parent.modelData.index
+                                onClicked: win.setCurrentPageIndex(parent.modelData.index)
                             }
                         }
                     }

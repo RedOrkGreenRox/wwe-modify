@@ -31,6 +31,50 @@ MD.Page {
         id: scanQuery
     }
 
+    W.WallpaperApplyQuery {
+        id: quickApplyQuery
+    }
+
+    W.HotkeyRuntime {
+        id: hotkeys
+    }
+
+    Connections {
+        target: quickApplyQuery
+        function onStatusChanged() {
+            if (quickApplyQuery.status === 3) {
+                const message = quickApplyQuery.error && quickApplyQuery.error.length > 0
+                    ? quickApplyQuery.error
+                    : qsTr("Apply failed");
+                W.Action.toast(message, 6000, 1, null);
+            }
+        }
+    }
+
+    // Page-level shortcuts. Window scope (not Application) so they only
+    // fire while the Wallpapers page is the active page.
+    Shortcut {
+        sequences: hotkeys.sequences("refresh_scan")
+        context: Qt.WindowShortcut
+        enabled: root.visible
+        onActivated: if (!W.Notify.scanInProgress) scanQuery.reload()
+    }
+    Shortcut {
+        sequences: hotkeys.sequences("apply_wallpaper")
+        context: Qt.WindowShortcut
+        enabled: root.visible && m_grid_view.currentIndex >= 0
+        onActivated: root.applyWallpaperAt(m_grid_view.currentIndex)
+    }
+    Shortcut {
+        sequences: hotkeys.sequences("cancel")
+        context: Qt.WindowShortcut
+        enabled: root.visible
+        onActivated: {
+            root.selectedWallpaper = null;
+            if (m_grid_view) m_grid_view.forceActiveFocus();
+        }
+    }
+
     W.PlaylistListQuery {
         id: playlistListQuery
     }
@@ -39,6 +83,8 @@ MD.Page {
     property string playlistMutationSuccessMessage: ""
     property string playlistMutationPendingMessage: ""
     readonly property bool playlistListLoading: playlistListQuery.querying && !root.playlistListReady
+    property int applyWaveNonce: 0
+    property int applyWaveOriginIndex: -1
 
     Connections {
         target: playlistListQuery
@@ -194,6 +240,15 @@ MD.Page {
         applySort();
         if (W.Notify.daemonPhase === W.Notify.DaemonPhase.Ready)
             reloadAll();
+        // Grab focus on the grid so the grid-local Keys.onPressed handler
+        // (arrow keys, WASD, Home/End, Return/Enter, Space, etc.) fires
+        // immediately on app start. The page-level Shortcuts already use
+        // Qt.ApplicationShortcut and don't need this, but the in-grid
+        // bindings do — and the focus-grab is what makes "press F5 right
+        // after launch" match user expectation rather than waiting for a
+        // click on the page background.
+        if (m_grid_view)
+            m_grid_view.forceActiveFocus();
     }
 
     MD.Action {
@@ -780,6 +835,27 @@ MD.Page {
         root.confirmPlaylistSelection(playlistWallpaperSelect.playlistEditTarget);
     }
 
+    function startWallpaperApplyWave(index) {
+        if (index === undefined || index < 0)
+            return;
+        root.applyWaveOriginIndex = index;
+        root.applyWaveNonce += 1;
+    }
+
+    function applyWallpaperAt(index) {
+        const model = wallpaperQuery.data;
+        if (!model || index === undefined || index < 0 || index >= m_grid_view.count || quickApplyQuery.querying)
+            return;
+        const wallpaper = model.item(index);
+        if (!wallpaper)
+            return;
+        root.startWallpaperApplyWave(index);
+        quickApplyQuery.wallpaper = wallpaper;
+        quickApplyQuery.displayIds = [];
+        quickApplyQuery.rendererName = "";
+        quickApplyQuery.reload();
+    }
+
     function handleWallpaperClick(index, modifiers) {
         const model = wallpaperQuery.data;
         if (!model)
@@ -972,12 +1048,111 @@ MD.Page {
 
                         model: wallpaperQuery.data
 
+                        // Custom keyboard navigation. We resolve every key
+                        // through HotkeyRuntime so user rebindings apply,
+                        // and so WASD / HJKL alternatives work alongside
+                        // the arrow keys (also under Cyrillic layouts).
+                        Keys.onPressed: event => {
+                            const cols = Math.max(1, m_grid_view._cols);
+                            const count = m_grid_view.count;
+                            if (count <= 0)
+                                return;
+
+                            const cur = m_grid_view.currentIndex < 0 ? 0 : m_grid_view.currentIndex;
+                            let next = cur;
+
+                            const col = cur % cols;
+                            const rowStart = cur - col;
+                            const rowEnd = Math.min(count - 1, rowStart + cols - 1);
+                            const lastRow = Math.floor((count - 1) / cols);
+                            function lastIndexInColumn(column) {
+                                let candidate = lastRow * cols + column;
+                                while (candidate >= count && candidate >= cols)
+                                    candidate -= cols;
+                                return Math.max(0, Math.min(count - 1, candidate));
+                            }
+
+                            // Plain movement wraps inside the same row/column.
+                            if (hotkeys.eventMatches("navigate_left", event)) {
+                                next = (cur === rowStart) ? rowEnd : cur - 1;
+                            } else if (hotkeys.eventMatches("navigate_right", event)) {
+                                next = (cur === rowEnd) ? rowStart : cur + 1;
+                            } else if (hotkeys.eventMatches("navigate_up", event)) {
+                                next = (cur < cols) ? lastIndexInColumn(col) : cur - cols;
+                            } else if (hotkeys.eventMatches("navigate_down", event)) {
+                                next = (cur + cols >= count) ? col : cur + cols;
+                            }
+                            // Ctrl movement crosses to the neighbouring row/column when it hits a boundary.
+                            else if (hotkeys.eventMatches("jump_left", event)) {
+                                next = Math.max(0, cur - 1);
+                            } else if (hotkeys.eventMatches("jump_right", event)) {
+                                next = Math.min(count - 1, cur + 1);
+                            } else if (hotkeys.eventMatches("jump_up", event)) {
+                                if (cur >= cols) {
+                                    next = cur - cols;
+                                } else if (col > 0) {
+                                    next = lastIndexInColumn(col - 1);
+                                } else {
+                                    next = 0;
+                                }
+                            } else if (hotkeys.eventMatches("jump_down", event)) {
+                                if (cur + cols < count) {
+                                    next = cur + cols;
+                                } else if (col + 1 < cols && col + 1 < count) {
+                                    next = col + 1;
+                                } else {
+                                    next = count - 1;
+                                }
+                            } else if (hotkeys.eventMatches("apply_wallpaper", event)) {
+                                root.applyWallpaperAt(cur);
+                                event.accepted = true;
+                                return;
+                            } else if (hotkeys.eventMatches("toggle_selection", event)) {
+                                const select = root.interactionWallpaperSelect();
+                                root.enterWallpaperSelect(select);
+                                select.toggleSelected(cur);
+                                select.anchorIndex = cur;
+                                root.selectedWallpaper = null;
+                                root.syncWallpaperSelectSheet();
+                                event.accepted = true;
+                                return;
+                            }
+                            // First / last
+                            else if (hotkeys.eventMatches("home", event)) {
+                                next = cur - (cur % cols);
+                            } else if (hotkeys.eventMatches("end", event)) {
+                                next = Math.min(count - 1, cur - (cur % cols) + cols - 1);
+                            } else if (hotkeys.eventMatches("home_all", event)) {
+                                next = 0;
+                            } else if (hotkeys.eventMatches("end_all", event)) {
+                                next = count - 1;
+                            }
+                            // Page step (approximate, by visible rows)
+                            else if (hotkeys.eventMatches("page_up", event)) {
+                                const rowsPerPage = Math.max(1, Math.floor(m_grid_view.height / Math.max(1, m_grid_view.cellHeight)));
+                                next = Math.max(0, cur - rowsPerPage * cols);
+                            } else if (hotkeys.eventMatches("page_down", event)) {
+                                const rowsPerPage = Math.max(1, Math.floor(m_grid_view.height / Math.max(1, m_grid_view.cellHeight)));
+                                next = Math.min(count - 1, cur + rowsPerPage * cols);
+                            } else {
+                                return; // not our key
+                            }
+
+                            m_grid_view.currentIndex = next;
+                            m_grid_view.positionViewAtIndex(next, GridView.Contain);
+                            event.accepted = true;
+                        }
+
                         delegate: WallpaperCard {
                             selected: model.selected ?? false
                             itemWidth: m_grid_view._displayItemWidth
                             itemHeight: m_grid_view._displayItemHeight
+                            waveNonce: root.applyWaveNonce
+                            waveOriginIndex: root.applyWaveOriginIndex
+                            waveColumns: m_grid_view._cols
                             onClicked: modifiers => root.handleWallpaperClick(index, modifiers)
                             onSelectionRequested: modifiers => root.requestWallpaperSelection(index)
+                            onApplyRequested: root.applyWallpaperAt(index)
                         }
 
                         Keys.onEscapePressed: event => {
